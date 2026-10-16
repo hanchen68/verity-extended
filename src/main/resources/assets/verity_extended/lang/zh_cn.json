@@ -1,0 +1,8 @@
+{
+  "category.veritycustomapi": "Verity 扩展增强",
+  "key.veritycustomapi.speech": "按住语音输入",
+  "key.veritycustomapi.mmd_control": "打开 MMD 动画控制",
+  "key.veritycustomapi.camera_look": "让 Verity 看一眼摄像头",
+  "key.veritycustomapi.quick_command": "打开快捷指令面板",
+  "key.veritycustomapi.head_perch": "让 Verity 站到头上/下来"
+}

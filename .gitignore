@@ -1,0 +1,45 @@
+# ---- 构建产物 ----
+# 目录类规则一律锚定到仓库根（前导 /）。否则 build/、config/ 这类名字会误伤
+# 源码里同名的包目录 —— 曾经因为 config/ 把整个 config 包挡在仓库外。
+/build/
+/out/
+/bin/
+/run/
+/logs/
+# Gradle 只要在项目里跑过一次就会生成，很容易被 git add -A 顺手收进来
+/.gradle/
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# ---- IDE ----
+/.idea/
+/.vscode/
+/.trae/
+/.settings/
+/.metadata/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+*.launch
+
+# ---- JVM 崩溃转储与回放 ----
+hs_err_pid*.log
+replay_pid*.log
+
+# ---- 构建 / 测试日志 ----
+*.log
+buildlog*.txt
+gradle-verification.log
+reobf_shadow_log.txt
+
+# ---- 本地依赖（第三方产物，不入库；见 README「构建」一节）----
+# 这几条很重要：依赖是拆开的 class 目录、就放在源码树里，很容易被顺手提交上去。
+lib/*.jar
+src/main/java/com/hanchen/veritycustomapi/verity-6.0.0-beta.9/
+src/main/java/com/hanchen/veritycustomapi/PatPat-1.3.1+1.20.1+forge/
+
+# ---- 本地运行配置 ----
+/config/
+http-client.private.env.json

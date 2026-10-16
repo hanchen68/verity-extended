@@ -1,0 +1,438 @@
+plugins {
+    id 'eclipse'
+    id 'maven-publish'
+    id 'net.minecraftforge.gradle' version '5.1.+'
+    id 'com.github.johnrengelman.shadow' version '7.1.2'
+    id 'org.spongepowered.mixin' version '0.7.+'
+}
+
+version = '4.4'
+group = 'com.hanchen.veritycustomapi'
+archivesBaseName = 'Verity\u6269\u5c55\u589e\u5f3a'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+// 强制Java编译使用UTF-8，解决GBK不可映射字符错误
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.debug = true
+    options.debugOptions.debugLevel = 'source,lines,vars'
+}
+
+sourceSets {
+    main {
+        java {
+            exclude 'com/hanchen/veritycustomapi/verity编译/**'
+            exclude 'com/hanchen/veritycustomapi/verity-cn版编译/**'
+            exclude 'com/hanchen/veritycustomapi/verity-src原版/**'
+        }
+        resources {
+            exclude 'assets/verity/**'
+            exclude 'data/verity/**'
+            exclude 'assets/minecraft/**'
+            exclude 'data/minecraft/**'
+            exclude 'assets/journeymap/**'
+        }
+    }
+}
+
+minecraft {
+    mappings channel: 'official', version: '1.20.1'
+
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                verity_extended {
+                    source sourceSets.main
+                }
+            }
+        }
+        server {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                verity_extended {
+                    source sourceSets.main
+                }
+            }
+        }
+        data {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            args '--mod', 'verity_extended', '--all', '--output', file('src/generated/resources/')
+            mods {
+                verity_extended {
+                    source sourceSets.main
+                }
+            }
+        }
+    }
+}
+
+// Mixin 配置
+mixin {
+    add sourceSets.main, 'mixins.verity_extended.refmap.json'
+    config 'mixins.verity_extended.json'
+}
+
+repositories {
+
+    maven { url 'https://maven.aliyun.com/repository/public' }
+    maven { url 'https://maven.aliyun.com/repository/central' }
+
+    maven { url 'https://maven.minecraftforge.net/' }
+    maven { url 'https://maven.shedaniel.me/' }
+    mavenCentral()
+}
+
+configurations {
+    shaded
+    implementation.extendsFrom shaded
+}
+
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.20.1-47.4.20'
+
+    // Mixin 注解处理器
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+    compileOnly fg.deobf("me.shedaniel.cloth:cloth-config-forge:11.1.106")
+    runtimeOnly fg.deobf("me.shedaniel.cloth:cloth-config-forge:11.1.106")
+
+    // Vosk 语音识别（打入最终 JAR）
+    shaded 'com.alphacephei:vosk:0.3.45'
+    // JNA 仅编译时依赖，复用游戏环境已有依赖，避免模块冲突
+    compileOnly 'net.java.dev.jna:jna:5.14.0'
+
+    // ONNX Runtime 由必需依赖 Verity 提供，避免两个 Java 模块导出同一 ai.onnxruntime 包
+    compileOnly 'com.microsoft.onnxruntime:onnxruntime:1.16.3'
+
+    // Java Sound 音频解码：让 MMD 支持 MP3/OGG（WAV 仍使用 JDK 原生支持）
+    // 传递依赖也显式固定，避免 ShadowJar/Forge 类加载时遗漏 Tritonus 基础类。
+    shaded 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
+    shaded 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
+    shaded 'com.googlecode.soundlibs:jlayer:1.0.1.4'
+    shaded 'com.googlecode.soundlibs:tritonus-share:0.3.7.4'
+    shaded 'com.googlecode.soundlibs:jorbis:0.0.17.4'
+
+    compileOnly files('src/main/java/com/hanchen/veritycustomapi/verity-6.0.0-beta.9')
+    runtimeOnly files('src/main/java/com/hanchen/veritycustomapi/verity-6.0.0-beta.9')
+
+    // Geckolib 4.8（MMD 驱动恶魔模型骨骼用，不打包到 fat jar；运行时由
+    // 单独的 geckolib-forge-1.20.1-4.8.4.jar 提供，已在用户的 mods 目录里）
+    // 注意：dev 运行时是「官方映射」，而 geckolib 生产 jar 是 SRG 名（Minecraft.m_91087_ 等）。
+    // 直接 files(...) 会在 dev 下抛 NoSuchMethodError；实测 fg.deobf(files(...)) 也无效，
+    // 必须走 flatDir/Maven 坐标的 fg.deobf 才能真正反混淆（详见项目备忘「dev 环境」）。
+    compileOnly files('lib/geckolib-forge-1.20.1-4.8.4.jar')
+    runtimeOnly files('lib/geckolib-forge-1.20.1-4.8.4.jar')
+}
+
+// Shadow 依赖打包配置
+shadowJar {
+    archiveClassifier = 'shadow'
+    destinationDirectory = layout.buildDirectory.dir('tmp/production-shadow')
+
+    configurations = [project.configurations.shaded]
+
+    from('LICENSE') {
+        into 'META-INF/licenses'
+        rename { 'verity-extended-LICENSE.txt' }
+    }
+    from('LICENSE.txt') {
+        into 'META-INF/licenses'
+        rename { 'Forge-LGPL-2.1.txt' }
+    }
+    from('THIRD_PARTY_NOTICES.md') {
+        into 'META-INF/licenses'
+    }
+    from('LICENSES') {
+        into 'META-INF/licenses'
+    }
+
+    // 指定需要打入最终JAR的第三方依赖
+    dependencies {
+        include(dependency('com.alphacephei:vosk'))
+        include(dependency('com.googlecode.soundlibs:mp3spi'))
+        include(dependency('com.googlecode.soundlibs:vorbisspi'))
+        include(dependency('com.googlecode.soundlibs:jlayer'))
+        include(dependency('com.googlecode.soundlibs:tritonus-share'))
+        include(dependency('com.googlecode.soundlibs:jorbis'))
+    }
+
+    // 不再内嵌 Cloth Config 运行时代码，配置页已切换为原生 Minecraft 实现
+    exclude 'me/shedaniel/**'
+
+    // ===== 音频解码库重定位（必须保留，否则会和别的 Mod 撞成启动崩溃）=====
+    // 我们把 mp3spi / vorbisspi / jlayer / tritonus-share / jorbis 打进 fat jar 是为了让
+    // MMD 能用 AudioSystem 解码 MP3/OGG。但别的 Mod（实测原版 Verity 的 genai bundle 等）
+    // 也打包了同一套 soundlibs，于是两个 Java 模块导出同一个包，JPMS 直接解析失败：
+    //   java.lang.module.ResolutionException: Modules verity_extended and tritonus.share
+    //   export package org.tritonus.share to module xaerominimap
+    // 游戏在 ModLauncher 构建模块层时就崩，连主界面都进不去。
+    // 重定位到自己的命名空间即可彻底消除重复包；mergeServiceFiles() 会把
+    // META-INF/services 里的 SPI 提供者类名一起改写，AudioSystem 仍能发现这些解码器。
+    relocate 'org.tritonus', 'com.hanchen.veritycustomapi.shaded.tritonus'
+    relocate 'javazoom', 'com.hanchen.veritycustomapi.shaded.javazoom'
+    relocate 'com.jcraft.jogg', 'com.hanchen.veritycustomapi.shaded.jogg'
+    relocate 'com.jcraft.jorbis', 'com.hanchen.veritycustomapi.shaded.jorbis'
+
+    // 排除不需要随包发布的解析库，避免和启动器环境中的版本冲突
+    exclude 'blue/endless/jankson/**'
+    exclude 'org/yaml/snakeyaml/**'
+    
+    // 排除游戏本体类
+    exclude 'net/minecraft/**'
+    exclude 'net/minecraftforge/**'
+    exclude 'com/mojang/**'
+
+    // 排除模块声明、签名文件，避免 JPMS 冲突
+    exclude 'META-INF/module-info.class'
+    exclude '**/module-info.class'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude '**/*.pdb'
+    exclude '**/*.dSYM/**'
+
+    mergeServiceFiles()
+}
+
+reobf {
+    shadowJar {}
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filteringCharset = 'UTF-8'
+    filesMatching('META-INF/mods.toml') {
+        filter { line -> line.replace('${version}', project.version.toString()) }
+    }
+}
+
+jar {
+    archiveClassifier = 'classes'
+    destinationDirectory = layout.buildDirectory.dir('tmp/classes-jar')
+    manifest {
+        attributes([
+                "Specification-Title"     : "verity_extended",
+                "Specification-Vendor"    : "hanchen68",
+                "Specification-Version"   : "1",
+                "Implementation-Title"    : project.name,
+                "Implementation-Version"  : "${version}",
+                "Implementation-Vendor"   : "hanchen68",
+                "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+        ])
+    }
+}
+
+def productionJar = tasks.register('productionJar', Copy) {
+    dependsOn reobfShadowJar
+    from layout.buildDirectory.file('reobfShadowJar/output.jar')
+    into layout.buildDirectory.dir('libs')
+    rename { "${archivesBaseName}-${version}.jar" }
+    doFirst {
+        delete fileTree(layout.buildDirectory.dir('libs')) { include '*.jar' }
+    }
+}
+
+build.dependsOn productionJar
+
+tasks.register('resourceSecurityTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.resource.SkinResourceSecurityTest'
+}
+
+tasks.register('cloudResourceDownloadTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.resource.CloudResourceDownloadTest'
+}
+
+tasks.register('mmdArchiveEncodingTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.resource.MmdArchiveEncodingTest'
+    if (project.hasProperty('mmdArchive')) args project.property('mmdArchive')
+}
+
+tasks.register('cloudProtocolTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.cloud.CloudProtocolTest'
+}
+
+tasks.register('cloudStorageTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.cloud.CloudStorageTest'
+}
+
+tasks.register('connectionProtocolTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.debug.ConnectionTestProtocolTest'
+}
+
+tasks.register('buildingIntentTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.BuildingIntentTest'
+}
+
+tasks.register('veritySpeakerTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.compat.VeritySpeakerTest'
+}
+
+tasks.register('bilingualSpeechTextTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.compat.BilingualSpeechTextTest'
+}
+
+tasks.register('resourceCollisionTest', JavaExec) {
+    dependsOn testClasses, processResources
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.compat.ResourceCollisionTest'
+    // 要按相对路径读资源产物与原版构建目录，工作目录必须是项目根
+    workingDir = projectDir
+}
+
+tasks.register('mixinPackageHygieneTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.mixin.MixinPackageHygieneTest'
+    // 要按相对路径读 mixin 配置与编译产物，工作目录必须是项目根
+    workingDir = projectDir
+}
+
+tasks.register('verityStructureDetectorTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.compat.VerityStructureDetectorTest'
+    // 测试要按相对路径读两个真实原版构建的 class，工作目录必须是项目根
+    workingDir = projectDir
+}
+
+tasks.register('overheadOnlySpeechTextTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.compat.OverheadOnlySpeechTextTest'
+}
+
+tasks.register('verityGrowthStateTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.compat.VerityGrowthStateTest'
+}
+
+tasks.register('verityPatPatCompatTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath + files('src/main/java/com/hanchen/veritycustomapi/PatPat-1.3.1+1.20.1+forge')
+    mainClass = 'com.hanchen.veritycustomapi.compat.VerityPatPatCompatTest'
+}
+
+tasks.register('verityPatCooldownTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.compat.VerityPatCooldownTest'
+}
+
+tasks.register('verityHorrorDirectorTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.client.VerityHorrorDirectorTest'
+}
+
+tasks.register('serverHorrorEventTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.network.ServerHorrorEventServiceTest'
+}
+
+tasks.register('serverVerityAdapterTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.network.ServerVerityAdapterTest'
+}
+
+tasks.register('verityLocalizationTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.compat.VerityLocalizationTest'
+}
+
+tasks.register('ollamaProxyResponseTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.OllamaProxyResponseTest'
+}
+
+tasks.register('memoryEnhancementTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.memory.MemoryEnhancementTest'
+}
+
+tasks.register('reminderParseTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.client.ReminderParseTest'
+}
+
+tasks.register('vanillaAudioSinkTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.tts.VanillaAudioSinkTest'
+}
+
+tasks.register('ttsRoutePlannerTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.tts.route.TtsRoutePlannerTest'
+}
+
+tasks.register('voiceTranslatorTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.voice.VoiceTranslatorTest'
+}
+
+tasks.register('cloudOverridesTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.config.CloudOverridesTest'
+}
+
+tasks.register('pluginTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.plugin.PluginTest'
+}
+
+// 联网搜索服务商适配：字段名/阈值/摘要优先级写错都会让搜索静默失效，这里钉住
+tasks.register('webSearchProviderTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.ai.WebSearchProviderTest'
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifact(layout.buildDirectory.file("libs/${archivesBaseName}-${version}.jar")) {
+                builtBy productionJar
+                extension 'jar'
+            }
+        }
+    }
+    repositories {
+    }
+}

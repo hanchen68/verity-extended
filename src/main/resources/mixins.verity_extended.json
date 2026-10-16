@@ -1,0 +1,45 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.hanchen.veritycustomapi.mixin",
+  "refmap": "mixins.verity_extended.refmap.json",
+  "compatibilityLevel": "JAVA_17",
+  "plugin": "com.hanchen.veritycustomapi.mixin.MixinPlugin",
+  "mixins": [
+    "VerityDemonTransformationMixin",
+    "VerityServerSafetyMixin",
+    "ServerVerityChatMixin",
+    "AiManagerPrivateChatMixin",
+    "AiManagerPrivateChatV2Mixin",
+    "AiApiMemoryIsolationMixin",
+    "VerityWorldStateRestoreMixin",
+    "EntityPerchRideMixin",
+    "PlayerRideGraceMixin",
+    "LivingEntityPerchRideMixin",
+    "MobVerityInteractMixin",
+    "EntityRideAccessor",
+    "LivingEntityRideAccessor",
+    "VerityToolsMixin"
+  ],
+  "client": [
+    "ChatHudRendererMixin",
+    "VerityEntitySkinMixin",
+    "VerityEntityTextureMixin",
+    "VerityItemRendererSkinMixin",
+    "PlayTtsClientHandlerMixin",
+    "VerityTalkingStateMixin",
+    "SphereRendererTalkingStateMixin",
+    "PatPatClientRendererMixin",
+    "VerityDemonMmdMixin",
+    "VerityDemonBuiltinPmxMixin",
+    "VerityEntityBuiltinPmxMixin",
+    "VerityDemonRenderRotationMixin",
+    "VerityLocalizationMixin",
+    "CameraAccessor",
+    "SoundManagerAccessor",
+    "SoundEngineAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -36,22 +36,40 @@ public final class VerityUiWidgets {
                                        Button.OnPress onPress) {
         return new Button(x, y, width, height, label, onPress,
                 narration -> narration.get().copy()) {
+            /** -1 表示还没初始化；首帧直接对准目标，不播放入场动画。 */
+            private double verityExt$hover = -1.0D;
+            private long verityExt$lastFrame;
+
             @Override
             protected void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
                 boolean hovered = mouseX >= getX() && mouseX < getX() + this.width
                         && mouseY >= getY() && mouseY < getY() + this.height;
+                long now = net.minecraft.Util.getMillis();
+                long frame = VerityUiAnimation.frameDelta(verityExt$lastFrame, now);
+                verityExt$lastFrame = now;
+                if (verityExt$hover < 0.0D) {
+                    verityExt$hover = hovered ? 1.0D : 0.0D;
+                }
+                // 侧栏这类透明按钮是导航，悬停必须即时；普通按钮保留约 45ms 过渡
+                boolean transparent = (background >>> 24) == 0;
+                double divisor = transparent ? 12.0D : 45.0D;
+                verityExt$hover = VerityUiAnimation.approach(verityExt$hover,
+                        hovered ? 1.0D : 0.0D, frame / divisor);
+                double hover = verityExt$hover;
+
                 // 三种底色三种悬停方式：
                 //   全透明 → 悬停给一层淡底；淡底 → 提不透明度；实色 → 提亮 RGB
                 int alpha = background >>> 24;
                 int fill;
                 if (alpha == 0) {
-                    fill = hovered ? VerityUiTheme.ROW_HOVER : 0;
-                } else if (!hovered) {
-                    fill = background;
+                    // 透明按钮只淡入 alpha，不要从黑色开始插值，否则中途会闪一层灰
+                    fill = VerityUiDraw.withAlpha(VerityUiTheme.ROW_HOVER,
+                            (int) Math.round(((VerityUiTheme.ROW_HOVER >>> 24) & 0xFF) * hover));
                 } else if (alpha >= 0xE0) {
-                    fill = VerityUiDraw.brighten(background);
+                    fill = VerityUiDraw.blend(background, VerityUiDraw.brighten(background), hover);
                 } else {
-                    fill = VerityUiDraw.raiseAlpha(background, 0x1A);
+                    fill = VerityUiDraw.blend(background,
+                            VerityUiDraw.raiseAlpha(background, 0x1A), hover);
                 }
                 if ((fill >>> 24) != 0) {
                     VerityUiDraw.fillRounded(graphics, getX(), getY(),
@@ -63,11 +81,16 @@ public final class VerityUiWidgets {
                 if ((fill >>> 24) >= 0x60) {
                     VerityUiDraw.strokeRounded(graphics, getX(), getY(),
                             getX() + this.width, getY() + this.height, 4,
-                            VerityUiTheme.CONTROL_BORDER);
+                            VerityUiDraw.blend(VerityUiTheme.CONTROL_BORDER,
+                                    VerityUiTheme.ACCENT, hover * 0.45D));
                 }
+                int animatedText = VerityUiDraw.blend(textColor,
+                        VerityUiDraw.brighten(textColor), hover * 0.65D);
+                // 悬停时文字轻微上浮 1px，配合底色变化形成「按钮被托起」的感觉
+                int lift = (int) Math.round(hover);
                 graphics.drawCenteredString(font, getMessage(),
                         getX() + this.width / 2,
-                        getY() + (this.height - 8) / 2, textColor);
+                        getY() + (this.height - 8) / 2 - lift, animatedText);
             }
         };
     }
@@ -101,12 +124,25 @@ public final class VerityUiWidgets {
     public static Checkbox pillSwitch(int x, int y, int width, int height,
                                       boolean selected, Consumer<Boolean> onToggle) {
         return new Checkbox(x, y, width, height, Component.empty(), selected) {
+            /** 滑块位置：0=关，1=开；首帧直接对准初始状态。 */
+            private double verityExt$knob = -1.0D;
+            private long verityExt$lastFrame;
+
             @Override
             public void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
                 boolean hovered = mouseX >= getX() && mouseX < getX() + this.width
                         && mouseY >= getY() && mouseY < getY() + this.height;
+                long now = net.minecraft.Util.getMillis();
+                long frame = VerityUiAnimation.frameDelta(verityExt$lastFrame, now);
+                verityExt$lastFrame = now;
+                double target = this.selected() ? 1.0D : 0.0D;
+                if (verityExt$knob < 0.0D) {
+                    verityExt$knob = target;
+                }
+                // 约 65ms 滑到位，比按钮稍慢一点但仍要跟手
+                verityExt$knob = VerityUiAnimation.approach(verityExt$knob, target, frame / 65.0D);
                 VerityUiDraw.switchPill(graphics, getX(), getY(), this.width, this.height,
-                        this.selected(), hovered);
+                        this.selected(), hovered, verityExt$knob);
             }
 
             @Override

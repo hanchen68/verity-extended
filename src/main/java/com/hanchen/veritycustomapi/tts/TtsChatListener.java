@@ -61,7 +61,7 @@ public class TtsChatListener {
             return;
         }
 
-        com.hanchen.veritycustomapi.OllamaProxyMod.LOGGER.info("【TTS触发】Verity回复: {}", verityContent.length() > 50 ? verityContent.substring(0, 50) + "..." : verityContent);
+        com.hanchen.veritycustomapi.OllamaProxyMod.LOGGER.debug("【TTS触发】Verity回复: {}", verityContent.length() > 50 ? verityContent.substring(0, 50) + "..." : verityContent);
 
         TtsManager.speak(verityContent, resolveVerityEntityId());
     }

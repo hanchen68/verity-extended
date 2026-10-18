@@ -87,17 +87,34 @@ public final class VerityUiDraw {
      */
     public static void switchPill(GuiGraphics g, int left, int top, int width, int height,
                                   boolean on, boolean hovered) {
+        switchPill(g, left, top, width, height, on, hovered, on ? 1.0D : 0.0D);
+    }
+
+    /**
+     * 带滑块进度的药丸开关。
+     *
+     * @param progress 0 = 关，1 = 开；由控件按时间推进，形成滑块滑动效果
+     */
+    public static void switchPill(GuiGraphics g, int left, int top, int width, int height,
+                                  boolean on, boolean hovered, double progress) {
+        double p = Math.max(0.0D, Math.min(1.0D, progress));
         int radius = height / 2;
-        int track = on
-                ? (hovered ? brighten(VerityUiTheme.CONTROL_ON) : VerityUiTheme.CONTROL_ON)
-                : (hovered ? 0x73FFFFFF : VerityUiTheme.CONTROL_TRACK);
+        int trackOff = hovered ? blend(VerityUiTheme.CONTROL_TRACK, 0x73FFFFFF, 0.35D)
+                : VerityUiTheme.CONTROL_TRACK;
+        int trackOn = hovered ? brighten(VerityUiTheme.CONTROL_ON) : VerityUiTheme.CONTROL_ON;
+        int track = blend(trackOff, trackOn, p);
         fillRounded(g, left, top, left + width, top + height, radius, track);
-        if (!on) {
+        if (p < 0.98D) {
+            // 关闭态的描边随滑块滑出逐渐淡掉，避免滑块走到一半边框还很硬。
+            // 只淡 alpha，不从黑色插值——否则中途会泛灰。
+            int borderAlpha = (int) Math.round(
+                    ((VerityUiTheme.CONTROL_BORDER >>> 24) & 0xFF) * (1.0D - p));
             strokeRounded(g, left, top, left + width, top + height, radius,
-                    VerityUiTheme.CONTROL_BORDER);
+                    withAlpha(VerityUiTheme.CONTROL_BORDER, borderAlpha));
         }
         int knobSize = height - 4;
-        int knobX = on ? left + width - knobSize - 2 : left + 2;
+        int travel = Math.max(0, width - knobSize - 4);
+        int knobX = left + 2 + (int) Math.round(travel * p);
         fillRounded(g, knobX, top + 2, knobX + knobSize, top + 2 + knobSize,
                 knobSize / 2, VerityUiTheme.CONTROL_KNOB);
     }
@@ -111,6 +128,28 @@ public final class VerityUiDraw {
      */
     public static int raiseAlpha(int argb, int delta) {
         int a = Math.min(255, ((argb >>> 24) & 0xFF) + delta);
+        return (a << 24) | (argb & 0x00FFFFFF);
+    }
+
+    /** 在两个 ARGB 颜色之间插值，t 会被夹到 0~1；悬停/开关动画共用。 */
+    public static int blend(int from, int to, double t) {
+        double p = Math.max(0.0D, Math.min(1.0D, t));
+        int a = (int) Math.round(((from >>> 24) & 0xFF)
+                + (((to >>> 24) & 0xFF) - ((from >>> 24) & 0xFF)) * p);
+        int r = (int) Math.round(((from >> 16) & 0xFF)
+                + (((to >> 16) & 0xFF) - ((from >> 16) & 0xFF)) * p);
+        int g = (int) Math.round(((from >> 8) & 0xFF)
+                + (((to >> 8) & 0xFF) - ((from >> 8) & 0xFF)) * p);
+        int b = (int) Math.round((from & 0xFF) + ((to & 0xFF) - (from & 0xFF)) * p);
+        return (Math.max(0, Math.min(255, a)) << 24)
+                | (Math.max(0, Math.min(255, r)) << 16)
+                | (Math.max(0, Math.min(255, g)) << 8)
+                | Math.max(0, Math.min(255, b));
+    }
+
+    /** 替换颜色里的 alpha，用于提示淡出。 */
+    public static int withAlpha(int argb, int alpha) {
+        int a = Math.max(0, Math.min(255, alpha));
         return (a << 24) | (argb & 0x00FFFFFF);
     }
 

@@ -117,8 +117,14 @@ public class ClientEventHandler {
             com.hanchen.veritycustomapi.mmd.MmdPlaybackManager.get().stopPlaybackForAllDemons();
             long sessionGeneration = ++clientSessionGeneration;
             VerityAwarenessManager.onLogout();
-            com.hanchen.veritycustomapi.memory.MemoryAutoWriter.resetState();
-            com.hanchen.veritycustomapi.memory.MemoryMetaStore.clear();
+            try {
+                com.hanchen.veritycustomapi.memory.MemoryAutoWriter.resetState();
+                com.hanchen.veritycustomapi.memory.MemoryMetaStore.clear();
+            } catch (Throwable error) {
+                // 运行中替换 jar 时，惰性加载的类可能抛 NoClassDefFoundError（Error，不是 Exception）。
+                // 清理失败不应把退出世界变成崩溃；正常启动时不会走到这里。
+                OllamaProxyMod.LOGGER.warn("退出世界时清理记忆状态失败（可忽略）: {}", error.toString());
+            }
             VerityDialogueFeed.clear();
             ReminderManager.clear();
             OriginalVeritySttInjector.endSession(sessionGeneration);
@@ -377,18 +383,16 @@ public class ClientEventHandler {
                             } catch (Throwable t) {
                                 OllamaProxyMod.LOGGER.warn("无法打开云端配置网站: {}", t.getMessage());
                             }
-                        } else {
-                            // 用户点击"否"：关闭云端配置，使用本地手动配置
-                            ModConfig.CLOUD_ENABLE.set(false);
-                            ConfigManager.saveCommonConfig();
                         }
-                        // cloudWarningShown 保持 true，避免 setScreen 触发的 Init.Post 再次弹窗
+                        // 点「稍后」或直接按 ESC 都不能关闭云端开关：
+                        // ConfirmScreen.onClose() 会回调 false，以前这里把 false 当成「否」并写盘，
+                        // 结果玩家只想跳过提示，云端配置却被永久关掉了。
                         mc.setScreen(titleScreen);
                     },
                     Component.literal("云端配置"),
-                    Component.literal("检测到云端配置未完成。\n\n未配置云端将无法使用内置 API，\n请点击「是」前往网站获取配置密钥，\n或点击「否」使用本地手动配置。"),
+                    Component.literal("检测到云端配置未完成。\n\n未配置云端将无法使用内置 API，\n请点击「是」前往网站获取配置密钥，\n或点击「稍后」先使用本地配置。"),
                     Component.literal("是"),
-                    Component.literal("否")
+                    Component.literal("稍后")
             );
             mc.setScreen(confirmScreen);
         }

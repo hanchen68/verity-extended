@@ -214,7 +214,10 @@ public final class ResourceCenterScreen extends Screen {
             addItemButton(item.cached ? "应用" : "下载", right - 57, y + 7, 55, () -> skinAction(item, !item.cached));
             if (!compact && item.cached) addItemButton("重新下载", right - 116, y + 7, 55, () -> skinAction(item, true));
         } else if (item.kind == Tab.VOICES) {
-            addItemButton("选择", right - 57, y + 7, 55, () -> selectVoice(item));
+            // 音色是云端按 ID 直接使用，不存在本地下载；当前音色给一个明确的“使用中”
+            Button choose = addItemButton(item.current ? "使用中" : "选择",
+                    right - 57, y + 7, 55, () -> selectVoice(item));
+            if (item.current) choose.active = false;
         } else {
             addItemButton(item.cached ? "重新下载" : "下载", right - 67, y + 7, 65, () -> mmdAction(item));
         }
@@ -224,12 +227,13 @@ public final class ResourceCenterScreen extends Screen {
         if (item.owner && !item.builtin && !compact) addItemButton("隐私管理", right - 146, y + 31, 75, this::openWebsite);
     }
 
-    private void addItemButton(String title, int x, int y, int width, Runnable action) {
+    private Button addItemButton(String title, int x, int y, int width, Runnable action) {
         Button button = VerityUiWidgets.secondaryButton(font, x, y, width, 18,
                     Component.literal(title), ignored -> action.run());
         button.active = !loading;
         itemButtons.add(button);
         addRenderableWidget(button);
+        return button;
     }
 
     private void skinAction(ResourceItem item, boolean force) {
@@ -249,7 +253,7 @@ public final class ResourceCenterScreen extends Screen {
                 if (current.kind == Tab.VOICES) items.set(i, current.withCurrent(current.id.equals(item.id)));
             }
             statusType = StatusType.SUCCESS;
-            status = "已选择音色：" + item.displayName;
+            status = "已选择音色：" + item.displayName + (item.builtin ? "（平台内置，无需下载）" : "（云端音色，无需下载）");
             init(minecraft, width, height);
         } catch (Exception error) {
             statusType = StatusType.ERROR;
@@ -367,7 +371,13 @@ public final class ResourceCenterScreen extends Screen {
             graphics.drawString(font, fit(item.displayName, textWidth), left + 20, y + 8, TEXT);
             String meta = item.id + "  ·  " + item.typeLabel + "  ·  " + privacy(item);
             graphics.drawString(font, fit(meta, textWidth), left + 20, y + 22, MUTED);
-            String detail = item.cached ? "已下载" : "未下载";
+            String detail;
+            if (item.kind == Tab.VOICES) {
+                // 音色由云端按 ID 直接使用，没有本地文件，不能再显示“未下载”
+                detail = item.builtin ? "平台内置  ·  无需下载" : "云端克隆  ·  无需下载";
+            } else {
+                detail = item.cached ? "已下载" : "未下载";
+            }
             if (item.current) detail += "  ·  正在使用";
             if (item.size > 0) detail += "  ·  " + formatBytes(item.size);
             if (!item.createdAt.isBlank()) detail += "  ·  " + item.createdAt;

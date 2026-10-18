@@ -31,7 +31,7 @@ public final class HeadPerchPayload {
         return action;
     }
 
-    /** 骑乘请求的目标实体 id，其它动作恒为 -1。 */
+    /** 骑乘/送礼请求的目标实体 id，其它动作恒为 -1。 */
     public int entityId() {
         return entityId;
     }

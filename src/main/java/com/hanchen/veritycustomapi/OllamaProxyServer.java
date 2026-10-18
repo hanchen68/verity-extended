@@ -319,7 +319,7 @@ public class OllamaProxyServer {
             long remainingSeconds = remainingBudgetMs() / 1000L;
             int effective = (int) Math.max(5L, Math.min(configured, remainingSeconds));
             if (effective < configured) {
-                LOGGER.info("上游读超时按剩余预算收紧: 配置 {}s → 实际 {}s", configured, effective);
+                LOGGER.debug("上游读超时按剩余预算收紧: 配置 {}s → 实际 {}s", configured, effective);
             }
             return effective;
         }
@@ -517,11 +517,21 @@ public class OllamaProxyServer {
                     return;
                 }
 
+                // 联网搜索必须抢在 processResponse 之前：processResponse 一看到 tool_calls
+                // 就「原样透传给 Verity」，而 Verity 不认识我们注入的 web_search，
+                // 会把调用丢掉——玩家看到的就是「工具没有响应」。
+                //
+                // 这里不提前 return，而是把结果替换成「搜索+二次请求」的产物，
+                // 让它继续走原有的结算 / SSE / 空补全重试 / 对话记录，避免漏掉任何一环。
+                String searchAnswer = answerWebSearchBeforeProcess(result.body(), processedRequestBody,
+                        explicitBuildingRequest, routes, billingRequestId, pendingSettlements);
+                if (searchAnswer != null) {
+                    result = new AttemptResult(result.route(), 200, searchAnswer,
+                            null, result.settlements());
+                }
+
                 String processedResponse = processResponse(result.body(), explicitBuildingRequest, routes);
                 processedResponse = maybeAnswerRecallOffload(processedResponse, processedRequestBody,
-                        explicitBuildingRequest, routes, billingRequestId, pendingSettlements);
-                // 联网搜索：模型自己点名 web_search 时才走这里，真去搜再让它带着结果答一次
-                processedResponse = maybeAnswerWebSearch(processedResponse, processedRequestBody,
                         explicitBuildingRequest, routes, billingRequestId, pendingSettlements);
 
                 String extractedText = extractResponseText(processedResponse);
@@ -638,7 +648,7 @@ public class OllamaProxyServer {
                 }
                 last = executeAttempt(route, routeBody);
                 if ("builtin".equals(route.source())) {
-                    LOGGER.info("云端内置 Chat 线路尝试: routeId={}, tier={}, status={}",
+                    LOGGER.debug("云端内置 Chat 线路尝试: routeId={}, tier={}, status={}",
                             route.id(), route.tier(), last.status());
                 } else {
                     LOGGER.info("Chat线路尝试: source={}, endpoint={}, status={}", route.source(),
@@ -1144,7 +1154,7 @@ public class OllamaProxyServer {
                 return rawBody;
             }
             if (bodyJson == null) return rawBody;
-            LOGGER.info("[注入] 注入链开始，顶层字段={}", bodyJson.keySet());
+            LOGGER.debug("[注入] 注入链开始，顶层字段={}", bodyJson.keySet());
 
             // 每项注入各自 try/catch：一处失败不影响其余注入。
             // 若合并为一个 try，任意异常会跳过整条注入链且只留笼统日志，难以定位。
@@ -1460,8 +1470,14 @@ public class OllamaProxyServer {
                 LOGGER.info("[联网搜索] 跳过：没能从请求体里找到用户输入，顶层字段={}", bodyJson.keySet());
                 return;
             }
+            if (!ConfigManager.isWebSearchEnabled()) {
+                // 以前这里不区分「开关关闭」和「没命中关键词」，统一打「没命中触发词」，
+                // 排查时会误以为是关键词问题。例行跳过降为 DEBUG，避免每条消息刷屏。
+                LOGGER.debug("[联网搜索] 跳过：本机未开启联网搜索");
+                return;
+            }
             if (!shouldSearch(query)) {
-                LOGGER.info("[联网搜索] 跳过：这句话没命中触发词（可开「每轮都搜索」强制开启）");
+                LOGGER.debug("[联网搜索] 跳过：这句话没命中触发词（可开「每轮都搜索」强制开启）");
                 return;
             }
 
@@ -1482,11 +1498,11 @@ public class OllamaProxyServer {
             if (anchorIndex >= 0) {
                 JsonObject anchor = messages.get(anchorIndex).getAsJsonObject();
                 anchor.addProperty("content", anchor.get("content").getAsString() + block);
-                LOGGER.info("[联网搜索] 已把 {} 字符搜索结果贴到第 {} 条用户消息", results.length(), anchorIndex);
+                LOGGER.debug("[联网搜索] 已把 {} 字符搜索结果贴到第 {} 条用户消息", results.length(), anchorIndex);
             } else {
                 // 没有 messages 结构时退回原来的做法
                 bodyJson.addProperty("prompt", query + block);
-                LOGGER.info("[联网搜索] 已把 {} 字符搜索结果贴到 prompt", results.length());
+                LOGGER.debug("[联网搜索] 已把 {} 字符搜索结果贴到 prompt", results.length());
             }
         }
 
@@ -1548,7 +1564,7 @@ public class OllamaProxyServer {
             tool.addProperty("type", "function");
             tool.add("function", function);
             tools.add(tool);
-            LOGGER.info("[联网搜索] 已把 web_search 工具注入 tools（当前 {} 个工具）", tools.size());
+            LOGGER.debug("[联网搜索] 已把 web_search 工具注入 tools（当前 {} 个工具）", tools.size());
 
             // 光给工具不够：模型看到一堆工具时不一定意识到「这个可以用来查现实世界」。
             // 原版 Verity 2.0 的提示词里本就写了这条指引，6.2 没有，所以要显式补上。
@@ -1578,7 +1594,7 @@ public class OllamaProxyServer {
                 String existing = message.get("content").getAsString();
                 if (existing.contains("web_search tool available")) return;   // 已经加过
                 message.addProperty("content", existing + "\n\n" + guidance);
-                LOGGER.info("[联网搜索] 已把联网指引并入系统提示词");
+                LOGGER.debug("[联网搜索] 已把联网指引并入系统提示词");
                 return;
             }
         }
@@ -1604,7 +1620,10 @@ public class OllamaProxyServer {
                     JsonObject call = element.getAsJsonObject();
                     JsonObject function = call.has("function") && call.get("function").isJsonObject()
                             ? call.getAsJsonObject("function") : null;
-                    if (function == null || !WEB_SEARCH_TOOL.equals(function.get("name"))) continue;
+                    // 注意：function.get("name") 是 JsonPrimitive，String.equals(JsonElement)
+                    // 恒为 false。这里必须取字符串再比，否则拦截永远不命中，
+                    // tool_calls 会被当成原版工具透传给 Verity，玩家看到「工具没有响应」。
+                    if (function == null || !WEB_SEARCH_TOOL.equals(toolNameOf(call))) continue;
                     String query = "";
                     if (function.has("arguments") && function.get("arguments").isJsonPrimitive()) {
                         try {
@@ -1631,36 +1650,62 @@ public class OllamaProxyServer {
          * <p>二次失败时直接把搜索结果作为回复兜底——玩家至少能看到资料，
          * 总比回一句「我没法联网」强。
          */
-        private String maybeAnswerWebSearch(String processedResponse, String processedRequestBody,
-                                            boolean explicitBuildingRequest,
-                                            List<ConfigManager.ChatRoute> routes,
-                                            String billingRequestId,
-                                            List<BillingSettlement> pendingSettlements) {
-            WebSearchCall call = findWebSearchCall(processedResponse);
-            if (call == null) return processedResponse;
+        /**
+         * 在 processResponse 之前处理 web_search 调用。
+         *
+         * <p>为什么必须在这之前：{@code processResponse} 一看到 tool_calls 就
+         * 「原样透传给 Verity」，而 Verity 不认识我们注入的 web_search，会把调用丢掉，
+         * 玩家看到的就是「工具没有响应」。所以要在它之前把原始 tool_calls 抢下来。
+         *
+         * @return 已经可以回给客户端的完整响应；没命中 web_search 时返回 null，
+         *         交给后续常规流程。
+         */
+        private String answerWebSearchBeforeProcess(String rawResponse, String processedRequestBody,
+                                                    boolean explicitBuildingRequest,
+                                                    List<ConfigManager.ChatRoute> routes,
+                                                    String billingRequestId,
+                                                    List<BillingSettlement> pendingSettlements) {
+            WebSearchCall call = findWebSearchCall(rawResponse);
+            if (call == null) return null;
 
             String query = call.query() == null ? "" : call.query();
             String results = WebSearchClient.search(query, query);
             LOGGER.info("web_search 拦截: query=[{}], 结果 {} 字符", query, results.length());
 
+            // 二次请求是一次新的模型调用，必须用新的 request_id：
+            // 复用首轮的 request_id 会被云端当成同一笔预授权重复提交（409），
+            // 付费线路上整条搜索链路会直接失败。首轮结算仍由外层按原 ID 结算。
             AttemptResult second = executeWebSearchFollowUp(processedRequestBody, call, results,
-                    routes, billingRequestId);
+                    routes, BillingService.requestId());
             if (second != null && second.status() < 400 && second.error() == null) {
                 String followUp = processResponse(second.body(), explicitBuildingRequest, routes);
-                String followUpText = extractResponseText(followUp);
-                if (!followUpText.isBlank() || hasValidAssistantOperation(followUp)) {
-                    pendingSettlements.addAll(second.settlements());
-                    return followUp;
+                if (findWebSearchCall(followUp) != null) {
+                    // 重发体里已经移除了 web_search，模型仍然点名它属于幻觉调用。
+                    // 绝不能把这种调用透传给 Verity（原版不认识这个工具），
+                    // 否则玩家看到的就是「工具没有响应」。
+                    releaseSettlements(new ArrayList<>(second.settlements()), "search_loop_guard");
+                    LOGGER.warn("web_search 二次请求仍返回搜索调用，已拦截（不透传给 Verity）");
+                } else {
+                    String followUpText = extractResponseText(followUp);
+                    if (!followUpText.isBlank() || hasValidAssistantOperation(followUp)) {
+                        pendingSettlements.addAll(second.settlements());
+                        LOGGER.info("web_search 二次请求已产出回复，直接返回");
+                        return followUp;
+                    }
+                    releaseSettlements(new ArrayList<>(second.settlements()), "invalid_response");
                 }
-                releaseSettlements(new ArrayList<>(second.settlements()), "invalid_response");
             } else if (second != null) {
                 releaseSettlements(new ArrayList<>(second.settlements()), "search_follow_up_failed");
             }
+
+            // 二次请求失败：别把搜索结果裸塞给玩家（那是一堆带 URL 的原文），
+            // 让 Verity 拿到一句能读的话，至少对话不中断。
             if (results.isBlank()) {
-                // 搜索也没结果：别再原样回 tool_calls，否则 Verity 会拿到一个无法执行的响应
-                return buildOpenAIResponse("我没能查到相关信息，换个说法或者过一会儿再试试。");
+                LOGGER.warn("web_search 无结果且二次请求失败");
+                return buildOpenAIResponse("这回没查到相关内容，换个说法我再试试？");
             }
-            return buildOpenAIResponse(results);
+            LOGGER.warn("web_search 二次请求失败，只回一句兜底话术（不塞原始结果）");
+            return buildOpenAIResponse("我查到了些资料，但整理时出了点问题。你能再问一次吗？");
         }
 
         /** 组装带 web_search 结果的 messages 重发；重发体移除该工具防循环。 */
@@ -1691,6 +1736,7 @@ public class OllamaProxyServer {
                 JsonArray messages = body.getAsJsonArray("messages");
                 JsonObject assistantEcho = new JsonObject();
                 assistantEcho.addProperty("role", "assistant");
+                assistantEcho.add("content", com.google.gson.JsonNull.INSTANCE);
                 JsonArray echoedCalls = new JsonArray();
                 echoedCalls.add(call.toolCall());
                 assistantEcho.add("tool_calls", echoedCalls);
@@ -1698,7 +1744,11 @@ public class OllamaProxyServer {
                 JsonObject toolResult = new JsonObject();
                 toolResult.addProperty("role", "tool");
                 toolResult.addProperty("tool_call_id", call.id());
-                toolResult.addProperty("content", results);
+                // 空 content 会让部分上游直接报错或让模型自由发挥；
+                // 明确告诉它「没搜到」，避免编造事实。
+                toolResult.addProperty("content", results.isBlank()
+                        ? "搜索没有返回结果。请直接告诉玩家没有查到，不要编造任何事实。"
+                        : results);
                 messages.add(toolResult);
                 return executeWithFailover(routes, GSON.toJson(body), billingRequestId);
             } catch (Throwable error) {
@@ -2062,13 +2112,19 @@ public class OllamaProxyServer {
                 
                 // === 情况2：OpenAI格式外壳 ===
                 if (respJson.has("choices") && !respJson.getAsJsonArray("choices").isEmpty()) {
-                    LOGGER.info("【格式识别】OpenAI格式外壳");
+                    LOGGER.debug("【格式识别】OpenAI格式外壳");
                     
                     JsonObject choiceObj = respJson.getAsJsonArray("choices").get(0).getAsJsonObject();
                     if (choiceObj.has("message")) {
                         JsonObject messageObj = choiceObj.getAsJsonObject("message");
                         if (hasValidToolCalls(messageObj.get("tool_calls"))
                                 || hasValidFunctionCall(messageObj.get("function_call"))) {
+                            if (hasToolCallNamed(messageObj.get("tool_calls"), WEB_SEARCH_TOOL)) {
+                                // 兜底：任何没被 answerWebSearchBeforeProcess 接手的 web_search
+                                // 都不能透传（原版没有这个工具，只会被丢弃）。
+                                LOGGER.warn("【格式识别】仍有未处理的 web_search 调用，改为文本兜底");
+                                return buildOpenAIResponse("联网搜索这次没整理出结果，换个说法再试一次？");
+                            }
                             LOGGER.info("【格式识别】OpenAI 工具调用响应，原样透传给 Verity: {}",
                                     describeToolCalls(messageObj.get("tool_calls")));
                             // 新版原版的「金附魔书」会让一次给一堆随机附魔书，
@@ -2179,7 +2235,7 @@ public class OllamaProxyServer {
                             }
                             
                             // 子情况2c：content是纯文本，直接作为台词返回
-                            LOGGER.info("【格式识别】content是纯文本，直接作为台词返回");
+                            LOGGER.debug("【格式识别】content是纯文本，直接作为台词返回");
                             CameraSkillText plainSkill = scanCameraSkillText(content);
                             fireCameraSkill(plainSkill.requested());
                             String plainContent = applyBilingual(plainSkill.text(), routes);
@@ -2438,6 +2494,17 @@ public class OllamaProxyServer {
             JsonObject function = tool.getAsJsonObject("function");
             return function.has("name") && function.get("name").isJsonPrimitive()
                     ? function.get("name").getAsString() : "";
+        }
+
+        /** tool_calls 里是否点名了某个工具（用于拦截不能透传给原版的扩展工具）。 */
+        private boolean hasToolCallNamed(JsonElement toolCalls, String name) {
+            if (toolCalls == null || !toolCalls.isJsonArray()) return false;
+            for (JsonElement element : toolCalls.getAsJsonArray()) {
+                if (element.isJsonObject() && name.equals(toolNameOf(element.getAsJsonObject()))) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /** 响应里的第一个 recall_offload 调用；没有则返回 null。 */
@@ -2764,7 +2831,7 @@ public class OllamaProxyServer {
                 if (!root.has("usage") || !root.get("usage").isJsonObject()) return;
                 String summary = describeCacheHit(root.getAsJsonObject("usage"));
                 if (!"none".equals(summary)) {
-                    LOGGER.info("【缓存】Prompt 前缀缓存: {}", summary);
+                    LOGGER.debug("【缓存】Prompt 前缀缓存: {}", summary);
                 }
             } catch (Throwable ignored) {
             }

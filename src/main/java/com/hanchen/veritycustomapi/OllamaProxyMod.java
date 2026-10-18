@@ -52,6 +52,8 @@ public class OllamaProxyMod {
         com.hanchen.veritycustomapi.cloud.BillingService.initialize();
         VerityGrowthState.register();
         VerityFeedingEvents.register();
+        com.hanchen.veritycustomapi.gift.VerityGiftEvents.register();
+        com.hanchen.veritycustomapi.compat.VerityKickEvents.register();
         com.hanchen.veritycustomapi.network.VerityPatNetwork.register();
         com.hanchen.veritycustomapi.network.HorrorEventNetwork.register();
         DemonRecallService.register();

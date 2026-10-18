@@ -147,6 +147,9 @@ public class ModConfig {
     public static final ForgeConfigSpec.ConfigValue<String> WEB_SEARCH_CUSTOM_RESULTS;
     public static final ForgeConfigSpec.ConfigValue<String> WEB_SEARCH_CUSTOM_FIELDS;
     public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_DEMON_TRANSFORMATION;
+    public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_GIFT;
+    public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_KICK;
+    public static final ForgeConfigSpec.IntValue DAILY_KARMA_GAIN_CAP;
 
     public static final ForgeConfigSpec.BooleanValue ENABLE_AI_BUILDING;
     public static final ForgeConfigSpec.BooleanValue AI_BUILDING_VERITY_BUILDER_MODE;
@@ -653,6 +656,15 @@ public class ModConfig {
         builder.push("gameplay_safety");
         ALLOW_VERITY_DEMON_TRANSFORMATION = builder
                 .define("allowVerityDemonTransformation", true);
+        ALLOW_VERITY_GIFT = builder
+                .comment("允许玩家潜行 + 丢弃物品（Q）对准 Verity 送礼：每次消耗 1 个，30 秒冷却，好感度 +1")
+                .define("allowVerityGift", true);
+        ALLOW_VERITY_KICK = builder
+                .comment("允许玩家潜行 + 左键踢 Verity：不造成伤害，只推开并让她回应，10 秒冷却")
+                .define("allowVerityKick", true);
+        DAILY_KARMA_GAIN_CAP = builder
+                .comment("每游戏日最多增加多少好感度（喂食、送礼、Verity 自己在对话中加的好感共用）；0 表示不限制")
+                .defineInRange("dailyKarmaGainCap", 3, 0, 20);
         builder.pop();
 
         builder.push("server_verity_adapter");

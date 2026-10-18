@@ -19,7 +19,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -108,6 +110,59 @@ public final class ConversationLogStore {
             OllamaProxyMod.LOGGER.warn("对话记录导出失败: {}", error.toString());
             return null;
         }
+    }
+
+    /**
+     * 导入外部记录：按「时间 + 玩家 + 回复」去重后追加到本地 JSONL。
+     *
+     * @return 实际新增条数
+     */
+    public static int importEntries(List<Entry> incoming) {
+        if (incoming == null || incoming.isEmpty()) {
+            return 0;
+        }
+        Set<String> existing = new HashSet<>();
+        for (Entry entry : load(0)) {
+            existing.add(fingerprint(entry));
+        }
+        StringBuilder data = new StringBuilder();
+        int added = 0;
+        for (Entry entry : incoming) {
+            if (entry == null || (isBlank(entry.user()) && isBlank(entry.assistant()))) {
+                continue;
+            }
+            if (!existing.add(fingerprint(entry))) {
+                continue;
+            }
+            JsonObject object = new JsonObject();
+            object.addProperty("t", entry.at());
+            object.addProperty("w", entry.world() == null ? "" : entry.world());
+            object.addProperty("u", entry.user() == null ? "" : entry.user());
+            object.addProperty("a", entry.assistant() == null ? "" : entry.assistant());
+            data.append(GSON.toJson(object)).append(System.lineSeparator());
+            added++;
+        }
+        if (added == 0) {
+            return 0;
+        }
+        Path file = filePath();
+        try {
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, data.toString(), StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException error) {
+            OllamaProxyMod.LOGGER.warn("对话记录导入失败: {}", error.toString());
+            return 0;
+        }
+        return added;
+    }
+
+    private static String fingerprint(Entry entry) {
+        return entry.at() + "\u0000" + entry.user() + "\u0000" + entry.assistant();
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     public static Path filePath() {

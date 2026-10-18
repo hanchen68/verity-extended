@@ -54,6 +54,7 @@ public final class HeadPerchNetwork {
                 new HeadPerchPayload(HeadPerchPayload.ACTION_RIDE_REQUEST, entityId));
     }
 
+
     private static void handlePayload(HeadPerchPayload payload, Supplier<NetworkEvent.Context> supplier) {
         NetworkEvent.Context context = supplier.get();
         ServerPlayer player = context.getSender();
@@ -69,7 +70,8 @@ public final class HeadPerchNetwork {
                     }
                 }
                 case HeadPerchPayload.ACTION_RIDE_REQUEST -> handleRideRequest(player, entityId);
-                default -> HeadPerchManager.toggle(player);
+                case HeadPerchPayload.ACTION_TOGGLE_PERCH -> HeadPerchManager.toggle(player);
+                default -> OllamaProxyMod.LOGGER.warn("忽略未知的骑乘动作: {}", action);
             }
         });
     }

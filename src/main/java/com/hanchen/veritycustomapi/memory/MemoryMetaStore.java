@@ -56,7 +56,7 @@ public final class MemoryMetaStore {
             if (instance == null || boundServer != server) {
                 instance = new MemoryMetaStore(server.getWorldPath(LevelResource.ROOT).toFile());
                 boundServer = server;
-                OllamaProxyMod.LOGGER.info("记忆元数据仓库已加载: {} 条", instance.entries.size());
+                OllamaProxyMod.LOGGER.debug("记忆元数据仓库已加载: {} 条", instance.entries.size());
             }
             return instance;
         }

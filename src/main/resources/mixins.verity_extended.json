@@ -19,7 +19,8 @@
     "MobVerityInteractMixin",
     "EntityRideAccessor",
     "LivingEntityRideAccessor",
-    "VerityToolsMixin"
+    "VerityToolsMixin",
+    "VerityKarmaCapMixin"
   ],
   "client": [
     "ChatHudRendererMixin",

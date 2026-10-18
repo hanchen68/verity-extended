@@ -82,7 +82,7 @@ public final class ToolListTrimmer {
             }
             body.add("tools", kept);
             String result = body.toString();
-            OllamaProxyMod.LOGGER.info("【省 token】工具清单两阶段装载：{} -> {} 个（本轮：{}）",
+            OllamaProxyMod.LOGGER.debug("【省 token】工具清单两阶段装载：{} -> {} 个（本轮：{}）",
                     total, kept.size(), clip(latestUser, 40));
             return result;
         } catch (Throwable error) {

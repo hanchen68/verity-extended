@@ -65,7 +65,7 @@ public final class ContextTrimmer {
                 return rawBody;
             }
             String result = body.toString();
-            OllamaProxyMod.LOGGER.info("【省 token】上下文瘦身：字符 {} -> {}（最近 {} 轮完整保留）",
+            OllamaProxyMod.LOGGER.debug("【省 token】上下文瘦身：字符 {} -> {}（最近 {} 轮完整保留）",
                     rawBody.length(), result.length(), KEEP_TURNS);
             return result;
         } catch (Throwable error) {
@@ -241,7 +241,7 @@ public final class ContextTrimmer {
             windowed.add(messages.get(i));
         }
         body.add("messages", windowed);
-        OllamaProxyMod.LOGGER.info("【省 token】滑动窗口：{} 条旧消息已转存（{} -> {} 条，窗口 {} 轮/{} token）",
+        OllamaProxyMod.LOGGER.debug("【省 token】滑动窗口：{} 条旧消息已转存（{} -> {} 条，窗口 {} 轮/{} token）",
                 evictTo - evictFrom, before, windowed.size(), WINDOW_TURNS, WINDOW_BUDGET_TOKENS);
         return true;
     }

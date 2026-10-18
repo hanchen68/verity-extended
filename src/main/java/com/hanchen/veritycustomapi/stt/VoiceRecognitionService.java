@@ -67,7 +67,7 @@ public class VoiceRecognitionService {
             recognizer = (SpeechRecognizer) voskClass
                     .getConstructor(String.class)
                     .newInstance(voskModelPath);
-            OllamaProxyMod.LOGGER.info("语音识别模式：本地 Vosk 离线模式（指定路径）");
+            OllamaProxyMod.LOGGER.debug("语音识别模式：本地 Vosk 离线模式（指定路径）");
             unavailableReason = recognizer != null && recognizer.isReady()
                     ? null
                     : buildLocalUnavailableReason(voskModelPath);
@@ -114,7 +114,7 @@ public class VoiceRecognitionService {
                     responseField,
                     null
             );
-            OllamaProxyMod.LOGGER.info("语音识别模式：在线 API 模式（格式：{}，认证：{}，响应字段：{}）", 
+            OllamaProxyMod.LOGGER.debug("语音识别模式：在线 API 模式（格式：{}，认证：{}，响应字段：{}）", 
                     format, authType, responseField);
             unavailableReason = recognizer != null && recognizer.isReady() ? null : "在线语音识别服务不可用";
         } else {
@@ -129,7 +129,7 @@ public class VoiceRecognitionService {
                 recognizer = (SpeechRecognizer) voskClass
                         .getConstructor(String.class)
                         .newInstance(ConfigManager.getVoskModelPath());
-                OllamaProxyMod.LOGGER.info("语音识别模式：本地 Vosk 离线模式");
+                OllamaProxyMod.LOGGER.debug("语音识别模式：本地 Vosk 离线模式");
                 unavailableReason = recognizer != null && recognizer.isReady()
                         ? null
                         : buildLocalUnavailableReason(ConfigManager.getVoskModelPath());

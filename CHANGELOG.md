@@ -512,7 +512,129 @@ Only say you cannot look something up after web_search actually returned nothing
 
 ---
 
-### 十七、版本与构建信息
+### 十七、新增：给 Verity 送礼
+
+**手势：潜行（Shift）+ 丢弃物品（Q），准星对着 Verity。**
+
+- 不占用右键，避免和原版 6.2 的“手持物品右键交接”、潜行空手右键骑乘冲突。
+- 距离 6 格内且视线可达；只接受单个物品，整组 Ctrl+Q 会提示先拆开。
+- 拒绝：Verity 物品本身、装东西的潜影盒/收纳袋、别人的 Verity。
+- 30 秒冷却，按玩家 × 实体存 NBT，重启仍有效；成功后消耗 1 个物品。
+- 好感 +1（受每日上限约束）；播放开心表情、爱心/物品粒子、拾取音效和动作栏提示。
+- 物品详情会一起交给模型：显示名、注册名、方块/食物、附魔数量、磨损、稀有度、
+  是否自定义名称；模型据此生成回应，不再是固定台词。
+- 配置：`gameplay_safety.allowVerityGift`，默认开启。
+
+---
+
+### 十八、新增：踢 Verity
+
+**手势：潜行（Shift）+ 左键。**
+
+- 只接管自己的 Verity；别人的 Verity 仍走原版攻击，避免多人服骚扰。
+- 不造成伤害，只把 Verity 推开；播放击退音效、暴击粒子和 `serious_1` 表情。
+- 动作栏提示，并让 Verity 用一句话回应（生气/委屈/开玩笑）。
+- 10 秒冷却，冷却中仍然不会造成伤害。
+- 不改好感度，避免用踢刷负好感。
+- 配置：`gameplay_safety.allowVerityKick`，默认开启。
+
+---
+
+### 十九、新增：好感度每日上限
+
+之前看起来“每次总结都加好感”，实际来源是原版 AI 自带的 `increase_karma` 工具；
+滚动摘要本身走无 tools 的独立请求，不会加好感。扩展的喂食/送礼也各自固定 +1。
+
+- 新增按存档/游戏日记录的 `KarmaDailyCapData`（SavedData）。
+- 新增 `VerityKarmaCapMixin`，在 `ModEvents.updateAndSyncKarma` 入口拦截正增量，
+  当天额度用完直接取消。
+- 喂食/送礼先查剩余额度；额度用完仍可喂/收礼、播粒子，但提示“今天的好感度已经涨满了”，
+  不再假称 +1。
+- 配置：`gameplay_safety.dailyKarmaGainCap`，默认 `3`，范围 `0~20`，`0` 表示不限制。
+- 已知边界：原版 `change_karma`（直接设值）仍可绕过；目前 AI 主要使用 `increase_karma`。
+
+---
+
+### 二十、对话与日记：全文阅读、导出导入
+
+#### 日记不再截断
+
+日记页由“单行摘要 + 底部 8 行详情”改为**全文文档流**：
+
+- 每篇日记按时间戳 + 正文自动换行；
+- 内容再长也完整显示，不再出现“内容较长，已截断”；
+- 鼠标滚轮滚动，右侧有滚动条。
+
+对话记录页保持原来的列表 + 详情布局。
+
+#### 导出/导入
+
+- 「导出」改为结构化 JSON，同时包含 `conversations` 与 `diaries`；
+  路径 `config/verity_extended/exports/verity-export-<世界>-<时间>.json`。
+- 工具栏新增「导入」：列出导出目录里的 `.json` / `.jsonl`，选中后导入；
+  也支持直接导入 `conversations.jsonl` / `diary.jsonl`。
+- 去重规则：对话按「时间 + 玩家 + 回复」，日记按「时间 + 正文」；重复导入不会翻倍。
+- 导出后「打开」按钮可用，直接调用系统默认程序打开刚导出的文件；
+  重新打开界面时会自动恢复导出目录里最新的文件。
+- 旧版 `.txt` 导出不在新导入列表里；新导出均为可导入 JSON。
+
+---
+
+### 二十一、新增：对话/日记云端备份
+
+对话/日记工具栏新增「云端」按钮（窄窗口显示「云」）：
+
+- **上传当前记录**：把当前存档的全部对话 + 日记打包成同一份导出 JSON，上传到当前云端账号。
+- **恢复最近备份**：拉取云端最近一次备份，按时间去重合并到本地。
+- 只有玩家主动点击才会上传，不做后台自动同步；界面明确提示隐私。
+- 客户端接口：
+  - `POST /api/v1/user/data/backup`
+  - `GET /api/v1/user/data/backup/latest`
+- 云端侧配套：payload 列级 AES-256-GCM 加密、`key_version` 轮换、按账号限流
+  （上传 6 次/分钟、恢复 30 次/分钟、删除 10 次/分钟）。
+- 接口契约见 `docs/对话记录云端同步适配文档.md` 与 `docs/云端适配总览.md`。
+
+---
+
+### 二十二、6.0.0-beta.9 适配与回归
+
+- 编译依赖仍是 `verity-6.0.0-beta.9`；所有 Mixin 注入目标已用字节码逐项核对。
+- 新增 `VerityStructureDetectorTest.verifyBeta9MixinTargets()`，把 beta.9 的
+  `ModEvents`、`AiManager`、`Tools`、`AiAPI`、实体/渲染/TTS/按键/配置字段等目标固定成回归断言。
+- 门控矩阵继续生效：
+  - beta.9 启用扩展自己的喂食/成长、记忆自动写入/上下文瘦身；
+  - 6.2 有原版物品交接、`MemoryRefiner` 时扩展主动让位；
+  - `run_command`、金附魔书限制、语音上下文前缀、肩载避让只在 6.2 启用。
+- 本次是编译、字节码和 Mixin 目标级审计，未实机启动 beta.9；长期使用建议单独开一个 beta.9 实例实测。
+
+---
+
+### 二十三、UI 动画与交互打磨
+
+- 按钮悬停约 45ms 过渡，描边向强调色过渡，文字轻微提亮并上浮 1px。
+- 药丸开关滑块约 65ms 滑动，轨道从灰白过渡到青蓝。
+- 配置界面打开时整体从下方 8px、约 120ms 滑入。
+- 分类标题切页约 90ms 滑入；说明浮层约 80ms 淡入上浮；状态提示最后 0.5 秒淡出。
+- 侧栏是导航，选中高亮和悬停底色改成即时响应，不做滑动延迟。
+- 所有自绘界面共用同一套按钮/开关动画，不改原版控件的点击、焦点和 Tab 导航。
+
+---
+
+### 二十四、其他修复
+
+- 修：主菜单“云端配置未完成”提示框按 ESC 会被当成“否”，把 `cloud.enable` 永久写关；
+  现在点“稍后”或 ESC 都不会修改配置。
+- “重新授权”的“清除”按钮改为“清除授权”，明确会关闭云端开关。
+- 启动时若检测到“有授权凭据但 `cloud.enable=false`”，打 WARN 明确提示。
+- 资源中心音色不再显示“未下载”：音色由云端按 ID 直接使用，改为“平台内置/云端克隆 · 无需下载”，
+  当前音色按钮显示“使用中”。
+- 退出世界清理记忆状态时增加 `Throwable` 兜底；运行中热替换 jar 不再因为
+  `NoClassDefFoundError` 把游戏带崩（正常启动行为不变）。
+- 踢击/送礼提示里统一使用“Verity”，不再用第三人称“她”。
+
+---
+
+### 二十五、版本与构建信息
 
 - 扩展版本：`4.4`
 - Mod ID：`verity_extended`
@@ -522,20 +644,29 @@ Only say you cannot look something up after web_search actually returned nothing
 - 构建命令：`clean test productionJar`
 - 全量自检：**29 项 + 单元测试全部通过**
 - 构建产物：`build/libs/Verity扩展增强-4.4.jar`
+- 配置项总数：**180 项**
 - SHA-256：
 
 ```text
-ca00cc386dc8bfb96e9f97f824182320040aa8eece58066f1dbf15aa0c0d80dd
+803b14ee95ad3e09c23ce8b63c03d76e66c0a93a0693efc226722d14890cec57
 ```
 
 ---
 
-### 十八、升级注意
+### 二十六、升级注意
 
-- 4.3 → 4.4 为纯增量，**配置项总数不变**（新增能力复用已有的
-  `webSearchEnabled` / `webSearchProvider` / `webSearchApiKey` 三项，未加新键）。
+- 4.3 → 4.4 配置项从 **170 → 180**：新增 12 项、移除 2 项。
+  - 新增：`webSearchAlways` + `webSearchCustomUrl/Body/Headers/Results/Fields`（6）、
+    `allowVerityGift` / `allowVerityKick` / `dailyKarmaGainCap`（3）、
+    `plugin.enabled` / `plugin.maxLoaded` / `plugin.allowBlockEdit`（4.3 漏收录，3）。
+  - 移除：`tts_audio_sink` 整段 2 项。
+- 云端 `overrides` 白名单需同步到 180 项；可直接使用 `docs/modConfigKeys-180.js`。
 - 旧的 `webSearchProvider = "TAVILY"` 配置继续有效；想用 DeepSeek 需手动改为 `"DEEPSEEK"`，
   并在 `webSearchApiKey` 填入 DeepSeek 的 API Key（与对话用的可以是同一个）。
+- 云端备份需要云端实现 `POST /api/v1/user/data/backup` 与
+  `GET /api/v1/user/data/backup/latest`；未上线时界面会提示“云端还没有备份”。
+- 升级后确认 `cloud.enable = true`；如果曾经点过旧提示框的“否”，需要在
+  「多人游戏设置/云端与账户」重新开启。
 - 安装前删除旧的 4.3 jar，同 modId 只允许一个 jar。
 
 ---

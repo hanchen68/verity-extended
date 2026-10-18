@@ -44,7 +44,8 @@ public final class VerityRideInteraction {
         Player player = event.getEntity();
 
         if (event.getLevel().isClientSide()) {
-            // 客户端预筛：手势成立才抢先把这条右键拦下来，改走自己的骑乘请求包
+            // 客户端预筛：手势成立才抢先把这条右键拦下来，改走自己的骑乘请求包。
+            // 送礼已改为「潜行 + 丢弃物品」，不在这里抢右键，避免和原版物品交接冲突。
             if (!Boolean.TRUE.equals(ModConfig.SERVER_VERITY_BALL_RIDE.get())) return;
             if (!player.getMainHandItem().isEmpty() || !player.isShiftKeyDown()) return;
             event.setCanceled(true);

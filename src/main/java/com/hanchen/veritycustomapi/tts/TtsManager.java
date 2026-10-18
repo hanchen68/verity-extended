@@ -75,14 +75,14 @@ public class TtsManager {
             return true;
         }
         if (normalizedText.equals(lastSpokenText) && now - lastSpokenAt < SPEAK_DEDUPE_MS) {
-            OllamaProxyMod.LOGGER.info("【TTS】同一句在 {}s 内已念过，跳过重复朗读: {}",
+            OllamaProxyMod.LOGGER.debug("【TTS】同一句在 {}s 内已念过，跳过重复朗读: {}",
                     SPEAK_DEDUPE_MS / 1000, normalizedText);
             return true;
         }
         lastSpokenText = normalizedText;
         lastSpokenAt = now;
         // 记下去重键：万一又出现「同一句念两遍」，对照相邻两行日志就能看出两路的文本差在哪
-        OllamaProxyMod.LOGGER.info("【TTS】朗读(去重键={}, entityId={})", normalizedText, entityId);
+        OllamaProxyMod.LOGGER.debug("【TTS】朗读(去重键={}, entityId={})", normalizedText, entityId);
 
         long expectedSession = sessionGeneration;
         com.hanchen.veritycustomapi.voice.VoiceLanguage display = displayOverride != null

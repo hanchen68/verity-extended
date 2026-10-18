@@ -46,6 +46,15 @@ public final class WebSearchClient {
 
     /** DeepSeek 建议条数 5～10 较稳；计费按请求次数，与条数无关，所以不用为了省钱压低。 */
     private static final int DEEPSEEK_COUNT = 6;
+    /** 官方定义的优质线：rerank_score >= 1.5。 */
+    private static final double DEEPSEEK_GOOD_SCORE = 1.5D;
+    /**
+     * 保底线：实测同一查询的分数受语言和主题影响很大
+     * （「北京今天天气」最高只有 0.72），严格按 1.5 过滤会让整轮搜索变成 0 字符。
+     * 一条优质结果都没有时，宁可给模型前几条低分资料，也不要让它空手回答「查不到」。
+     */
+    private static final double DEEPSEEK_FALLBACK_SCORE = 0.3D;
+    private static final int DEEPSEEK_FALLBACK_RESULTS = 3;
     /** 自定义接口的默认条数。模板里的 {count} 会替换成这个值。 */
     private static final int CUSTOM_COUNT = 6;
 
@@ -181,7 +190,13 @@ public final class WebSearchClient {
         }
 
         JsonArray results = postJson(DEEPSEEK_SEARCH_URL, key, body).getAsJsonArray("results");
-        return parseDeepSeekResults(results);
+        String text = parseDeepSeekResults(results);
+        if (text.isBlank() && results != null && !results.isEmpty()) {
+            // 排障关键：有结果但输出为空，说明分数或摘要字段出了问题，
+            // 不能只在调用方看到「返回 0 字符」而无从下手。
+            log("DeepSeek 返回 " + results.size() + " 条，但摘要全为空或相关性过低（已丢弃）");
+        }
+        return text;
     }
 
     /**
@@ -191,28 +206,53 @@ public final class WebSearchClient {
      */
     static String parseDeepSeekResults(JsonArray results) {
         if (results == null) return "";
-        StringBuilder out = new StringBuilder();
+        StringBuilder strict = new StringBuilder();
+        List<JsonObject> lowScore = new ArrayList<>();
         for (int i = 0; i < results.size(); i++) {
+            if (!results.get(i).isJsonObject()) continue;
             JsonObject item = results.get(i).getAsJsonObject();
-            // rerank_score < 1.5 官方定义为「非优质」，多为软文或弱相关，喂给模型只会干扰
-            if (item.has("rerank_score") && !item.get("rerank_score").isJsonNull()
-                    && item.get("rerank_score").getAsDouble() < 1.5) {
-                continue;
+            double score = deepSeekScore(item);
+            if (score >= DEEPSEEK_GOOD_SCORE) {
+                appendDeepSeekItem(strict, item);
+            } else if (score >= DEEPSEEK_FALLBACK_SCORE && lowScore.size() < DEEPSEEK_FALLBACK_RESULTS) {
+                lowScore.add(item);
             }
-            String title = str(item, "title");
-            // summary 是专为模型阅读写的长摘要（600~800 字）；snippet 是给前端展示的短摘要
-            String text = str(item, "summary");
-            if (text.isBlank()) text = str(item, "snippet");
-            // 带上链接与日期：模型引用来源时更可信，也方便玩家自己核对
-            String url = str(item, "url");
-            String date = str(item, "date");
-            String meta = date;
-            if (!url.isBlank()) {
-                meta = meta.isBlank() ? url : meta + " " + url;
-            }
-            append(out, title, text + (meta.isBlank() ? "" : "\n" + meta));
         }
+        if (strict.length() > 0) return strict.toString();
+
+        // 一条优质结果都没有：按分数取前几条保底，避免整轮搜索 0 字符。
+        // 分数低的资料未必没用（天气/新闻类查询普遍偏低），最终取舍交给模型。
+        lowScore.sort(java.util.Comparator.comparingDouble(WebSearchClient::deepSeekScore).reversed());
+        StringBuilder out = new StringBuilder();
+        for (JsonObject item : lowScore) appendDeepSeekItem(out, item);
         return out.toString();
+    }
+
+    private static double deepSeekScore(JsonObject item) {
+        if (!item.has("rerank_score") || item.get("rerank_score").isJsonNull()) {
+            // 没给分数不能当成 0 分丢掉，否则字段一变整轮搜索就静默为空
+            return Double.MAX_VALUE;
+        }
+        try {
+            return item.get("rerank_score").getAsDouble();
+        } catch (RuntimeException ignored) {
+            return Double.MAX_VALUE;
+        }
+    }
+
+    private static void appendDeepSeekItem(StringBuilder out, JsonObject item) {
+        String title = str(item, "title");
+        // summary 是专为模型阅读写的长摘要（600~800 字）；snippet 是给前端展示的短摘要
+        String text = str(item, "summary");
+        if (text.isBlank()) text = str(item, "snippet");
+        // 带上链接与日期：模型引用来源时更可信，也方便玩家自己核对
+        String url = str(item, "url");
+        String date = str(item, "date");
+        String meta = date;
+        if (!url.isBlank()) {
+            meta = meta.isBlank() ? url : meta + " " + url;
+        }
+        append(out, title, text + (meta.isBlank() ? "" : "\n" + meta));
     }
 
     /**

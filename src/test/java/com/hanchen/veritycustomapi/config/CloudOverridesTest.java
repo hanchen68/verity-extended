@@ -43,6 +43,8 @@ public final class CloudOverridesTest {
         overridesApplyAndClearRestoresLocal();
         saveGuardKeepsPlayerTomlClean();
         localEditBeatsCloudOverride();
+        webSearchSettingsAreLocalOnly();
+        overridesDoNotTouchCloudSwitch();
         saveSitesGoThroughGuard();
 
         CloudOverrides.clear();
@@ -80,7 +82,7 @@ public final class CloudOverridesTest {
         require(fromSpec.equals(fromFields), "规格树枚举与字段枚举不一致：仅规格有 " + difference(fromSpec, fromFields)
                 + "，仅字段有 " + difference(fromFields, fromSpec));
         require(overridable.equals(fromSpec), "有配置项没被覆盖通道接上：" + difference(fromSpec, overridable));
-        require(overridable.size() == 177, "配置项总数变了（期望 177，实际 " + overridable.size() + "）");
+        require(overridable.size() == 180, "配置项总数变了（期望 180，实际 " + overridable.size() + "）");
 
         // cloud.* 是唯一被硬禁的一段，其余全部可下发
         int forbidden = 0;
@@ -333,6 +335,54 @@ public final class CloudOverridesTest {
      * 保存守卫只有在「所有保存都走包装」时才成立。
      * 谁再写一句裸的 {@code COMMON_SPEC.save()}，云端下发值就会开始往玩家 TOML 里渗。
      */
+    /**
+     * 联网搜索整组设置由本机管理，云端无论下发什么都不生效。
+     *
+     * <p>线上实际出现过：本地 TOML 是 {@code webSearchEnabled=true / DEEPSEEK}，
+     * 云端下发 {@code false / TAVILY}，写穿后运行时变成关闭，表现为「联网搜索完全没反应」，
+     * 而配置文件里看起来一直是开着的。反向也一样：云端不该替玩家打开一个他没有配置密钥的搜索。
+     */
+    private static void webSearchSettingsAreLocalOnly() {
+        CloudOverrides.clear();
+        ModConfig.WEB_SEARCH_ENABLED.set(true);
+        ModConfig.WEB_SEARCH_API_KEY.set("local-test-key");
+        ModConfig.WEB_SEARCH_PROVIDER.set("DEEPSEEK");
+
+        apply("{\"ai_extensions\":{\"webSearchEnabled\":false,\"webSearchProvider\":\"TAVILY\"}}");
+        require(ModConfig.WEB_SEARCH_ENABLED.get(), "云端不应把本地开启的搜索关掉");
+        require("DEEPSEEK".equals(ModConfig.WEB_SEARCH_PROVIDER.get()),
+                "本机服务商不应被云端改成与密钥不匹配的值");
+        require(!CloudOverrides.activeKeys().contains("ai_extensions.webSearchEnabled"),
+                "搜索设置不应记为生效覆盖");
+
+        CloudOverrides.clear();
+        ModConfig.WEB_SEARCH_ENABLED.set(false);
+        ModConfig.WEB_SEARCH_API_KEY.set("");
+        ModConfig.WEB_SEARCH_PROVIDER.set("DEEPSEEK");
+
+        apply("{\"ai_extensions\":{\"webSearchEnabled\":true,\"webSearchProvider\":\"TAVILY\"}}");
+        require(!ModConfig.WEB_SEARCH_ENABLED.get(), "云端不应替玩家打开搜索开关");
+        require("DEEPSEEK".equals(ModConfig.WEB_SEARCH_PROVIDER.get()),
+                "关闭状态下服务商也不应由云端改写");
+
+        CloudOverrides.clear();
+        ModConfig.WEB_SEARCH_PROVIDER.set("TAVILY");
+    }
+
+    /**
+     * 云端覆盖不能碰 {@code cloud.enable} 这个总开关。
+     *
+     * <p>它属于硬禁止的 {@code cloud.*} 段；这里用几个普通键做回归，
+     * 防止以后 Slot 映射出错把覆盖写到总开关上。
+     */
+    private static void overridesDoNotTouchCloudSwitch() {
+        CloudOverrides.clear();
+        ModConfig.CLOUD_ENABLE.set(true);
+        apply("{\"hud.dialogueHud\":false,\"ai_extensions.memoryEnabled\":false}");
+        require(ModConfig.CLOUD_ENABLE.get(), "云端覆盖不应改动 cloud.enable");
+        CloudOverrides.clear();
+    }
+
     private static void saveSitesGoThroughGuard() throws Exception {
         Pattern rawSave = Pattern.compile("\\b(COMMON_SPEC|CLIENT_SPEC)\\.save\\(\\)\\s*;");
         List<String> offenders = new ArrayList<>();

@@ -79,6 +79,12 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private final List<ValueRow> values = new ArrayList<>();
     private int categoryIndex;
     private double scrollOffset;
+    /** 侧栏分类按钮（保留引用，放不下时靠滚动调整它们的 Y 与可见性）。 */
+    private final List<Button> sidebarButtons = new ArrayList<>();
+    private double sidebarScroll;
+    /** 上一次布局使用的宽高；窗口尺寸变了就强制重排，避免控件停在旧坐标。 */
+    private int layoutWidth = -1;
+    private int layoutHeight = -1;
     /** 是否正在用鼠标/手指拖动内容列表（触屏没有滚轮时的主要滚动方式）。 */
     private boolean draggingContent;
     /** 置标志等下一次 tick 重建：控件回调里正在遍历 children()，不能当场重建。 */
@@ -92,6 +98,15 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     /** 摄像头"测试"按钮最近一次的结果文本；null 表示还没测过。 */
     private String cameraTestResult;
     private String pairingCode = "";
+    /** 入场动画起点：构造时锁定，之后 resize 不重播。 */
+    private final long openedAt = net.minecraft.Util.getMillis();
+    /** 侧栏选中高亮的当前 Y；导航菜单直接对准目标行。 */
+    private double sidebarHighlightY = -1.0D;
+    /** 最近一次切换分类的时间，用于标题轻微滑入。 */
+    private long categorySwitchAt = openedAt;
+    /** 当前悬停的说明行与开始时间，用于浮层淡入上浮。 */
+    private Row hintRow;
+    private long hintHoverAt;
 
     public NativeOllamaProxyConfigScreen(Screen parent) {
         super(Component.literal("Verity 扩展增强配置"));
@@ -108,6 +123,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         buildCategories();
         categoryIndex = clamp(categoryIndex, 0, Math.max(0, categories.size() - 1));
         scrollOffset = 0;
+        sidebarScroll = 0;
+        sidebarHighlightY = -1.0D;
         draggingContent = false;
         addWidgets();
     }
@@ -117,6 +134,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         super.tick();
         if (statusMessageTimer > 0) {
             statusMessageTimer--;
+        }
+        if (width != layoutWidth || height != layoutHeight) {
+            // 窗口尺寸变化但控件仍是旧坐标时，会出现侧栏/按钮溢出卡片。
+            // resize() 正常会重建，这里再兜底一次，保证最迟下一 tick 回到正确布局。
+            rebuildRows();
         }
         if (rebuildPending) {
             rebuildPending = false;
@@ -186,6 +208,20 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+        // 鼠标在侧栏上时滚动分类列表，而不是内容区
+        if (!usesPagedNavigation()
+                && mouseX >= getSidebarLeft() && mouseX <= getSidebarLeft() + getSidebarWidth()
+                && mouseY >= SIDEBAR_TOP && mouseY <= getContentBottom()) {
+            double max = getMaxSidebarScroll();
+            if (max > 0) {
+                double next = clamp(sidebarScroll - delta * getSidebarItemStep() * 2, 0, max);
+                if (next != sidebarScroll) {
+                    sidebarScroll = next;
+                    applySidebarScroll();
+                    return true;
+                }
+            }
+        }
         if (mouseX < getContentLeft() || mouseX > getPanelRight()
                 || mouseY < getContentTop() || mouseY > getContentBottom()) {
             return super.mouseScrolled(mouseX, mouseY, delta);
@@ -280,7 +316,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         return width < 430;
     }
 
+    /** 侧栏列表的顶部起点。 */
+    private static final int SIDEBAR_TOP = 44;
+
     private boolean usesPagedNavigation() {
+        // 只留给真正放不下的极窄/极矮窗口；普通矮窗口保留左侧列表，改为列表内滚动。
         return width < 300 || height < 220;
     }
 
@@ -292,6 +332,33 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
     private int getSidebarButtonHeight() {
         return Math.max(13, Math.min(19, getSidebarItemStep() - 2));
+    }
+
+    private int getSidebarViewport() {
+        return Math.max(1, getContentBottom() - SIDEBAR_TOP);
+    }
+
+    private int getSidebarContentHeight() {
+        return categories.size() * getSidebarItemStep();
+    }
+
+    private double getMaxSidebarScroll() {
+        if (usesPagedNavigation() || sidebarButtons.isEmpty()) return 0;
+        return Math.max(0, getSidebarContentHeight() - getSidebarViewport());
+    }
+
+    /** 按滚动量重新摆放侧栏按钮；移出可视区的按钮直接隐藏，避免画到标题或底部按钮上。 */
+    private void applySidebarScroll() {
+        sidebarScroll = clamp(sidebarScroll, 0, getMaxSidebarScroll());
+        int step = getSidebarItemStep();
+        int buttonHeight = getSidebarButtonHeight();
+        int bottom = getContentBottom();
+        for (int i = 0; i < sidebarButtons.size(); i++) {
+            Button button = sidebarButtons.get(i);
+            int y = SIDEBAR_TOP + i * step - (int) Math.round(sidebarScroll);
+            button.setY(y);
+            button.visible = y >= SIDEBAR_TOP && y + buttonHeight <= bottom;
+        }
     }
 
     private int getOuterMargin() {
@@ -395,6 +462,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
     private void addWidgets() {
         clearWidgets();
+        sidebarButtons.clear();
         int sidebarLeft = getSidebarLeft();
         int sidebarWidth = getSidebarWidth();
         int sidebarButtonWidth = Math.max(64, sidebarWidth - 12);
@@ -415,14 +483,18 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                         ? categories.get(i).sidebarTitle
                         : categories.get(i).title;
                 String title = fitText(font, displayTitle, sidebarButtonWidth - 10);
-                int y = 44 + i * itemStep;
+                int y = SIDEBAR_TOP + i * itemStep;
                 boolean active = index == categoryIndex;
-                addRenderableWidget(roundedButton(sidebarLeft + 6, y, sidebarButtonWidth, buttonHeight,
+                Button button = roundedButton(sidebarLeft + 6, y, sidebarButtonWidth, buttonHeight,
                         Component.literal(title),
                         0x00000000,
                         active ? VerityUiTheme.TEXT : VerityUiTheme.MUTED,
-                        button -> switchCategory(index)));
+                        ignored -> switchCategory(index));
+                sidebarButtons.add(button);
+                addRenderableWidget(button);
             }
+            // 高度不足时靠滚动查看剩余分类，而不是把整个侧栏换成左右箭头
+            applySidebarScroll();
         }
 
         // Content rows
@@ -437,6 +509,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         }
 
         addFooterWidgets(contentLeft, contentWidth);
+        layoutWidth = width;
+        layoutHeight = height;
     }
 
     /**
@@ -536,6 +610,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         categoryIndex = target;
         scrollOffset = 0;
         statusMessage = "";
+        categorySwitchAt = net.minecraft.Util.getMillis();
         addWidgets();
     }
 
@@ -762,6 +837,17 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         // 半透明：世界透得出来；背后没有世界（主菜单打开）时按普通菜单背景处理
         com.hanchen.veritycustomapi.client.ScreenBackgrounds.draw(this, graphics);
 
+        long now = net.minecraft.Util.getMillis();
+        // 入场：约 120ms 从下方 8px 滑到位置。只包 UI，不移动背景；
+        // 动画期间按钮的点击框仍在最终位置，持续时间很短，不影响操作。
+        double enter = VerityUiAnimation.easeOutCubic(
+                VerityUiAnimation.clamp01((now - openedAt) / 120.0D));
+        int enterOffset = (int) Math.round((1.0D - enter) * 8.0D);
+        graphics.pose().pushPose();
+        if (enterOffset != 0) {
+            graphics.pose().translate(0.0F, enterOffset, 0.0F);
+        }
+
         int sidebarLeft = getSidebarLeft();
         int sidebarWidth = getSidebarWidth();
         int contentLeft = getContentLeft();
@@ -793,22 +879,45 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             int titleLeft = usesPagedNavigation()
                     ? contentLeft + (contentWidth - font.width(fitText(font, category.title, titleWidth))) / 2
                     : contentLeft;
-            graphics.drawString(font, fitText(font, category.title, titleWidth), titleLeft, 20, TEXT);
+            // 切页时标题从右侧 6px 滑入，和侧栏高亮滑动形成同一方向的动作
+            double titleT = VerityUiAnimation.easeOutCubic(
+                    VerityUiAnimation.clamp01((now - categorySwitchAt) / 90.0D));
+            int titleSlide = (int) Math.round((1.0D - titleT) * 6.0D);
+            graphics.drawString(font, fitText(font, category.title, titleWidth),
+                    titleLeft + titleSlide, 20, TEXT);
             if (!usesPagedNavigation() && !category.description.isBlank()) {
-                graphics.drawString(font, fitText(font, category.description, contentWidth), contentLeft, 34, MUTED);
+                graphics.drawString(font, fitText(font, category.description, contentWidth),
+                        contentLeft + titleSlide, 34, MUTED);
             }
         }
 
         if (!usesPagedNavigation()) {
             int itemStep = getSidebarItemStep();
             int buttonHeight = getSidebarButtonHeight();
-            int activeY = 44 + categoryIndex * itemStep;
+            int targetY = SIDEBAR_TOP + categoryIndex * itemStep - (int) Math.round(sidebarScroll);
+            // 侧栏是导航：选中块直接跟到目标行，不做滑动，避免点一下还要等它滑过去
+            sidebarHighlightY = targetY;
+            int activeY = targetY;
             // 选中项：圆角底块 + 左侧强调条。只画一条竖线在半透明卡片上太弱
-            VerityUiDraw.fillRounded(graphics, sidebarLeft + 3, activeY - 1,
-                    sidebarLeft + sidebarWidth - 3, activeY + buttonHeight + 1,
-                    3, VerityUiTheme.CARD_RAISED);
-            VerityUiDraw.fillRounded(graphics, sidebarLeft + 3, activeY - 1,
-                    sidebarLeft + 6, activeY + buttonHeight + 1, 2, ACCENT);
+            if (activeY >= SIDEBAR_TOP && activeY + buttonHeight <= contentBottom) {
+                VerityUiDraw.fillRounded(graphics, sidebarLeft + 3, activeY - 1,
+                        sidebarLeft + sidebarWidth - 3, activeY + buttonHeight + 1,
+                        3, VerityUiTheme.CARD_RAISED);
+                VerityUiDraw.fillRounded(graphics, sidebarLeft + 3, activeY - 1,
+                        sidebarLeft + 6, activeY + buttonHeight + 1, 2, ACCENT);
+            }
+            // 分类放不下时给侧栏一条自己的滚动条，避免玩家不知道还能往下滚
+            double maxSidebarScroll = getMaxSidebarScroll();
+            if (maxSidebarScroll > 0) {
+                int trackX = sidebarLeft + sidebarWidth - 2;
+                int viewport = getSidebarViewport();
+                int thumbHeight = Math.max(16,
+                        (int) (viewport * (double) viewport / getSidebarContentHeight()));
+                int thumbY = SIDEBAR_TOP
+                        + (int) (sidebarScroll * (viewport - thumbHeight) / maxSidebarScroll);
+                graphics.fill(trackX, SIDEBAR_TOP, trackX + 2, contentBottom, SEPARATOR);
+                graphics.fill(trackX, thumbY, trackX + 2, thumbY + thumbHeight, ACCENT);
+            }
         }
 
         graphics.enableScissor(contentLeft - 6, contentTop, contentLeft + contentWidth + 6, contentBottom);
@@ -832,11 +941,19 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
         graphics.fill(sidebarLeft, contentBottom, getPanelRight(), contentBottom + 1, SEPARATOR);
         if (!statusMessage.isEmpty() && statusMessageTimer > 0) {
-            graphics.drawString(font, fitText(font, statusMessage, Math.max(40, contentWidth - 260)),
-                    contentLeft, height - 21, SUCCESS);
+            // 放在内容卡片与底部按钮之间的空档，用整行宽度并居中；
+            // 原来画在按钮同一行、宽度还要减 260，稍长一点的提示就会被截断。
+            String text = fitText(font, statusMessage, Math.max(80, contentWidth));
+            // 最后 0.5 秒淡出；前半段保持纯色，避免刚出现就发灰
+            int statusAlpha = statusMessageTimer >= 10
+                    ? 255 : Math.max(0, statusMessageTimer * 255 / 10);
+            graphics.drawString(font, text,
+                    contentLeft + Math.max(0, (contentWidth - font.width(text)) / 2),
+                    height - 40, VerityUiDraw.withAlpha(SUCCESS, statusAlpha));
         }
 
         super.render(graphics, mouseX, mouseY, partialTick);
+        graphics.pose().popPose();
 
         // 说明浮层画在最上层（super.render 之后），否则会被控件盖住
         drawHintTooltip(graphics, mouseX, mouseY);
@@ -849,7 +966,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
      * 左右也会夹在屏幕内，避免贴边被切掉。
      */
     private void drawHintTooltip(GuiGraphics graphics, int mouseX, int mouseY) {
-        if (!isInsideContent(mouseX, mouseY)) return;
+        if (!isInsideContent(mouseX, mouseY)) {
+            // 离开内容区就清掉，重新悬停同一行时重新播淡入
+            hintRow = null;
+            return;
+        }
         List<Row> rows = getCurrentCategoryRows();
         int y = getContentTop() - (int) scrollOffset;
         Row hovered = null;
@@ -861,7 +982,19 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             }
             y += height;
         }
-        if (hovered == null) return;
+        if (hovered == null) {
+            hintRow = null;
+            return;
+        }
+        long now = net.minecraft.Util.getMillis();
+        if (hovered != hintRow) {
+            hintRow = hovered;
+            hintHoverAt = now;
+        }
+        double hintT = VerityUiAnimation.easeOutCubic(
+                VerityUiAnimation.clamp01((now - hintHoverAt) / 80.0D));
+        int hintLift = (int) Math.round((1.0D - hintT) * 4.0D);
+        int hintAlpha = (int) Math.round(255.0D * hintT);
 
         int maxWidth = Math.min(240, Math.max(120, width - 40));
         List<FormattedCharSequence> lines = new ArrayList<>();
@@ -885,7 +1018,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         int x = clamp(mouseX + 10, 4, Math.max(4, width - boxWidth - 4));
         int boxY = mouseY - boxHeight - 10;
         if (boxY < 4) boxY = Math.min(mouseY + 14, height - boxHeight - 4);
-        boxY = Math.max(4, boxY);
+        boxY = Math.max(2, Math.max(4, boxY) - hintLift);
 
         // 🔴 必须先 flush：GuiGraphics 的 fill 与 drawString 走不同渲染批次，
         // 不 flush 的话前面画过的文字会在浮层之后才提交，直接压在浮层上面——
@@ -893,14 +1026,17 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         graphics.flush();
 
         // 浮层底色用接近实心：它盖在内容之上，透出背景只会干扰阅读
-        VerityUiDraw.fillRounded(graphics, x, boxY, x + boxWidth, boxY + boxHeight, 4, 0xFC14171C);
+        VerityUiDraw.fillRounded(graphics, x, boxY, x + boxWidth, boxY + boxHeight, 4,
+                VerityUiDraw.withAlpha(0xFC14171C, (int) Math.round(0xFC * hintT)));
         VerityUiDraw.strokeRounded(graphics, x, boxY, x + boxWidth, boxY + boxHeight, 4,
-                VerityUiTheme.CARD_BORDER);
+                VerityUiDraw.withAlpha(VerityUiTheme.CARD_BORDER,
+                        (int) Math.round(((VerityUiTheme.CARD_BORDER >>> 24) & 0xFF) * hintT)));
         int lineY = boxY + 5;
         for (int i = 0; i < lines.size(); i++) {
             int color = (i == 0 && title != null && !title.isBlank())
                     ? VerityUiTheme.ACCENT : VerityUiTheme.TEXT;
-            graphics.drawString(font, lines.get(i), x + 7, lineY, color);
+            graphics.drawString(font, lines.get(i), x + 7, lineY,
+                    VerityUiDraw.withAlpha(color, hintAlpha));
             lineY += lineHeight;
         }
     }
@@ -1194,7 +1330,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         if (authorized) {
             info("授权状态", "已授权 (" + maskKey(currentKey) + ")");
             info("同步方式", "授权后自动获取云端配置，无需重启游戏");
-            action("重新授权", "使用新配对码替换当前授权", () -> {
+            action("重新授权", "清除当前授权并关闭云端开关，之后可输入新配对码", () -> {
                 PairingResourceFallback.apply(currentKey);
                 CloudCredentialStore.getInstance().clearAuthorization();
                 ModConfig.CLOUD_API_KEY.set("");
@@ -1202,7 +1338,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 ConfigManager.saveCommonConfig();
                 pairingCode = "";
                 refreshCurrentCategory();
-            }, "清除");
+            }, "清除授权");
         } else {
             info("获取配对码", "打开 verity.xrstudio.cn，登录后生成配对码");
             text("配对码", pairingCode, "", v -> pairingCode = v);
@@ -1212,6 +1348,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
         section("云端设置");
         toggle("启用云端配置", ModConfig.CLOUD_ENABLE::get, false, ModConfig.CLOUD_ENABLE::set);
+        if (authorized && !ModConfig.CLOUD_ENABLE.get()) {
+            info("当前状态", "已授权，但云端开关是关闭的；打开上面的开关并保存后才会同步云端配置");
+        }
         info("同步状态", ConfigManager.isCloudConfigLoaded() ? "云端配置已生效" : "等待云端配置");
         // 「额度消耗」分组（计费方式 / 单次最低扣费 / 各服务单价 / 结算说明）已移除：
         // 这些是云端结算信息，属于运营侧数据，不放在玩家界面上展示。
@@ -1221,6 +1360,17 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         section("原版 Verity");
         text("原版朗读音色", OriginalVerityConfigSync.getVoiceValue("voice", "Daniel"), "Daniel",
                 v -> OriginalVerityConfigSync.queueVoiceString("voice", v));
+
+        section("互动");
+        toggle("允许给 Verity 送礼", ModConfig.ALLOW_VERITY_GIFT::get, true,
+                ModConfig.ALLOW_VERITY_GIFT::set);
+        info("送礼方式", "潜行 + 丢弃物品（Q），准星对着 Verity；每次消耗 1 个，30 秒冷却，好感度 +1");
+        toggle("允许踢 Verity", ModConfig.ALLOW_VERITY_KICK::get, true,
+                ModConfig.ALLOW_VERITY_KICK::set);
+        info("踢的方式", "潜行 + 左键：不造成伤害，只把她推开并让她回应，10 秒冷却");
+        integer("每日好感上限", ModConfig.DAILY_KARMA_GAIN_CAP.get(), 3, 0, 20,
+                ModConfig.DAILY_KARMA_GAIN_CAP::set);
+        info("好感上限", "喂食、送礼和 Verity 自己在对话中加的好感共用这个每日额度；0 表示不限制");
 
         section("界面汉化");
         toggle("汉化原版 Verity 界面", ModConfig.ENABLE_VERITY_LOCALIZATION::get, true,
@@ -1821,9 +1971,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private void debugCategory() {
         section("游戏日志");
         info("日志位置", "游戏目录/logs/latest.log");
-        action("打开 latest.log", "使用系统默认文本程序打开当前游戏日志",
+        action("打开 latest.log", "用默认程序打开当前日志",
                 () -> openLogTarget(false), "打开");
-        action("打开日志目录", "在系统文件管理器中打开游戏 logs 目录",
+        action("打开日志目录", "在文件管理器中打开 logs 目录",
                 () -> openLogTarget(true), "打开");
         section("运行状态记录");
         toggle("记录性能指标", ModConfig.DEBUG_RUNTIME_METRICS::get, false, ModConfig.DEBUG_RUNTIME_METRICS::set);

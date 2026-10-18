@@ -209,7 +209,7 @@ public class OnlineTtsService {
             playerThread.interrupt();
         }
         IS_PLAYING = false;
-        OllamaProxyMod.LOGGER.info("在线 TTS 播放已停止");
+        OllamaProxyMod.LOGGER.debug("在线 TTS 播放已停止");
     }
 
     private static void stopCurrentPlaybackResource() {
@@ -343,7 +343,7 @@ public class OnlineTtsService {
         }
 
         if (activeRoute != null && activeRoute.tier() != null) {
-            OllamaProxyMod.LOGGER.info("云端内置 TTS 线路: routeId={}, tier={}", activeRoute.id(), activeRoute.tier());
+            OllamaProxyMod.LOGGER.debug("云端内置 TTS 线路: routeId={}, tier={}", activeRoute.id(), activeRoute.tier());
         } else {
             OllamaProxyMod.LOGGER.info("自定义 TTS 线路: provider={}, endpoint={}",
                     provider.name(), NetworkSecurity.sanitizedEndpoint(apiUrl));
@@ -375,7 +375,7 @@ public class OnlineTtsService {
         String model = ConfigManager.getTtsApiModel();
         String voice = ConfigManager.getTtsApiVoice();
         if (activeRoute != null && activeRoute.tier() != null) {
-            OllamaProxyMod.LOGGER.info("云端内置 TTS 请求参数: routeId={}, tier={}, textLength={}, format={}",
+            OllamaProxyMod.LOGGER.debug("云端内置 TTS 请求参数: routeId={}, tier={}, textLength={}, format={}",
                     activeRoute.id(), activeRoute.tier(), cleanText.length(), provider.responseFormat);
         } else {
             OllamaProxyMod.LOGGER.info("自定义 TTS 请求参数: provider={}, textLength={}, format={}",

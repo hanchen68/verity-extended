@@ -21,7 +21,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -83,6 +85,54 @@ public final class DiaryManager {
             OllamaProxyMod.LOGGER.warn("日记读取失败: {}", error.toString());
         }
         return entries;
+    }
+
+    /**
+     * 导入外部日记：按「时间 + 正文」去重后追加到本地 JSONL。
+     *
+     * @return 实际新增篇数
+     */
+    public static int importEntries(List<Entry> incoming) {
+        if (incoming == null || incoming.isEmpty()) {
+            return 0;
+        }
+        Set<String> existing = new HashSet<>();
+        for (Entry entry : load()) {
+            existing.add(fingerprint(entry));
+        }
+        StringBuilder data = new StringBuilder();
+        int added = 0;
+        for (Entry entry : incoming) {
+            if (entry == null || entry.text() == null || entry.text().isBlank()) {
+                continue;
+            }
+            if (!existing.add(fingerprint(entry))) {
+                continue;
+            }
+            JsonObject object = new JsonObject();
+            object.addProperty("t", entry.at());
+            object.addProperty("w", entry.world() == null ? "" : entry.world());
+            object.addProperty("d", entry.text());
+            data.append(GSON.toJson(object)).append(System.lineSeparator());
+            added++;
+        }
+        if (added == 0) {
+            return 0;
+        }
+        Path file = storePath();
+        try {
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, data.toString(), StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException error) {
+            OllamaProxyMod.LOGGER.warn("日记导入失败: {}", error.toString());
+            return 0;
+        }
+        return added;
+    }
+
+    private static String fingerprint(Entry entry) {
+        return entry.at() + "\u0000" + entry.text();
     }
 
     public static Path storePath() {

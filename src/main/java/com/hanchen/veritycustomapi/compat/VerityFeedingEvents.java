@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.UUID;
 
 public final class VerityFeedingEvents {
+
     /** 冷却时长：60 秒对应的服务端游戏刻数 */
     private static final long KARMA_COOLDOWN_TICKS = 20L * 60L;
     /** 冷却时间戳按玩家 UUID 保存在实体 NBT 中，服务端重启后仍然生效 */
@@ -88,8 +89,11 @@ public final class VerityFeedingEvents {
         }
         if (!event.getEntity().getAbilities().instabuild) stack.shrink(1);
         verity.playSound(SoundEvents.GENERIC_EAT, 1.0F, 0.9F + verity.getRandom().nextFloat() * 0.2F);
+        boolean canGainKarma = KarmaDailyCap.remaining(level) >= 1.0F;
         ModEvents.updateAndSyncKarma(level, 1.0F);
-        event.getEntity().displayClientMessage(Component.literal("Verity 很喜欢！好感度 +1"), true);
+        event.getEntity().displayClientMessage(Component.literal(canGainKarma
+                ? "Verity 很喜欢！好感度 +1"
+                : "Verity 很喜欢！今天的好感度已经涨满了"), true);
         level.playSound(null, verity.blockPosition(), SoundEvents.EXPERIENCE_ORB_PICKUP,
                 SoundSource.NEUTRAL, 0.55F, 1.25F);
         level.sendParticles(new ItemParticleOption(ParticleTypes.ITEM, fedStack),

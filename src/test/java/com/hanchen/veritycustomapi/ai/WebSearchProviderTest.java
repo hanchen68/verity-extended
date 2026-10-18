@@ -19,6 +19,8 @@ public final class WebSearchProviderTest {
 
     public static void main(String[] args) {
         deepSeekKeepsGoodResultsAndDropsLowScore();
+        deepSeekFallsBackWhenNothingIsGood();
+        deepSeekKeepsItemsWithoutScore();
         deepSeekPrefersSummaryOverSnippet();
         deepSeekFallsBackToSnippet();
         deepSeekToleratesMissingAndNullFields();
@@ -51,6 +53,32 @@ public final class WebSearchProviderTest {
         require(text.contains("优质结果"), "2.4 分的结果应保留");
         require(text.contains("边界结果"), "1.5 分是优质线，应保留（阈值是 < 1.5 才丢）");
         require(!text.contains("软文结果"), "0.8 分的结果应被丢弃");
+    }
+
+    /**
+     * 全部低于优质线时必须保底返回前几条。
+     *
+     * <p>实测「北京今天天气」的最高分只有 0.72，若严格按 1.5 过滤，
+     * 整轮搜索返回 0 字符，模型只能回答「查不到」。
+     */
+    private static void deepSeekFallsBackWhenNothingIsGood() {
+        JsonArray results = array(
+                item("低分甲", "摘要甲", 0.72, "https://a.example/1"),
+                item("低分乙", "摘要乙", 0.55, "https://a.example/2"),
+                item("噪音", "摘要丙", 0.10, "https://a.example/3"));
+        String text = WebSearchClient.parseDeepSeekResults(results);
+        require(text.contains("低分甲"), "没有优质结果时应保底返回最高分条目");
+        require(text.contains("低分乙"), "保底应包含第二条");
+        require(!text.contains("噪音"), "低于保底线的结果仍应丢弃");
+    }
+
+    /** 缺 rerank_score 不能当成 0 分丢掉（字段缺失时整轮搜索会静默变空）。 */
+    private static void deepSeekKeepsItemsWithoutScore() {
+        JsonObject noScore = new JsonObject();
+        noScore.addProperty("title", "没分数");
+        noScore.addProperty("summary", "也要保留");
+        String text = WebSearchClient.parseDeepSeekResults(array(noScore));
+        require(text.contains("没分数"), "缺少 rerank_score 的条目应保留");
     }
 
     /** summary 是给模型读的长摘要，优先级必须高于 snippet。 */

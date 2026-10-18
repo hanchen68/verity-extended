@@ -47,7 +47,7 @@ public class SpeechRecognitionManager {
                     isInitialized.set(candidate.isReady());
                 }
                 if (candidate.isReady()) {
-                    OllamaProxyMod.LOGGER.info("语音识别模块初始化完成");
+                    OllamaProxyMod.LOGGER.debug("语音识别模块初始化完成");
                 } else {
                     OllamaProxyMod.LOGGER.warn("语音识别模块未就绪: {}", candidate.getUnavailableReason());
                 }

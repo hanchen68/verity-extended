@@ -58,7 +58,7 @@ public class ConfigManager {
     public static List<ChatRoute> snapshotChatRoutes() {
         LinkedHashMap<String, ChatRoute> routes = new LinkedHashMap<>();
         BuiltinApiConfig builtin = builtinApi();
-        OllamaProxyMod.LOGGER.info("Cloud Chat 路由诊断: cloudEnabled={}, builtinEnabled={}, tier={}, candidateCount={}",
+        OllamaProxyMod.LOGGER.debug("Cloud Chat 路由诊断: cloudEnabled={}, builtinEnabled={}, tier={}, candidateCount={}",
                 isCloudEnabled(), isEnableBuiltinLlmApis(), getChatTier(),
                 builtin != null && builtin.chat != null && builtin.chat.routes != null
                         ? builtin.chat.routes.size() : 0);
@@ -78,7 +78,7 @@ public class ConfigManager {
                 addChatRoute(routes, "builtin-" + tier, selected,
                         "paid".equals(tier) ? chatCost(true) : chatCost(false));
             }
-            OllamaProxyMod.LOGGER.info("Cloud Chat 路由诊断: selectedUsableCount={}", routes.size());
+            OllamaProxyMod.LOGGER.debug("Cloud Chat 路由诊断: selectedUsableCount={}", routes.size());
             if (!routes.isEmpty()) return List.copyOf(routes.values());
         }
         CloudConfig.Data cfg = cloud();
@@ -101,7 +101,7 @@ public class ConfigManager {
 
     public static List<SttRoute> snapshotSttRoutes() {
         BuiltinApiConfig builtin = builtinApi();
-        OllamaProxyMod.LOGGER.info("Cloud STT 路由诊断: cloudEnabled={}, builtinEnabled={}, tier={}, candidateCount={}",
+        OllamaProxyMod.LOGGER.debug("Cloud STT 路由诊断: cloudEnabled={}, builtinEnabled={}, tier={}, candidateCount={}",
                 isCloudEnabled(), isEnableBuiltinSttApis(), getSttTier(),
                 builtin != null && builtin.stt != null && builtin.stt.routes != null
                         ? builtin.stt.routes.size() : 0);
@@ -115,7 +115,7 @@ public class ConfigManager {
                         .map(route -> toSttRoute((BuiltinSttConfig) route, route.routeId, tier))
                         .filter(ConfigManager::isUsableCloudSttRoute)
                         .toList();
-                OllamaProxyMod.LOGGER.info("Cloud STT 路由诊断: selectedCount={}, usableCount={}",
+                OllamaProxyMod.LOGGER.debug("Cloud STT 路由诊断: selectedCount={}, usableCount={}",
                         selected.size(), usable.size());
                 if (!usable.isEmpty()) return usable;
             }
@@ -995,17 +995,17 @@ public class ConfigManager {
     }
 
     private static void logSelectedBuiltinRoute(String service, String tier, String routeId) {
-        OllamaProxyMod.LOGGER.info("云端内置 {} 线路: routeId={}, tier={}",
+        OllamaProxyMod.LOGGER.debug("云端内置 {} 线路: routeId={}, tier={}",
                 service, safeLog(firstNonBlank(routeId, "auto")), safeLog(tier));
     }
 
     private static void logRouteCompleteness(String service, List<? extends RouteDto> routes) {
         if (routes == null || routes.isEmpty()) {
-            OllamaProxyMod.LOGGER.info("Cloud {} 候选线路诊断: count=0", service);
+            OllamaProxyMod.LOGGER.debug("Cloud {} 候选线路诊断: count=0", service);
             return;
         }
         for (RouteDto route : routes) {
-            OllamaProxyMod.LOGGER.info("Cloud {} 候选线路诊断: routeId={}, tier={}, enabled={}",
+            OllamaProxyMod.LOGGER.debug("Cloud {} 候选线路诊断: routeId={}, tier={}, enabled={}",
                     service, safeLog(route.routeId), safeLog(route.tier), route.enabled);
         }
     }

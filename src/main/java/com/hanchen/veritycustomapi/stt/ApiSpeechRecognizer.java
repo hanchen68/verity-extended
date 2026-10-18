@@ -447,7 +447,7 @@ public class ApiSpeechRecognizer implements SpeechRecognizer {
 
     private void logRequestInfo(String format, String model, int dataSize) {
         if (isBuiltinRoute()) {
-            OllamaProxyMod.LOGGER.info("云端内置 STT 线路请求: routeId={}, tier={}", routeId, routeTier);
+            OllamaProxyMod.LOGGER.debug("云端内置 STT 线路请求: routeId={}, tier={}", routeId, routeTier);
             return;
         }
         OllamaProxyMod.LOGGER.info("===== 语音识别请求 =====");
@@ -477,7 +477,7 @@ public class ApiSpeechRecognizer implements SpeechRecognizer {
                 throw new HttpStatusException(responseCode);
             }
             if (isBuiltinRoute()) {
-                OllamaProxyMod.LOGGER.info("云端内置 STT 线路成功: routeId={}, tier={}, status={}",
+                OllamaProxyMod.LOGGER.debug("云端内置 STT 线路成功: routeId={}, tier={}, status={}",
                         routeId, routeTier, responseCode);
             } else {
                 OllamaProxyMod.LOGGER.info("语音识别API调用成功，响应长度: {} 字符", responseBody.length());

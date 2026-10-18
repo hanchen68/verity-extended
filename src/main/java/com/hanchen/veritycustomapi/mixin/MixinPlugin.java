@@ -144,7 +144,9 @@ public class MixinPlugin implements IMixinConfigPlugin {
                 || mixinClassName.contains("MobVerityInteractMixin")
                 || mixinClassName.contains("EntityRideAccessor")
                 || mixinClassName.contains("LivingEntityRideAccessor")
-                || mixinClassName.contains("VerityToolsMixin")) {
+                || mixinClassName.contains("VerityToolsMixin")
+                || mixinClassName.contains("VerityKarmaCapMixin")
+                || mixinClassName.contains("AiApiMemoryIsolationMixin")) {
             return verityAvailable;
         }
         return true;

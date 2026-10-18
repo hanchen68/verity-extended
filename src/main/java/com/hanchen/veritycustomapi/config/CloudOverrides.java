@@ -47,6 +47,16 @@ public final class CloudOverrides {
     /** 硬禁止下发的配置段。 */
     private static final String FORBIDDEN_ROOT = "cloud";
 
+    /**
+     * 联网搜索整组（开关 / 服务商 / 密钥 / 自定义接口）由本机管理，**无条件**不受云端覆盖。
+     *
+     * <p>服务商与密钥只存在本地，云端下发一个不匹配的服务商（本地 DeepSeek 密钥 +
+     * 云端把 provider 改成 TAVILY）会让搜索直接失效；云端下发 false 还会让开关看起来开着、
+     * 运行时却是关的。因此这组键与 {@code cloud.*} 一样，不参与云端下发。
+     */
+    private static final String WEB_SEARCH_SECTION = "ai_extensions";
+    private static final String WEB_SEARCH_PREFIX = "webSearch";
+
     private CloudOverrides() {
     }
 
@@ -80,6 +90,9 @@ public final class CloudOverrides {
 
     /** 上一次下发的摘要，用来「只在变化时打日志」，否则每次轮询都会刷一遍。 */
     private static String lastSummary = "";
+
+    /** 上一次被本地保留的联网搜索键集合，避免每次拉取配置都打一遍同一条日志。 */
+    private static String lastLocalPinned = "";
 
     // ==================== 键索引 ====================
 
@@ -165,12 +178,18 @@ public final class CloudOverrides {
         List<String> unknown = new ArrayList<>();
         List<String> unloaded = new ArrayList<>();
         List<String> badType = new ArrayList<>();
+        List<String> localPinned = new ArrayList<>();
         Map<Slot, Object> coerced = new LinkedHashMap<>();
 
         for (Map.Entry<List<String>, JsonElement> entry : flat.entrySet()) {
             List<String> path = entry.getKey();
             if (FORBIDDEN_ROOT.equals(path.get(0))) {
                 forbidden.add(dotted(path));
+                continue;
+            }
+            // 联网搜索整组由本机管理：服务商、密钥、开关都在本地，云端一律不参与。
+            if (isWebSearchPath(path)) {
+                localPinned.add(dotted(path));
                 continue;
             }
             Slot slot = index().get(path);
@@ -232,8 +251,21 @@ public final class CloudOverrides {
 
         restoreMissing(accepted);
 
+        String pinnedSummary = localPinned.toString();
+        if (localPinned.isEmpty()) {
+            lastLocalPinned = "";
+        } else if (!pinnedSummary.equals(lastLocalPinned)) {
+            lastLocalPinned = pinnedSummary;
+            OllamaProxyMod.LOGGER.info("联网搜索设置由本机管理，忽略云端覆盖: {}", localPinned);
+        }
         report(flat.size(), accepted.size(), forbidden, unknown, unloaded, badType, outOfRange, keptLocal);
         return accepted.size();
+    }
+
+    /** 是否是联网搜索相关键（{@code ai_extensions.webSearch*}）。 */
+    private static boolean isWebSearchPath(List<String> path) {
+        return path.size() >= 2 && WEB_SEARCH_SECTION.equals(path.get(0))
+                && path.get(1).startsWith(WEB_SEARCH_PREFIX);
     }
 
     /** 清空覆盖并把所有键还原成本地值。云端关闭 / 授权失效 / 下发里不再包含某项时都会走到这里。 */

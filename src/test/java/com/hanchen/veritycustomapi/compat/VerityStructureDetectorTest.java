@@ -129,6 +129,10 @@ public final class VerityStructureDetectorTest {
         // 下面逐条核对每个门控信号在两个真实构建里的取值。
         verifyGatingMatrix();
 
+        // beta.9 专项：Mixin 注入目标必须在这个构建里真实存在。
+        // 只看编译能否通过不够 —— 移动/改名后的方法会在运行期让 Mixin 注入失败。
+        verifyBeta9MixinTargets();
+
         // 5. 右键骑乘的触发点必须挂在 Forge 事件上。
         // 原版会在 PlayerInteractEvent.EntityInteract 阶段取消空手右键（把实体收进物品），
         // 而该事件在 Entity.interact 之前触发，取消后 mobInteract 根本不会执行。
@@ -220,6 +224,53 @@ public final class VerityStructureDetectorTest {
     }
 
     /** 逐条核对每个 6.2 专项适配的门控信号：旧版必须全 false，新版必须全 true。 */
+    /**
+     * beta.9 的 Mixin 注入目标必须真实存在。
+     *
+     * <p>编译通过只说明扩展自己的代码能编；如果原版把方法改名/挪包，Mixin 会在运行期
+     * 注入失败。这里把 beta.9 里所有被扩展注入的类/方法固定成回归断言。
+     */
+    private static void verifyBeta9MixinTargets() throws IOException {
+        if (readBuild(OLD_BUILD) == null) {
+            System.out.println("跳过：未找到 6.0.0-beta.9 构建目录，Mixin 目标未校验");
+            return;
+        }
+        requireTarget(OLD_BUILD, "varmite/verity/event/ModEvents.class", "onPlayerChat", "私聊入口");
+        requireTarget(OLD_BUILD, "varmite/verity/event/ModEvents.class", "updateAndSyncKarma", "好感同步");
+        requireTarget(OLD_BUILD, "varmite/verity/event/ModEvents.class", "onDeath", "死亡世界状态");
+        requireTarget(OLD_BUILD, "varmite/verity/event/ModEvents.class", "onDemonLeaveLevel", "恶魔离场");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/llm/AiManager.class", "lambda$queryAI$4", "旧版回复发送");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/llm/actions/Tools.class", "list_available_itemids", "物品搜索工具");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/llm/AiAPI.class", "ask", "AI 请求");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/verity/VerityEntity.class", "getTextureRL", "皮肤/说话状态");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/verity/VerityEntity.class", "transformIntoDemon", "恶魔转化");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/verity/VerityEntity.class", "m_8119_", "实体 tick");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/verity/rendering/VerityEntityTexture.class", "setBaseTexture", "皮肤贴图");
+        requireTarget(OLD_BUILD, "varmite/verity/environment/items/client/VerityItemRenderer.class", "m_108829_", "物品渲染");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/utils/SphereEntityRenderer.class", "render", "球形态渲染");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/demon/rendering/VerityDemonModel.class", "setCustomAnimations", "恶魔动画");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/demon/rendering/VerityDemonRenderer.class", "render", "恶魔渲染");
+        requireTarget(OLD_BUILD, "varmite/verity/network/PlayTtsClientHandler.class", "handlePacket", "TTS 包处理");
+        requireTarget(OLD_BUILD, "varmite/verity/client/KeybindHandler.class", "onClientTick", "语音按键");
+        requireTarget(OLD_BUILD, "varmite/verity/client/KeybindRegistry.class", "PUSH_TO_TALK", "语音按键映射");
+        requireTarget(OLD_BUILD, "varmite/verity/VerityConfig.class", "USE_TTS", "原版 TTS 开关");
+        requireTarget(OLD_BUILD, "varmite/verity/VerityConfig.class", "API_KEY", "原版 AI 密钥");
+        requireTarget(OLD_BUILD, "varmite/verity/VerityConfig.class", "AI_PROVIDER", "原版 AI 供应商");
+        requireTarget(OLD_BUILD, "varmite/verity/VerityConfig.class", "STT_PROVIDER", "原版 STT 供应商");
+        requireTarget(OLD_BUILD, "varmite/verity/VerityConfig.class", "PERSONALITY", "原版人格");
+        requireTarget(OLD_BUILD, "varmite/verity/entity/VerityState.class", "verityEntity", "原版实体单例");
+        requireTarget(OLD_BUILD, "varmite/verity/event/WorldSpawnData.class", "verityKarma", "原版好感存储");
+        requireTarget(OLD_BUILD, "varmite/verity/event/WorldSpawnData.class", "activeDemon", "原版恶魔存储");
+    }
+
+    private static void requireTarget(String buildDir, String resource, String name, String label)
+            throws IOException {
+        byte[] bytes = readResource(buildDir, resource);
+        require(bytes != null, "beta.9 缺少 " + label + " 目标类: " + resource);
+        require(VerityStructureDetector.hasMethod(bytes, name),
+                "beta.9 缺少 " + label + " 目标: " + name);
+    }
+
     private static void verifyGatingMatrix() throws IOException {
         // 旧版：所有门控必须为 false，走原来的兼容路径
         // 两个构建目录都是第三方产物，不进仓库。缺哪个就跳过对应那一组门控检查，

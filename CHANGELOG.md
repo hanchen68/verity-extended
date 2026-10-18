@@ -21,10 +21,6 @@
 - 端点 `POST https://api.deepseek.com/v1/tools/search`，Bearer 鉴权，与对话共用同一个 Key。
 - 参数：`query`、`count=6`、`need_content=false`，并把玩家原话作为 `ori_question`
   传给服务端帮助理解搜索意图（官方限制 1～128 字符，超长自动截断）。
-- **按 `rerank_score` 过滤**：官方把 1.5 定为「优质结果」线，低于 1.5 的多是软文或弱相关，
-  直接丢弃，不喂给模型。
-- **摘要优先级**：优先 `summary`（600～800 字，专为模型阅读设计），
-  为空时才退回 `snippet`（100～200 字，本是给前端展示用的）。
 - 输出带上链接与发布时间，模型引用来源时更可信，玩家也能自己核对。
 
 **新增网页抓取能力** `WebSearchClient.fetch(url)`：

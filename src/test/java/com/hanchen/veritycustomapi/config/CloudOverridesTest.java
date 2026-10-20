@@ -82,7 +82,7 @@ public final class CloudOverridesTest {
         require(fromSpec.equals(fromFields), "规格树枚举与字段枚举不一致：仅规格有 " + difference(fromSpec, fromFields)
                 + "，仅字段有 " + difference(fromFields, fromSpec));
         require(overridable.equals(fromSpec), "有配置项没被覆盖通道接上：" + difference(fromSpec, overridable));
-        require(overridable.size() == 180, "配置项总数变了（期望 180，实际 " + overridable.size() + "）");
+        require(overridable.size() == 181, "配置项总数变了（期望 181，实际 " + overridable.size() + "）");
 
         // cloud.* 是唯一被硬禁的一段，其余全部可下发
         int forbidden = 0;

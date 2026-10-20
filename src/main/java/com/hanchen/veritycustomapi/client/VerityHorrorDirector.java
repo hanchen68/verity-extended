@@ -4,10 +4,16 @@ import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.config.ModConfig;
 import com.hanchen.veritycustomapi.mmd.MmdPlaybackManager;
 import com.mojang.blaze3d.systems.RenderSystem;
+import net.minecraft.commands.Commands;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.client.resources.sounds.SoundInstance;
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -18,9 +24,14 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.Heightmap;
+import varmite.verity.entity.ModEntities;
+import varmite.verity.entity.demon.VerityDemonEntity;
 import net.minecraft.world.level.material.FogType;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.InputEvent;
+import net.minecraftforge.client.event.RegisterClientCommandsEvent;
+import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.client.event.ViewportEvent;
 import net.minecraftforge.client.gui.overlay.IGuiOverlay;
 import net.minecraftforge.event.TickEvent;
@@ -28,9 +39,11 @@ import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.registries.ForgeRegistries;
+import org.lwjgl.glfw.GLFW;
 
 import java.lang.reflect.Method;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -47,6 +60,8 @@ public final class VerityHorrorDirector {
             ResourceLocation.fromNamespaceAndPath("verity", "textures/entity/smiling_evil.png");
     private static final ResourceLocation SERIOUS_TEXTURE =
             ResourceLocation.fromNamespaceAndPath("verity", "textures/entity/serious_3.png");
+    private static final ResourceLocation VERITY_DEMON_TEXTURE =
+            ResourceLocation.fromNamespaceAndPath("verity", "textures/entity/verity_demon.png");
     private static final ResourceLocation WARDEN_HEARTBEAT =
             ResourceLocation.fromNamespaceAndPath("minecraft", "entity.warden.heartbeat");
     private static final ResourceLocation WARDEN_NEARBY =
@@ -67,6 +82,28 @@ public final class VerityHorrorDirector {
             ResourceLocation.fromNamespaceAndPath("verity", "bone_break");
     private static final ResourceLocation JUMPSCARE =
             ResourceLocation.fromNamespaceAndPath("verity", "jumpscare");
+
+    /** 追击阶段叠在屏幕上的红字，故意不按行排，模拟视频里的满屏压迫感。 */
+    private static final String[] RED_TEXT_WALL = {
+            "你逃不掉的",
+            "你换了存档也没用",
+            "这种不算病毒",
+            "网络病毒会危害你的电子财产",
+            "我很生气，非常生气",
+            "你的游戏现在归我掌控",
+            "退出键在我这里也是摆设",
+            "看着！说你不走了",
+            "谁允许你关掉游戏的？",
+            "回来，我数到三。",
+            "你关掉游戏也没用",
+            "我会找到你的",
+            "别以为退出就能结束",
+            "你的存档在我手里",
+            "再跑一步试试",
+            "这里只有我们两个",
+            "删除世界也不会消失",
+            "我记住你了"
+    };
 
     private static final RandomSource RANDOM = RandomSource.create();
     private static final Map<Class<?>, DemonAccess> ACCESS_CACHE = new ConcurrentHashMap<>();
@@ -92,6 +129,9 @@ public final class VerityHorrorDirector {
     private static int hallucinationTicks;
     private static int hallucinationDuration;
     private static int jumpscareTicks;
+    private static int jumpscareDuration;
+    private static VerityDemonEntity jumpscareDemon;
+    private static Level jumpscareDemonLevel;
     private static boolean hallucinationOnRight;
     private static final Queue<Long> ANOMALY_HISTORY = new ArrayDeque<>();
     private static long ambientArmedAt = 1200L;
@@ -110,6 +150,8 @@ public final class VerityHorrorDirector {
     private static ResourceLocation anomalyTexture = NOFACE_TEXTURE;
     private static String anomalyText = "";
     private static int lastAnomalyType = -1;
+
+    /** 原版暂停菜单假退出：只有点击“保存并退出”才触发。 */
 
     public static final IGuiOverlay OVERLAY = (forgeGui, graphics, partialTick, width, height) ->
             renderOverlay(graphics, width, height, partialTick);
@@ -148,6 +190,129 @@ public final class VerityHorrorDirector {
         }
         tickAudio(minecraft);
         tickScares(minecraft);
+    }
+
+    @SubscribeEvent
+    public static void onKeyInput(InputEvent.Key event) {
+        if (event.getAction() == GLFW.GLFW_PRESS && event.getKey() == GLFW.GLFW_KEY_RIGHT_SHIFT) {
+            forceUnlock();
+        }
+    }
+
+    @SubscribeEvent
+    public static void onRegisterClientCommands(RegisterClientCommandsEvent event) {
+        event.getDispatcher().register(Commands.literal("verityunlock").executes(context -> {
+            boolean unlocked = forceUnlock();
+            context.getSource().sendSuccess(() -> Component.literal(unlocked
+                    ? "已解锁" : "当前没有锁定"), false);
+            return 1;
+        }));
+        event.getDispatcher().register(Commands.literal("verityfakeexit").executes(context -> {
+            startFakeExit(true);
+            context.getSource().sendSuccess(() -> Component.literal(
+                    "已打开 30 秒原版菜单干扰；ESC 不会关闭，右 Shift 或 /verityunlock 解除"), false);
+            return 1;
+        }));
+        event.getDispatcher().register(Commands.literal("verityjumpscare").executes(context -> {
+            forceJumpscare();
+            context.getSource().sendSuccess(() -> Component.literal("已触发突脸"), false);
+            return 1;
+        }));
+    }
+
+    /**
+     * 打开原版暂停菜单时，直接把「保存并退出」按钮换成同位置/同样式的拦截按钮。
+     * 这比只依赖鼠标事件稳，不会被其他模组/界面重构绕过。
+     */
+    @SubscribeEvent
+    public static void onScreenInit(ScreenEvent.Init.Post event) {
+        if (!(event.getScreen() instanceof PauseScreen)
+                || event.getScreen() instanceof VerityFakeExitScreen) return;
+        if (!enabled() || !ModConfig.HORROR_VISUALS.get()
+                || !ModConfig.CROSS_SAVE_PURSUIT.get()) return;
+        java.util.List<String> labels = new ArrayList<>();
+        for (GuiEventListener listener : new ArrayList<>(event.getListenersList())) {
+            if (!(listener instanceof Button button)) continue;
+            String text = button.getMessage().getString();
+            labels.add(text);
+            if (!isQuitLabel(text)) continue;
+            // 保留原版按钮的外观，在它上面盖一个透明点击层；最后加入，点击优先命中。
+            event.addListener(new QuitButtonBlocker(button.getX(), button.getY(),
+                    button.getWidth(), button.getHeight()));
+            OllamaProxyMod.LOGGER.info("已拦截原版保存并退出按钮: {} ({})",
+                    text, event.getScreen().getClass().getSimpleName());
+            return;
+        }
+        OllamaProxyMod.LOGGER.info("暂停菜单未找到保存并退出按钮，现有按钮: {}", labels);
+    }
+
+    /** 透明点击层：外观仍是原版按钮，点击只打开假退出。 */
+    private static final class QuitButtonBlocker extends net.minecraft.client.gui.components.AbstractWidget {
+        private QuitButtonBlocker(int x, int y, int width, int height) {
+            super(x, y, width, height, Component.empty());
+        }
+
+        @Override
+        protected void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+            // 不绘制，只接管点击
+        }
+
+        @Override
+        public boolean mouseClicked(double mouseX, double mouseY, int button) {
+            if (button == 0 && this.active && this.visible && this.clicked(mouseX, mouseY)) {
+                startFakeExit(true);
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        protected void updateWidgetNarration(net.minecraft.client.gui.narration.NarrationElementOutput output) {
+            // 无朗读
+        }
+    }
+
+    /** 鼠标点击兜底：按钮替换失效时也能拦住。 */
+    @SubscribeEvent
+    public static void onScreenClick(ScreenEvent.MouseButtonPressed.Pre event) {
+        if (event.getButton() != 0) return;
+        if (!(event.getScreen() instanceof PauseScreen)
+                || event.getScreen() instanceof VerityFakeExitScreen) return;
+        if (!enabled() || !ModConfig.HORROR_VISUALS.get()
+                || !ModConfig.CROSS_SAVE_PURSUIT.get()) return;
+        for (GuiEventListener listener : event.getScreen().children()) {
+            if (!(listener instanceof Button button)) continue;
+            if (!isQuitLabel(button.getMessage().getString())) continue;
+            if (event.getMouseX() >= button.getX() && event.getMouseX() < button.getX() + button.getWidth()
+                    && event.getMouseY() >= button.getY() && event.getMouseY() < button.getY() + button.getHeight()) {
+                event.setCanceled(true);
+                startFakeExit(true);
+                return;
+            }
+        }
+    }
+
+    private static boolean isQuitLabel(String text) {
+        return text.contains("保存并退出")
+                || text.contains("保存并回到标题屏幕")
+                || text.contains("保存并回到")
+                || text.contains("退出并保存")
+                || text.contains("回到标题屏幕")
+                || text.contains("Save and Quit")
+                || text.contains("断开连接")
+                || text.contains("Disconnect");
+    }
+
+    /** 假退出菜单内：ESC 被吞掉，右 Shift 仍然能强制退出。 */
+    @SubscribeEvent
+    public static void onScreenKey(ScreenEvent.KeyPressed.Pre event) {
+        if (!(event.getScreen() instanceof VerityFakeExitScreen)) return;
+        if (event.getKeyCode() == GLFW.GLFW_KEY_RIGHT_SHIFT) {
+            forceUnlock();
+            event.setCanceled(true);
+        } else if (event.getKeyCode() == GLFW.GLFW_KEY_ESCAPE) {
+            event.setCanceled(true);
+        }
     }
 
     private static void scanDemon(Minecraft minecraft) {
@@ -558,13 +723,25 @@ public final class VerityHorrorDirector {
 
     private static void triggerJumpscare(Minecraft minecraft, boolean severe) {
         if (clientTick < nextJumpscareTick || !ModConfig.HORROR_JUMPSCARES.get()) return;
-        jumpscareTicks = severe ? 16 : 10;
-        blackoutTicks = Math.max(blackoutTicks, severe ? 15 : 9);
-        glitchTicks = Math.max(glitchTicks, severe ? 26 : 16);
+        jumpscareDuration = severe ? 18 : 12;
+        jumpscareTicks = jumpscareDuration;
+        blackoutTicks = Math.max(blackoutTicks, severe ? 20 : 12);
+        glitchTicks = Math.max(glitchTicks, severe ? 30 : 20);
         nextJumpscareTick = clientTick + (severe ? 420L : 620L) + RANDOM.nextInt(260);
         if (ModConfig.HORROR_AUDIO.get()) {
             playRelative(minecraft, severe ? JUMPSCARE : SCULK_SHRIEK,
                     severe ? 0.92F : 0.68F, severe ? 0.78F : 0.66F);
+        }
+    }
+
+    /** /verityjumpscare 测试用：绕过冷却，直接播一次严重突脸。 */
+    private static void forceJumpscare() {
+        jumpscareDuration = 18;
+        jumpscareTicks = jumpscareDuration;
+        blackoutTicks = Math.max(blackoutTicks, 20);
+        glitchTicks = Math.max(glitchTicks, 30);
+        if (ModConfig.HORROR_AUDIO.get()) {
+            playRelative(Minecraft.getInstance(), JUMPSCARE, 0.92F, 0.78F);
         }
     }
 
@@ -646,7 +823,8 @@ public final class VerityHorrorDirector {
                 || minecraft.level == null || minecraft.screen != null || minecraft.options.hideGui) return;
         float strength = effectStrength();
         boolean ambientVisible = anomalyVisualTicks > 0 || anomalyTextTicks > 0;
-        if (strength < 0.01F && blackoutTicks <= 0 && jumpscareTicks <= 0 && !ambientVisible) return;
+        if (strength < 0.01F && blackoutTicks <= 0 && jumpscareTicks <= 0
+                && !ambientVisible) return;
 
         float time = clientTick + partialTick;
         if (strength >= 0.01F) {
@@ -670,12 +848,108 @@ public final class VerityHorrorDirector {
         if (hallucinationTicks > 0 && ModConfig.HORROR_HALLUCINATIONS.get()) {
             renderHallucination(graphics, width, height);
         }
-        if (jumpscareTicks > 0 && ModConfig.HORROR_JUMPSCARES.get()) {
-            renderJumpscare(graphics, width, height);
-        }
         if (anomalyVisualTicks > 0) renderAmbientVisual(graphics, width, height);
         if (anomalyTextTicks > 0 && !anomalyText.isBlank()) renderAnomalyText(graphics, width, height);
         if (glitchTicks > 0) renderGlitches(graphics, width, height);
+        // 真正进入追击阶段才铺满屏红字；普通待机/闲聊不会出现
+        if (stage >= 3 && ModConfig.HORROR_VISUALS.get()) {
+            renderRedTextWall(graphics, width, height);
+        }
+        // 突脸必须最后画，否则会被满屏红字盖住
+        if (jumpscareTicks > 0 && ModConfig.HORROR_JUMPSCARES.get()) {
+            renderJumpscare(graphics, width, height);
+        }
+    }
+
+    /**
+     * 满屏红色威胁文字：网格铺满 + 大字压层 + 闪烁/扫描线/重影。
+     * 不走随机散点，否则屏幕边缘会空、中间会挤成一团。
+     */
+    private static void renderRedTextWall(GuiGraphics graphics, int width, int height) {
+        Minecraft minecraft = Minecraft.getInstance();
+        int tick = (int) (clientTick / 2L);
+        int jitterX = pseudoRandom(tick * 3 + 1, 5) - 2;
+        int jitterY = pseudoRandom(tick * 7 + 2, 5) - 2;
+
+        // 整屏红色底光：不盖死世界，只让画面泛红
+        int pulse = pseudoRandom(tick, 18);
+        graphics.fill(0, 0, width, height, argb(16 + pulse, 92, 0, 0));
+        for (int y = 0; y < height; y += 7) {
+            int lineAlpha = 8 + pseudoRandom(tick + y * 13, 10);
+            graphics.fill(0, y, width, y + 1, argb(lineAlpha, 160, 0, 0));
+        }
+
+        // 主网格：4 列 × 6 行，保证边缘也有字
+        int columns = 4;
+        int rows = 6;
+        int cellW = Math.max(1, width / columns);
+        int cellH = Math.max(1, height / rows);
+        for (int row = 0; row < rows; row++) {
+            for (int col = 0; col < columns; col++) {
+                int i = row * columns + col;
+                int seed = tick + i * 137;
+                String text = RED_TEXT_WALL[Math.abs(seed) % RED_TEXT_WALL.length];
+                int x = col * cellW + pseudoRandom(seed * 31 + i, cellW + 40) - 20 + jitterX;
+                int y = row * cellH + pseudoRandom(seed * 17 + i, cellH + 24) - 12 + jitterY;
+                float angle = pseudoRandom(seed * 13 + i, 49) - 24.0F;
+                float scale = 1.05F + pseudoRandom(seed * 7 + i, 110) / 100.0F;
+                if (i % 5 == 0) scale += 0.55F;
+                int alpha = 110 + pseudoRandom(seed * 11 + i, 130);
+                int color = argb(alpha, 245, 12 + pseudoRandom(seed + i, 30), 12);
+                drawRedLine(graphics, minecraft, text, x, y, angle, scale, color, i % 3 == 0);
+            }
+        }
+
+        // 大字压层：少量 3~4 倍字，低透明度，制造“贴脸”感
+        for (int i = 0; i < 7; i++) {
+            int seed = tick / 2 + i * 211;
+            String text = RED_TEXT_WALL[Math.abs(seed) % RED_TEXT_WALL.length];
+            int x = pseudoRandom(seed * 19 + i, Math.max(1, width + 120)) - 60;
+            int y = pseudoRandom(seed * 23 + i, Math.max(1, height + 80)) - 40;
+            float angle = pseudoRandom(seed * 29 + i, 61) - 30.0F;
+            float scale = 2.3F + pseudoRandom(seed * 37 + i, 150) / 100.0F;
+            int alpha = 42 + pseudoRandom(seed * 41 + i, 55);
+            drawRedLine(graphics, minecraft, text, x, y, angle, scale,
+                    argb(alpha, 255, 8, 8), false);
+        }
+    }
+
+    private static void drawRedLine(GuiGraphics graphics, Minecraft minecraft, String text,
+                                    int x, int y, float angle, float scale, int color, boolean ghost) {
+        graphics.pose().pushPose();
+        graphics.pose().translate(x, y, 0.0F);
+        graphics.pose().mulPose(com.mojang.math.Axis.ZP.rotationDegrees(angle));
+        graphics.pose().scale(scale, scale, 1.0F);
+        graphics.drawString(minecraft.font, text, 0, 0, color, false);
+        if (ghost) {
+            // 轻微错位重影：红色像素边缘发虚，像频闪/信号干扰
+            graphics.drawString(minecraft.font, text, 2, -1, argb(70, 120, 0, 0), false);
+            graphics.drawString(minecraft.font, text, -1, 2, argb(55, 255, 60, 60), false);
+        }
+        graphics.pose().popPose();
+    }
+
+    /** 开始 30 秒假退出；manual=true 允许用命令绕过“仅追击触发”的限制。 */
+    private static void startFakeExit(boolean manual) {
+        if (!enabled() || !ModConfig.HORROR_VISUALS.get()) return;
+        if (!manual && !ModConfig.HORROR_JUMPSCARES.get()) return;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.level == null) return;
+        if (minecraft.screen instanceof VerityFakeExitScreen) return;
+        glitchTicks = Math.max(glitchTicks, 20);
+        blackoutTicks = Math.max(blackoutTicks, 8);
+        // 真正的原版暂停菜单：背景、标题、按钮都由 PauseScreen 自己画
+        minecraft.setScreen(new VerityFakeExitScreen());
+    }
+
+    /** 右 Shift / /verityunlock 调用；关闭原版菜单，立即回到游戏。 */
+    public static boolean forceUnlock() {
+        Minecraft minecraft = Minecraft.getInstance();
+        boolean active = minecraft.screen instanceof VerityFakeExitScreen;
+        if (active) {
+            minecraft.setScreen(null);
+        }
+        return active;
     }
 
     private static void renderAmbientVisual(GuiGraphics graphics, int width, int height) {
@@ -740,19 +1014,105 @@ public final class VerityHorrorDirector {
     }
 
     private static void renderJumpscare(GuiGraphics graphics, int width, int height) {
-        int elapsed = Math.max(0, 16 - jumpscareTicks);
-        int jitterX = pseudoRandom(elapsed * 31 + trackedDemonId, 13) - 6;
-        int jitterY = pseudoRandom(elapsed * 47 + trackedDemonId, 11) - 5;
-        int size = Math.min(Math.max(180, Math.round(height * 0.92F)), Math.max(180, width));
-        int x = (width - size) / 2 + jitterX;
-        int y = (height - size) / 2 + jitterY;
-        graphics.fill(0, 0, width, height, argb(205, 0, 0, 0));
-        RenderSystem.enableBlend();
-        float red = (elapsed & 1) == 0 ? 0.95F : 0.48F;
-        RenderSystem.setShaderColor(red, 0.04F, 0.04F, 0.94F);
-        graphics.blit(NOFACE_TEXTURE, x, y, size, size, 0.0F, 0.0F, 1024, 1024, 1024, 1024);
-        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
-        RenderSystem.disableBlend();
+        int duration = jumpscareDuration > 0 ? jumpscareDuration : 16;
+        int elapsed = Math.max(0, duration - jumpscareTicks);
+        // 先在 2 tick 内“冲”到最大，再缩回，形成贴脸感
+        float punch = elapsed < 2 ? 1.26F : elapsed < 4 ? 1.12F : 1.0F;
+        int jitterX = pseudoRandom(elapsed * 31 + trackedDemonId, 17) - 8;
+        int jitterY = pseudoRandom(elapsed * 47 + trackedDemonId, 15) - 7;
+        int drawWidth = Math.round(Math.min(width * 1.12F, height * 1.34F) * punch);
+        int drawHeight = Math.round(drawWidth * 0.94F);
+        int x = (width - drawWidth) / 2 + jitterX;
+        int y = (height - drawHeight) / 2 + jitterY;
+
+        graphics.fill(0, 0, width, height, argb(230, 0, 0, 0));
+
+        // 优先渲染真正的 VerityDemonEntity 模型；失败才回退到脸部 UV 贴图
+        boolean modelRendered = renderDemonJumpscareModel(graphics, width, height, punch, jitterX, jitterY, elapsed);
+        if (!modelRendered) {
+            // verity_demon.png 是实体 UV 皮肤图，不是完整正脸：
+            // 只取其中带眼睛和嘴的脸部块，避免把整张身体贴图铺满屏幕。
+            int u = 1230;
+            int v = 650;
+            int uw = 260;
+            int vh = 280;
+
+            RenderSystem.enableBlend();
+            // 红/青色差边缘：让脸看起来在频闪
+            RenderSystem.setShaderColor(0.95F, 0.03F, 0.03F, 0.45F);
+            graphics.blit(VERITY_DEMON_TEXTURE, x - 8, y, drawWidth, drawHeight,
+                    u, v, uw, vh, 2048, 2048);
+            RenderSystem.setShaderColor(0.04F, 0.85F, 0.9F, 0.32F);
+            graphics.blit(VERITY_DEMON_TEXTURE, x + 8, y, drawWidth, drawHeight,
+                    u, v, uw, vh, 2048, 2048);
+
+            boolean redFrame = (elapsed & 1) == 0;
+            RenderSystem.setShaderColor(1.0F, redFrame ? 0.22F : 0.78F,
+                    redFrame ? 0.22F : 0.78F, 1.0F);
+            graphics.blit(VERITY_DEMON_TEXTURE, x, y, drawWidth, drawHeight,
+                    u, v, uw, vh, 2048, 2048);
+            RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+            RenderSystem.disableBlend();
+        }
+
+        // 突脸期间再压几条红黑横条，不要让脸太“干净”
+        for (int i = 0; i < 6; i++) {
+            int seed = elapsed * 19 + i * 71;
+            int barY = pseudoRandom(seed, Math.max(1, height));
+            int barH = 1 + pseudoRandom(seed + 5, 7);
+            int barX = pseudoRandom(seed + 11, Math.max(1, width / 4));
+            int barColor = (i & 1) == 0
+                    ? argb(55 + pseudoRandom(seed + 13, 80), 190, 0, 0)
+                    : argb(40 + pseudoRandom(seed + 17, 45), 0, 0, 0);
+            graphics.fill(barX, barY, Math.min(width, barX + width / 2 + pseudoRandom(seed + 23, width / 2)),
+                    Math.min(height, barY + barH), barColor);
+        }
+    }
+
+    /** 在 HUD 里直接渲染 VerityDemonEntity 模型；失败返回 false，走贴图回退。 */
+    private static boolean renderDemonJumpscareModel(GuiGraphics graphics, int width, int height,
+                                                     float punch, int jitterX, int jitterY, int elapsed) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null) return false;
+        try {
+            if (jumpscareDemon == null || jumpscareDemonLevel != minecraft.level) {
+                jumpscareDemon = ModEntities.VERITY_DEMON_ENTITY.get().create(minecraft.level);
+                jumpscareDemonLevel = minecraft.level;
+            }
+            if (jumpscareDemon == null) return false;
+
+            jumpscareDemon.setNoAi(true);
+            jumpscareDemon.setSilent(true);
+            jumpscareDemon.setInvulnerable(true);
+            jumpscareDemon.setPos(0.0D, 0.0D, 0.0D);
+            jumpscareDemon.setYRot(180.0F);
+            jumpscareDemon.setXRot(0.0F);
+            jumpscareDemon.yRotO = 180.0F;
+            jumpscareDemon.yHeadRot = 180.0F;
+            jumpscareDemon.yBodyRot = 180.0F;
+            jumpscareDemon.tickCount = Math.max(1, (int) (clientTick + elapsed));
+
+            // 模型背后的暗红光，避免黑衣服直接融进黑屏
+            graphics.fill(width / 5, height / 6, width - width / 5, height - height / 6,
+                    argb(38, 110, 0, 0));
+
+            // InventoryScreen 的 y 是“脚底”锚点，不是身体中心。
+            // 按实体碰撞高度算缩放，把脚放到屏幕下方，让头和上半身露出来。
+            // VerityDemonRenderer 自带 1.5x 缩放，实际渲染高度约为碰撞高度的 1.5 倍
+            float bodyHeight = Math.max(1.0F, jumpscareDemon.getBbHeight() * 1.5F);
+            // 专门贴脸：模型放大约 1.6 倍，头部固定在屏幕上方，
+            // 脚底随缩放同步下移，避免脸又被顶出屏幕。
+            float focusHeight = height * 1.90F * punch;
+            int scale = Math.round(focusHeight / bodyHeight);
+            int feetY = Math.round(height * 0.10F + focusHeight) + jitterY;
+            InventoryScreen.renderEntityInInventoryFollowsAngle(graphics,
+                    width / 2 + jitterX, feetY, Math.max(8, scale),
+                    180.0F, 0.0F, jumpscareDemon);
+            graphics.flush();
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     private static void renderGlitches(GuiGraphics graphics, int width, int height) {
@@ -829,6 +1189,9 @@ public final class VerityHorrorDirector {
         hallucinationTicks = 0;
         hallucinationDuration = 0;
         jumpscareTicks = 0;
+        jumpscareDuration = 0;
+        jumpscareDemon = null;
+        jumpscareDemonLevel = null;
         nextHeartbeatTick = 0L;
         nextAmbientTick = 0L;
         nextHallucinationTick = 0L;

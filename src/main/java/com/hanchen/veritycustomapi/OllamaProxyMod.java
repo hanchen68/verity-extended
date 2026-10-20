@@ -23,7 +23,7 @@ import org.apache.logging.log4j.Logger;
 @SuppressWarnings({"unused", "SpellCheckingInspection"})
 public class OllamaProxyMod {
     public static final String MOD_ID = "verity_extended";
-    private static final String FALLBACK_VERSION = "4.4";
+    private static final String FALLBACK_VERSION = "4.5";
     public static final Logger LOGGER = LogManager.getLogger();
 
     /** 实际加载的模组版本；独立测试未启动 Forge 时回退到当前发布版本。 */
@@ -57,6 +57,7 @@ public class OllamaProxyMod {
         com.hanchen.veritycustomapi.network.VerityPatNetwork.register();
         com.hanchen.veritycustomapi.network.HorrorEventNetwork.register();
         DemonRecallService.register();
+        com.hanchen.veritycustomapi.compat.CrossSavePursuit.register();
         MinecraftForge.EVENT_BUS.register(VerityGrowthState.class);
 
         // 注册事件总线，监听服务器启停

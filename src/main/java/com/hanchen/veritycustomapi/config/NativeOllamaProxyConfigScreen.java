@@ -23,9 +23,11 @@ import com.hanchen.veritycustomapi.stt.VoskRuntimeSupport;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
@@ -87,6 +89,12 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private int layoutHeight = -1;
     /** 是否正在用鼠标/手指拖动内容列表（触屏没有滚轮时的主要滚动方式）。 */
     private boolean draggingContent;
+    private boolean draggingSidebar;
+    /** 按下后先不判定拖动，移动超过阈值才接管，避免点和拖冲突。 */
+    private boolean dragCandidate;
+    private boolean dragSidebarCandidate;
+    private double dragStartY;
+    private double lastDragY;
     /** 置标志等下一次 tick 重建：控件回调里正在遍历 children()，不能当场重建。 */
     private boolean rebuildPending;
     /** 「立即生效」防抖倒计时（tick）：连点开关时合并成最后一次改动后 0.5 秒同步一次。 */
@@ -126,6 +134,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         sidebarScroll = 0;
         sidebarHighlightY = -1.0D;
         draggingContent = false;
+        draggingSidebar = false;
+        dragCandidate = false;
+        dragSidebarCandidate = false;
         addWidgets();
     }
 
@@ -167,6 +178,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         categoryIndex = clamp(categoryIndex, 0, Math.max(0, categories.size() - 1));
         scrollOffset = clamp(keepScroll, 0, getMaxScroll());
         draggingContent = false;
+        draggingSidebar = false;
+        dragCandidate = false;
+        dragSidebarCandidate = false;
         addWidgets();
     }
 
@@ -235,8 +249,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     /**
-     * 只有点在没有控件上的内容区域时才进入拖拽模式；
-     * 点在按钮/输入框/滑块上时由控件自己处理，避免拖动滑块时误滚动列表。
+     * 触屏/鼠标都先记“拖动候选”，移动超过 4px 才接管滚动。
+     * 这样从按钮/行上开始拖也能滚动列表，正常点击仍然交给控件；
+     * 滑块和输入框保持原操作，不抢拖动。
      */
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
@@ -244,39 +259,83 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         if (!handled && button == 0 && isInsideContent(mouseX, mouseY) && toggleSectionAt(mouseX, mouseY)) {
             return true;
         }
-        if (!handled && button == 0 && isInsideContent(mouseX, mouseY) && hasScrollableContent()) {
-            draggingContent = true;
+        if (button == 0 && !isDragSensitiveControl(mouseX, mouseY)) {
+            boolean content = isInsideContent(mouseX, mouseY) && hasScrollableContent();
+            boolean sidebar = isInsideSidebar(mouseX, mouseY) && getMaxSidebarScroll() > 0;
+            if (content || sidebar) {
+                dragCandidate = true;
+                dragSidebarCandidate = sidebar && !content;
+                dragStartY = mouseY;
+                lastDragY = mouseY;
+            }
         }
         return handled;
     }
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
-        if (super.mouseDragged(mouseX, mouseY, button, dragX, dragY)) {
+        if (button == 0 && dragCandidate) {
+            if (Math.abs(mouseY - dragStartY) > 4.0D) {
+                dragCandidate = false;
+                draggingSidebar = dragSidebarCandidate;
+                draggingContent = !dragSidebarCandidate;
+                lastDragY = mouseY;
+            }
+        }
+        if (button == 0 && (draggingContent || draggingSidebar)) {
+            double deltaY = mouseY - lastDragY;
+            lastDragY = mouseY;
+            if (draggingSidebar) {
+                double max = getMaxSidebarScroll();
+                double next = clamp(sidebarScroll - deltaY, 0, max);
+                if (next != sidebarScroll) {
+                    sidebarScroll = next;
+                    applySidebarScroll();
+                }
+                return true;
+            }
+            double next = clamp(scrollOffset - deltaY, 0, getMaxScroll());
+            if (next != scrollOffset) {
+                cacheWidgetValues();
+                scrollOffset = next;
+                addWidgets();
+            }
             return true;
         }
-        if (!draggingContent || button != 0) {
-            return false;
-        }
-        double next = clamp(scrollOffset - dragY, 0, getMaxScroll());
-        if (next == scrollOffset) {
-            return true;
-        }
-        cacheWidgetValues();
-        scrollOffset = next;
-        addWidgets();
-        return true;
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         draggingContent = false;
+        draggingSidebar = false;
+        dragCandidate = false;
+        dragSidebarCandidate = false;
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
     private boolean isInsideContent(double mouseX, double mouseY) {
         return mouseX >= getContentLeft() - 6 && mouseX <= getPanelRight()
                 && mouseY >= getContentTop() && mouseY <= getContentBottom();
+    }
+
+    private boolean isInsideSidebar(double mouseX, double mouseY) {
+        return !usesPagedNavigation()
+                && mouseX >= getSidebarLeft() && mouseX <= getSidebarLeft() + getSidebarWidth()
+                && mouseY >= SIDEBAR_TOP && mouseY <= getContentBottom();
+    }
+
+    /** 滑块/输入框需要自己处理拖动，不能让列表抢走。 */
+    private boolean isDragSensitiveControl(double mouseX, double mouseY) {
+        for (GuiEventListener child : children()) {
+            if (!(child instanceof AbstractWidget widget)) continue;
+            if (!(widget instanceof AbstractSliderButton) && !(widget instanceof EditBox)) continue;
+            if (mouseX >= widget.getX() && mouseX <= widget.getX() + widget.getWidth()
+                    && mouseY >= widget.getY() && mouseY <= widget.getY() + widget.getHeight()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String sectionKey(String categoryTitle, String sectionTitle) {
@@ -1368,6 +1427,10 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         toggle("允许踢 Verity", ModConfig.ALLOW_VERITY_KICK::get, true,
                 ModConfig.ALLOW_VERITY_KICK::set);
         info("踢的方式", "潜行 + 左键：不造成伤害，只把她推开并让她回应，10 秒冷却");
+        toggle("跨存档追击（实验性）", ModConfig.CROSS_SAVE_PURSUIT::get, false,
+                ModConfig.CROSS_SAVE_PURSUIT::set);
+        info("跨存档追击", "Verity 恶魔化后会记住你：删除存档/新建世界仍会追来。"
+                + "击败追击恶魔即可解除；不会锁退出按钮或删除存档");
         integer("每日好感上限", ModConfig.DAILY_KARMA_GAIN_CAP.get(), 3, 0, 20,
                 ModConfig.DAILY_KARMA_GAIN_CAP::set);
         info("好感上限", "喂食、送礼和 Verity 自己在对话中加的好感共用这个每日额度；0 表示不限制");

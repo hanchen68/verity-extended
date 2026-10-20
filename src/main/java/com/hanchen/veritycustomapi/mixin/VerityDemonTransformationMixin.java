@@ -1,5 +1,6 @@
 package com.hanchen.veritycustomapi.mixin;
 
+import com.hanchen.veritycustomapi.compat.CrossSavePursuit;
 import com.hanchen.veritycustomapi.compat.VerityWorldStateGuard;
 import com.hanchen.veritycustomapi.config.ModConfig;
 import net.minecraft.world.entity.player.Player;
@@ -23,6 +24,15 @@ public abstract class VerityDemonTransformationMixin {
                 VerityWorldStateGuard.restoreIfJustDisabled(player.level());
             }
             cir.setReturnValue(false);
+        }
+    }
+
+    /** 变身成功后写全局标记；即使玩家删档/换世界，记录仍在 config 目录。 */
+    @Inject(method = "transformIntoDemon", at = @At("RETURN"), require = 0, remap = false)
+    private void verityExtended$markCrossSavePursuit(Player player, boolean provoked,
+                                                     CallbackInfoReturnable<Boolean> cir) {
+        if (cir.getReturnValueZ()) {
+            CrossSavePursuit.markTriggered(player);
         }
     }
 }

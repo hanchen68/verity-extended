@@ -149,6 +149,7 @@ public class ModConfig {
     public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_DEMON_TRANSFORMATION;
     public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_GIFT;
     public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_KICK;
+    public static final ForgeConfigSpec.BooleanValue CROSS_SAVE_PURSUIT;
     public static final ForgeConfigSpec.IntValue DAILY_KARMA_GAIN_CAP;
 
     public static final ForgeConfigSpec.BooleanValue ENABLE_AI_BUILDING;
@@ -662,6 +663,9 @@ public class ModConfig {
         ALLOW_VERITY_KICK = builder
                 .comment("允许玩家潜行 + 左键踢 Verity：不造成伤害，只推开并让她回应，10 秒冷却")
                 .define("allowVerityKick", true);
+        CROSS_SAVE_PURSUIT = builder
+                .comment("实验性：Verity 恶魔化后记住你，删除存档/新建世界仍会追来；击败追击恶魔可解除。关闭后不再触发新的追击")
+                .define("crossSavePursuit", false);
         DAILY_KARMA_GAIN_CAP = builder
                 .comment("每游戏日最多增加多少好感度（喂食、送礼、Verity 自己在对话中加的好感共用）；0 表示不限制")
                 .defineInRange("dailyKarmaGainCap", 3, 0, 20);

@@ -14,8 +14,7 @@ public class KeyBindings {
     public static final KeyMapping SPEECH_KEY = new KeyMapping(
             "key.veritycustomapi.speech",
             InputConstants.Type.KEYSYM,
-            // 原版 Verity 的 PUSH_TO_TALK 固定占用 V，扩展再用 V 会互相抢输入。
-            GLFW.GLFW_KEY_CAPS_LOCK,
+            GLFW.GLFW_KEY_V,
             "category.veritycustomapi"
     );
 

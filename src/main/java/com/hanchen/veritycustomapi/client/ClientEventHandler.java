@@ -150,9 +150,8 @@ public class ClientEventHandler {
         }
 
         /**
-         * 原版 Verity 的 PUSH_TO_TALK 固定占用 V，扩展语音键不能再用 V。
-         * 不做冲突扫描，只做一次性迁移：旧版的 V 改成固定 CAPS LOCK。
-         * 用户后来自己改的键不会被反复覆盖。
+         * 语音结果由 VerityChatSender 发 /v，语音键保持 V。
+         * 只做一次性迁移：若之前被改成 CAPS LOCK，恢复为 V；用户自定义键不覆盖。
          */
         private static void restoreLegacySpeechKey(Minecraft mc) {
             if (legacySpeechKeyChecked) return;
@@ -164,20 +163,20 @@ public class ClientEventHandler {
                 if (key != GLFW.GLFW_KEY_V && key != GLFW.GLFW_KEY_CAPS_LOCK) return;
                 Path marker = mc.gameDirectory.toPath()
                         .resolve("config").resolve("verity_extended")
-                        .resolve("speech-key-capslock.flag");
+                        .resolve("speech-key-v.flag");
                 if (Files.exists(marker)) return;
 
-                if (key == GLFW.GLFW_KEY_V) {
+                if (key == GLFW.GLFW_KEY_CAPS_LOCK) {
                     KeyBindings.SPEECH_KEY.setKey(
-                            InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_CAPS_LOCK));
+                            InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_V));
                     KeyMapping.resetMapping();
                     mc.options.save();
-                    OllamaProxyMod.LOGGER.info("[按键] 语音键固定为 CAPS LOCK（原版 Verity 占用 V）");
+                    OllamaProxyMod.LOGGER.info("[按键] 语音键恢复为 V");
                 }
                 Files.createDirectories(marker.getParent());
-                Files.writeString(marker, "Speech key fixed to CAPS LOCK; original Verity uses V.\n");
+                Files.writeString(marker, "Speech key keeps V.\n");
             } catch (Throwable t) {
-                OllamaProxyMod.LOGGER.warn("[按键] 迁移语音键失败: {}", t.getMessage());
+                OllamaProxyMod.LOGGER.warn("[按键] 恢复语音键失败: {}", t.getMessage());
             }
         }
 

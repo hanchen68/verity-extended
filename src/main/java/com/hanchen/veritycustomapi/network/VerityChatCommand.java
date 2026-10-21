@@ -15,6 +15,7 @@ import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraftforge.server.ServerLifecycleHooks;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -31,14 +32,21 @@ public final class VerityChatCommand {
     @SubscribeEvent
     public static void register(RegisterCommandsEvent event) {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
-        dispatcher.register(Commands.literal("v")
-                .then(Commands.argument("message", StringArgumentType.greedyString())
-                        .executes(context -> execute(context.getSource(),
-                                StringArgumentType.getString(context, "message"), false))));
-        dispatcher.register(Commands.literal("v!")
-                .then(Commands.argument("message", StringArgumentType.greedyString())
-                        .executes(context -> execute(context.getSource(),
-                                StringArgumentType.getString(context, "message"), true))));
+        MinecraftServer currentServer = ServerLifecycleHooks.getCurrentServer();
+        boolean solo = currentServer != null
+                && com.hanchen.veritycustomapi.compat.PrivateChatReplySupport
+                .isSoloPlay(currentServer);
+        // 单人世界直接不注册 /v、/v!，避免和原版/单人对话链路打架。
+        if (!solo) {
+            dispatcher.register(Commands.literal("v")
+                    .then(Commands.argument("message", StringArgumentType.greedyString())
+                            .executes(context -> execute(context.getSource(),
+                                    StringArgumentType.getString(context, "message"), false))));
+            dispatcher.register(Commands.literal("v!")
+                    .then(Commands.argument("message", StringArgumentType.greedyString())
+                            .executes(context -> execute(context.getSource(),
+                                    StringArgumentType.getString(context, "message"), true))));
+        }
         // 服务端导航：跟随、停止跟随、叫到身边。
         // 这些是服务端权威状态，客户端在别人服务器上改不了，必须服务端执行。
         // 单机时客户端也能直连集成服务器，所以快捷菜单统一发这条指令就能两端通用。
@@ -79,12 +87,13 @@ public final class VerityChatCommand {
             source.sendFailure(Component.literal("该指令只能由玩家使用。"));
             return 0;
         }
-        // 多人适配开关只对「真的有多个玩家」的场合有意义。
-        // 单人世界（含局域网单人）里挡在这里毫无道理：玩家自己的 Verity 就在旁边，
-        // 却因为没开多人适配而用不了 /v。
-        boolean solo = com.hanchen.veritycustomapi.compat.PrivateChatReplySupport
-                .isSoloPlay(player.getServer());
-        if (!ModConfig.SERVER_VERITY_ADAPTER_ENABLED.get() && !solo) {
+        // 单人世界直接取消 /v；注册阶段已跳过，这里再兜底一次，
+        // 防止命令注册时机导致单人世界仍残留该命令。
+        if (com.hanchen.veritycustomapi.compat.PrivateChatReplySupport
+                .isSoloPlay(player.getServer())) {
+            return 0;
+        }
+        if (!ModConfig.SERVER_VERITY_ADAPTER_ENABLED.get()) {
             player.sendSystemMessage(Component.literal("多人 Verity 对话适配未启用。"));
             return 0;
         }
@@ -96,7 +105,7 @@ public final class VerityChatCommand {
         // /v! 是「公开」版本：服务器关了 allowPublicVerityChat 就直接拒绝，
         // 不是照旧广播。以前 publish 写死成 false，这个开关其实一直没生效。
         // 单人世界里「广播」只是发给自己，没有泄露风险，不该被这个开关挡住。
-        if (publish && !ModConfig.SERVER_VERITY_ALLOW_PUBLIC_CHAT.get() && !solo) {
+        if (publish && !ModConfig.SERVER_VERITY_ALLOW_PUBLIC_CHAT.get()) {
             player.sendSystemMessage(Component.literal("服务器已关闭 Verity 对话公开广播，请改用 /v。"));
             return 0;
         }

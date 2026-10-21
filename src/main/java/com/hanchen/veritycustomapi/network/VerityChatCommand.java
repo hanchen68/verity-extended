@@ -5,10 +5,14 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.registries.ForgeRegistries;
 
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.config.ModConfig;
@@ -61,6 +65,19 @@ public final class VerityChatCommand {
         return 1;
     }
 
+    private static boolean isHoldingVerityItem(ServerPlayer player) {
+        for (InteractionHand hand : InteractionHand.values()) {
+            ItemStack stack = player.getItemInHand(hand);
+            if (stack.isEmpty()) continue;
+            ResourceLocation id = ForgeRegistries.ITEMS.getKey(stack.getItem());
+            if (id != null && "verity".equals(id.getNamespace())
+                    && "verity_item".equals(id.getPath())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static int execute(CommandSourceStack source, String message, boolean publish) {
         ServerPlayer player;
         try {
@@ -92,7 +109,13 @@ public final class VerityChatCommand {
         }
         VerityEntity verity = ServerVerityRegistry.findForPlayer(player);
         if (verity == null || !verity.isAlive()) {
-            player.sendSystemMessage(Component.literal("你目前没有可用的 Verity。"));
+            if (isHoldingVerityItem(player)) {
+                player.sendSystemMessage(Component.literal(
+                        "§7【Verity】你手里的是 Verity 物品，不是世界里的实体。"
+                                + "先按 Q 把它丢到地上，等约 1 秒它变回 Verity 后再用 /v。"));
+            } else {
+                player.sendSystemMessage(Component.literal("你目前没有可用的 Verity。"));
+            }
             return 0;
         }
         String text = message == null ? "" : message.trim();

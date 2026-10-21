@@ -183,6 +183,7 @@ public final class AndroidSystemSpeechRecognizer {
         if (!active) return;
         active = false;
         destroyRecognizer();
+        OllamaProxyMod.LOGGER.info("Android 系统语音识别成功: {}", text);
         onResult.accept(text);
     }
 
@@ -190,6 +191,7 @@ public final class AndroidSystemSpeechRecognizer {
         if (!active) return;
         active = false;
         destroyRecognizer();
+        OllamaProxyMod.LOGGER.warn("Android 系统语音识别失败: {}", reason);
         onError.accept(reason);
     }
 

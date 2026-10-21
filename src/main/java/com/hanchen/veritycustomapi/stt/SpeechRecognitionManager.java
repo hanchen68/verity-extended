@@ -122,6 +122,7 @@ public class SpeechRecognitionManager {
                     error -> mc.execute(() -> showVoiceHint(mc, "§c【语音错误】" + error)));
             androidSystemSpeech = recognizer;
         }
+        OllamaProxyMod.LOGGER.info("在线 STT 未就绪，回退 Android 系统语音识别");
         boolean started = recognizer.start();
         if (started) {
             showVoiceHint(mc, "§a【语音】正在听，松开按键结束");

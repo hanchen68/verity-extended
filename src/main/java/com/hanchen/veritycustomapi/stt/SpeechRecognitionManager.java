@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class SpeechRecognitionManager {
     public static final SpeechRecognitionManager INSTANCE = new SpeechRecognitionManager();
     private volatile VoiceRecognitionService recognitionService;
+    private volatile AndroidSystemSpeechRecognizer androidSystemSpeech;
     private OriginalVerityVoiceBridge.OriginalVoiceInputSession originalVoiceInputSession;
     private final AtomicBoolean isInitialized = new AtomicBoolean(false);
     private final AtomicInteger initializationGeneration = new AtomicInteger(0);
@@ -90,6 +91,10 @@ public class SpeechRecognitionManager {
         OriginalVerityVoiceBridge.interruptSpeech();
         VoiceRecognitionService service = recognitionService;
         if (!isInitialized.get() || service == null) {
+            // 手机端在线 STT 未配置时，直接回退到系统语音识别，避免“完全不能用”。
+            if (RuntimePlatform.isAndroidRuntime() && startAndroidSystemSpeech(mc)) {
+                return;
+            }
             String reason = service != null
                     ? service.getUnavailableReason()
                     : "语音识别模块尚未初始化完成，请稍后再试";
@@ -98,6 +103,9 @@ public class SpeechRecognitionManager {
         }
         boolean success = service.startListening();
         if (!success) {
+            if (RuntimePlatform.isAndroidRuntime() && startAndroidSystemSpeech(mc)) {
+                return;
+            }
             if (RuntimePlatform.isAndroidRuntime()) {
                 showVoiceHint(mc, "§c【语音错误】启动录音失败，请在手机系统/FCL 中授予麦克风权限");
             } else {
@@ -106,10 +114,30 @@ public class SpeechRecognitionManager {
         }
     }
 
+    private boolean startAndroidSystemSpeech(Minecraft mc) {
+        AndroidSystemSpeechRecognizer recognizer = androidSystemSpeech;
+        if (recognizer == null) {
+            recognizer = new AndroidSystemSpeechRecognizer(
+                    text -> mc.execute(() -> handleRecognitionResult(mc, text)),
+                    error -> mc.execute(() -> showVoiceHint(mc, "§c【语音错误】" + error)));
+            androidSystemSpeech = recognizer;
+        }
+        boolean started = recognizer.start();
+        if (started) {
+            showVoiceHint(mc, "§a【语音】正在听，松开按键结束");
+        }
+        return started;
+    }
+
     /**
      * 按键松开：异步结束录音并发送识别结果到聊天（不阻塞 Render 线程）
      */
     public void onKeyReleased() {
+        AndroidSystemSpeechRecognizer systemSpeech = androidSystemSpeech;
+        if (systemSpeech != null && systemSpeech.isActive()) {
+            systemSpeech.stop();
+            return;
+        }
         if (!isInitialized.get() || recognitionService == null) return;
         final Minecraft mc = Minecraft.getInstance();
         final long expectedSession = sessionGeneration;
@@ -209,6 +237,11 @@ public class SpeechRecognitionManager {
             service = recognitionService;
             recognitionService = null;
             isInitialized.set(false);
+        }
+        AndroidSystemSpeechRecognizer systemSpeech = androidSystemSpeech;
+        androidSystemSpeech = null;
+        if (systemSpeech != null) {
+            systemSpeech.cancel();
         }
         if (service != null) {
             service.shutdown();

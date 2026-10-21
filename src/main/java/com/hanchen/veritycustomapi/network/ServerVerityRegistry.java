@@ -8,7 +8,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.phys.AABB;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
@@ -139,12 +138,19 @@ public final class ServerVerityRegistry {
             return null;
         }
         if (!(player.level() instanceof ServerLevel level)) return null;
-        AABB area = player.getBoundingBox().inflate(96.0D);
-        List<VerityEntity> nearby = level.getEntitiesOfClass(VerityEntity.class, area,
-                entity -> entity.isAlive());
-        return nearby.stream()
-                .min(Comparator.comparingDouble(player::distanceToSqr))
-                .orElse(null);
+        // 单人世界不按 96 格搜索：玩家跑远/传送到远处后，Verity 仍在同一维度加载着，
+        // 旧的近距离兜底会误报“没有可用的 Verity”。
+        VerityEntity nearest = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (Entity entity : level.getAllEntities()) {
+            if (!(entity instanceof VerityEntity verity) || !verity.isAlive()) continue;
+            double distance = player.distanceToSqr(verity);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                nearest = verity;
+            }
+        }
+        return nearest;
     }
 
     public static int ownedCount(UUID owner) {

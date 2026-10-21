@@ -101,8 +101,6 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private int applySyncDelayTicks;
     private String statusMessage = "";
     private int statusMessageTimer;
-    /** 授权成功后短时间守护，防止旧界面/保存路径把 cloud.enable 改回 false。 */
-    private int authorizationGuardTicks;
     /** 分组折叠状态：键为「分类标题|分组标题」，值为 true 表示已收起。 */
     private final Map<String, Boolean> collapsedSections = new HashMap<>();
     /** 摄像头"测试"按钮最近一次的结果文本；null 表示还没测过。 */
@@ -160,13 +158,6 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         if (applySyncDelayTicks > 0 && --applySyncDelayTicks == 0) {
             // 和点「保存」时同一套同步，让改动立刻作用到原版注入、代理、TTS、皮肤等子系统
             ClientEventHandler.onConfigSaved();
-        }
-        if (authorizationGuardTicks > 0) {
-            authorizationGuardTicks--;
-            ensureCloudEnabledForAuthorization();
-            if (!CloudConfigManager.isActive()) {
-                ClientEventHandler.syncCloudConfigNow(success -> {});
-            }
         }
     }
 
@@ -802,7 +793,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                             statusMessage = "授权成功，正在同步云端设置…";
                             statusMessageTimer = 300;
                             pairingCode = "";
-                            authorizationGuardTicks = 100;
+                            ClientEventHandler.beginCloudAuthGuard();
                             // 旧界面里的开关可能还是授权前的 false，不能让它缓存回配置。
                             refreshCurrentCategory(false);
                             ClientEventHandler.syncCloudConfigNow(success -> {

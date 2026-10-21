@@ -57,7 +57,13 @@ import java.util.function.Consumer;
 public class ClientEventHandler {
     private static boolean wasSpeechKeyPressed = false;
     private static boolean legacySpeechKeyChecked = false;
+    private static int cloudAuthGuardTicks;
     private static String lastTitleStatusToast = null;
+
+    /** 供配置界面在授权成功后启动全局守护。 */
+    public static void beginCloudAuthGuard() {
+        ForgeBusEvents.beginCloudAuthGuard();
+    }
     private static volatile String pendingBuiltinMimoVoice;
     private static volatile long clientSessionGeneration;
 
@@ -174,11 +180,39 @@ public class ClientEventHandler {
             }
         }
 
+        /** 授权成功后启动 5 秒全局守护，即使配置界面已关闭也生效。 */
+        public static void beginCloudAuthGuard() {
+            cloudAuthGuardTicks = 100;
+        }
+
+        private static void tickCloudAuthGuard() {
+            if (cloudAuthGuardTicks <= 0) return;
+            cloudAuthGuardTicks--;
+            if (ConfigManager.getCloudApiKey().isBlank()) return;
+            if (!ModConfig.CLOUD_ENABLE.get()) {
+                ModConfig.CLOUD_ENABLE.set(true);
+                try {
+                    ConfigManager.saveCommonConfig();
+                } catch (RuntimeException error) {
+                    OllamaProxyMod.LOGGER.warn("云端授权守护保存失败: {}", error.getMessage());
+                }
+                OllamaProxyMod.LOGGER.info("云端授权守护：cloud.enable 被改回 false，已恢复 true");
+            }
+            if (!CloudConfigManager.isActive()) {
+                try {
+                    syncCloudConfigNow(success -> {});
+                } catch (RuntimeException error) {
+                    OllamaProxyMod.LOGGER.warn("云端授权守护重启线程失败: {}", error.getMessage());
+                }
+            }
+        }
+
         @SubscribeEvent
         public static void onClientTick(TickEvent.ClientTickEvent event) {
             if (event.phase != TickEvent.Phase.END) return;
             Minecraft mc = Minecraft.getInstance();
             restoreLegacySpeechKey(mc);
+            tickCloudAuthGuard();
             com.hanchen.veritycustomapi.mmd.MmdPlaybackManager.get().tickClient();
             VerityAwarenessManager.onClientTick(mc);
             ReminderManager.onClientTick(mc);

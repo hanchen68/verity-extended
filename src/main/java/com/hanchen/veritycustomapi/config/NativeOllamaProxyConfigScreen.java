@@ -677,7 +677,17 @@ public class NativeOllamaProxyConfigScreen extends Screen {
      * 重建当前分类并刷新界面，用于异步数据更新后（如云端皮肤列表拉取完成）。
      */
     private void refreshCurrentCategory() {
-        cacheWidgetValues();
+        refreshCurrentCategory(true);
+    }
+
+    /**
+     * @param cacheValues false 用于刚改过配置对象的场景（如云端授权）：
+     *                    此时旧控件里可能还是改之前的值，缓存会把新值覆盖回去。
+     */
+    private void refreshCurrentCategory(boolean cacheValues) {
+        if (cacheValues) {
+            cacheWidgetValues();
+        }
         int idx = categoryIndex;
         categories.clear();
         values.clear();
@@ -778,16 +788,21 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                             ModConfig.CLOUD_API_KEY.set("");
                             ModConfig.CLOUD_ENABLE.set(true);
                             ConfigManager.saveCommonConfig();
+                            OllamaProxyMod.LOGGER.info("云端授权完成: cloud.enable={}, 凭据已写入",
+                                    ModConfig.CLOUD_ENABLE.get());
                             statusMessage = "授权成功，正在同步云端设置…";
                             statusMessageTimer = 300;
                             pairingCode = "";
-                            refreshCurrentCategory();
+                            // 旧界面里的开关可能还是授权前的 false，不能让它缓存回配置。
+                            refreshCurrentCategory(false);
                             ClientEventHandler.syncCloudConfigNow(success -> {
+                                // 同步期间若被其他配置保存路径改回 false，这里再兜底确认一次。
+                                ensureCloudEnabledForAuthorization();
                                 statusMessage = success
                                         ? "授权成功，云端设置已立即生效"
                                         : "授权成功，但同步失败，继续使用本地备用设置";
                                 statusMessageTimer = 300;
-                                refreshCurrentCategory();
+                                refreshCurrentCategory(false);
                             });
                         } catch (RuntimeException ignored) {
                             statusMessage = "授权信息保存失败，请检查配置目录权限";
@@ -813,6 +828,17 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 }
             }
         }, "Cloud-Pairing-Thread").start();
+    }
+
+    /** 授权后凭据存在时，确保 cloud.enable 不被旧界面/保存路径改回 false。 */
+    private void ensureCloudEnabledForAuthorization() {
+        String key = ConfigManager.getCloudApiKey();
+        if (key == null || key.isBlank()) return;
+        if (!ModConfig.CLOUD_ENABLE.get()) {
+            ModConfig.CLOUD_ENABLE.set(true);
+            ConfigManager.saveCommonConfig();
+            OllamaProxyMod.LOGGER.info("云端授权兜底：cloud.enable 曾被改回 false，现已恢复 true");
+        }
     }
 
     private void cacheWidgetValues() {

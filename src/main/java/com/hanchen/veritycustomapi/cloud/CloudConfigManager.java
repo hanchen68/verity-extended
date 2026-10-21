@@ -50,7 +50,7 @@ public final class CloudConfigManager {
             if (!ConfigManager.getCloudApiKey().isBlank()) {
                 // 凭据还在但开关是关的：几乎都是之前点过「否/清除」或提示框被 ESC 关掉。
                 // 明确写出来，避免玩家以为「云端自己失效了」。
-                OllamaProxyMod.LOGGER.warn("检测到已授权凭据，但 cloud.enable=false，云端配置不会加载；"
+                OllamaProxyMod.LOGGER.warn("云端配置线程未启动: cloud.enable=false 但凭据仍存在；"
                         + "如需云端请在「多人游戏设置/云端与账户」中重新开启");
             } else {
                 OllamaProxyMod.LOGGER.info("云端配置未启用，使用本地 TOML 配置");
@@ -58,6 +58,8 @@ public final class CloudConfigManager {
             return;
         }
         String apiKey = ConfigManager.getCloudApiKey();
+        OllamaProxyMod.LOGGER.info("云端配置线程启动: generation={}, cloud.enable=true, 凭据存在={}",
+                currentGeneration, !apiKey.isBlank());
         if (ConfigManager.isCloudFallbackToLocal()) {
             CloudConfig cached = SNAPSHOTS.load(apiKey);
             if (cached != null) {
@@ -78,6 +80,10 @@ public final class CloudConfigManager {
         }
         int interval = ConfigManager.getCloudPullIntervalSeconds();
         configurePeriodicTask(interval, currentGeneration);
+    }
+
+    public static boolean isActive() {
+        return active;
     }
 
     public static synchronized void startClient() {

@@ -20,6 +20,8 @@ import com.hanchen.veritycustomapi.stt.SpeechRecognitionManager;
 import com.hanchen.veritycustomapi.stt.VoskModelInstaller;
 import com.hanchen.veritycustomapi.tts.TtsChatListener;
 import com.hanchen.veritycustomapi.tts.TtsManager;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.toasts.SystemToast;
@@ -41,7 +43,10 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
+import org.lwjgl.glfw.GLFW;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.function.Consumer;
 
 @Mod.EventBusSubscriber(
@@ -51,6 +56,7 @@ import java.util.function.Consumer;
 )
 public class ClientEventHandler {
     private static boolean wasSpeechKeyPressed = false;
+    private static boolean legacySpeechKeyChecked = false;
     private static String lastTitleStatusToast = null;
     private static volatile String pendingBuiltinMimoVoice;
     private static volatile long clientSessionGeneration;
@@ -137,11 +143,42 @@ public class ClientEventHandler {
             OllamaProxyServer.stop();
         }
 
+        /**
+         * 旧版 KeyConflictFixer 曾把语音键从 V 自动改到 CAPS LOCK。
+         * 现在只做一次性恢复：当前仍是 CAPS LOCK 且没有迁移标记时，改回 V。
+         * 用户后来自己改的键不会被反复覆盖。
+         */
+        private static void restoreLegacySpeechKey(Minecraft mc) {
+            if (legacySpeechKeyChecked) return;
+            legacySpeechKeyChecked = true;
+            try {
+                if (mc.options == null || mc.gameDirectory == null) return;
+                if (KeyBindings.SPEECH_KEY.getKey().getType() != InputConstants.Type.KEYSYM
+                        || KeyBindings.SPEECH_KEY.getKey().getValue() != GLFW.GLFW_KEY_CAPS_LOCK) {
+                    return;
+                }
+                Path marker = mc.gameDirectory.toPath()
+                        .resolve("config").resolve("verity_extended")
+                        .resolve("keyconflict-fixer-removed.flag");
+                if (Files.exists(marker)) return;
+
+                KeyBindings.SPEECH_KEY.setKey(
+                        InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_V));
+                KeyMapping.resetMapping();
+                mc.options.save();
+                Files.createDirectories(marker.getParent());
+                Files.writeString(marker, "KeyConflictFixer removed; speech key restored to V.\n");
+                OllamaProxyMod.LOGGER.info("[按键] 已移除自动避让，语音键从 CAPS LOCK 恢复为 V");
+            } catch (Throwable t) {
+                OllamaProxyMod.LOGGER.warn("[按键] 恢复语音键失败: {}", t.getMessage());
+            }
+        }
+
         @SubscribeEvent
         public static void onClientTick(TickEvent.ClientTickEvent event) {
             if (event.phase != TickEvent.Phase.END) return;
             Minecraft mc = Minecraft.getInstance();
-            KeyConflictFixer.runOnce();
+            restoreLegacySpeechKey(mc);
             com.hanchen.veritycustomapi.mmd.MmdPlaybackManager.get().tickClient();
             VerityAwarenessManager.onClientTick(mc);
             ReminderManager.onClientTick(mc);

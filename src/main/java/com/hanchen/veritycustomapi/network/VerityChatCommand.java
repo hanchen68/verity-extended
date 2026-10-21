@@ -6,6 +6,8 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
@@ -13,6 +15,10 @@ import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.registries.ForgeRegistries;
+
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
 
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.config.ModConfig;
@@ -65,19 +71,6 @@ public final class VerityChatCommand {
         return 1;
     }
 
-    private static boolean isHoldingVerityItem(ServerPlayer player) {
-        for (InteractionHand hand : InteractionHand.values()) {
-            ItemStack stack = player.getItemInHand(hand);
-            if (stack.isEmpty()) continue;
-            ResourceLocation id = ForgeRegistries.ITEMS.getKey(stack.getItem());
-            if (id != null && "verity".equals(id.getNamespace())
-                    && "verity_item".equals(id.getPath())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static int execute(CommandSourceStack source, String message, boolean publish) {
         ServerPlayer player;
         try {
@@ -107,20 +100,17 @@ public final class VerityChatCommand {
             player.sendSystemMessage(Component.literal("服务器已关闭 Verity 对话公开广播，请改用 /v。"));
             return 0;
         }
-        VerityEntity verity = ServerVerityRegistry.findForPlayer(player);
-        if (verity == null || !verity.isAlive()) {
-            if (isHoldingVerityItem(player)) {
-                player.sendSystemMessage(Component.literal(
-                        "§7【Verity】你手里的是 Verity 物品，不是世界里的实体。"
-                                + "先按 Q 把它丢到地上，等约 1 秒它变回 Verity 后再用 /v。"));
-            } else {
-                player.sendSystemMessage(Component.literal("你目前没有可用的 Verity。"));
-            }
-            return 0;
-        }
         String text = message == null ? "" : message.trim();
         if (text.isBlank()) {
             player.sendSystemMessage(Component.literal(publish ? "用法：/v! 你的内容" : "用法：/v 你的内容"));
+            return 0;
+        }
+        VerityEntity verity = ServerVerityRegistry.findForPlayer(player);
+        if (verity == null || !verity.isAlive()) {
+            if (startHeldItemChat(player, text)) {
+                return 1;
+            }
+            player.sendSystemMessage(Component.literal("你目前没有可用的 Verity。"));
             return 0;
         }
         if (!com.hanchen.veritycustomapi.compat.OriginalVerityChatBridge.queryAi(
@@ -128,8 +118,95 @@ public final class VerityChatCommand {
             player.sendSystemMessage(Component.literal("原版 Verity 公共 API 暂时不可用。"));
             return 0;
         }
+        broadcastChat(player, text);
+        return 1;
+    }
+
+    /**
+     * 手持 verity_item 时：把物品放到脚下，等它变回实体后自动发送这句话。
+     * 原版物品需要落地约 20 tick 才会生成 Verity，所以这里等 1.6 秒。
+     */
+    private static boolean startHeldItemChat(ServerPlayer player, String text) {
+        InteractionHand hand = findHeldVerityItem(player);
+        if (hand == null) return false;
+        MinecraftServer server = player.getServer();
+        if (server == null) return false;
+
+        ItemStack held = player.getItemInHand(hand);
+        ItemStack dropped = held.copy();
+        dropped.setCount(1);
+        if (!player.getAbilities().instabuild) {
+            held.shrink(1);
+            if (held.isEmpty()) {
+                player.setItemInHand(hand, ItemStack.EMPTY);
+            }
+        }
+        if (player.drop(dropped, false) == null) {
+            player.sendSystemMessage(Component.literal("§c【Verity】放下物品失败，请确认脚下有空间。"));
+            return false;
+        }
+
+        ServerLevel level = player.serverLevel();
+        Set<UUID> before = new HashSet<>();
+        for (VerityEntity existing : level.getEntitiesOfClass(VerityEntity.class,
+                player.getBoundingBox().inflate(16.0D))) {
+            before.add(existing.getUUID());
+        }
+        player.sendSystemMessage(Component.literal("§7【Verity】已放下物品，等它变回实体后自动发送…"));
+
+        Thread thread = new Thread(() -> {
+            try {
+                Thread.sleep(1600L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            server.execute(() -> {
+                if (player.isRemoved()) return;
+                VerityEntity spawned = null;
+                double best = Double.MAX_VALUE;
+                for (VerityEntity candidate : level.getEntitiesOfClass(VerityEntity.class,
+                        player.getBoundingBox().inflate(16.0D))) {
+                    if (!candidate.isAlive() || before.contains(candidate.getUUID())) continue;
+                    double distance = player.distanceToSqr(candidate);
+                    if (distance < best) {
+                        best = distance;
+                        spawned = candidate;
+                    }
+                }
+                if (spawned == null) {
+                    player.sendSystemMessage(Component.literal(
+                            "§c【Verity】物品没有变回 Verity，请确认脚下是安全、可站立的地面。"));
+                    return;
+                }
+                if (!com.hanchen.veritycustomapi.compat.OriginalVerityChatBridge.queryAi(
+                        spawned, player, text)) {
+                    player.sendSystemMessage(Component.literal("原版 Verity 公共 API 暂时不可用。"));
+                    return;
+                }
+                broadcastChat(player, text);
+            });
+        }, "Verity-Item-Chat");
+        thread.setDaemon(true);
+        thread.start();
+        return true;
+    }
+
+    private static InteractionHand findHeldVerityItem(ServerPlayer player) {
+        for (InteractionHand hand : InteractionHand.values()) {
+            ItemStack stack = player.getItemInHand(hand);
+            if (stack.isEmpty()) continue;
+            ResourceLocation id = ForgeRegistries.ITEMS.getKey(stack.getItem());
+            if (id != null && "verity".equals(id.getNamespace())
+                    && "verity_item".equals(id.getPath())) {
+                return hand;
+            }
+        }
+        return null;
+    }
+
+    private static void broadcastChat(ServerPlayer player, String text) {
         player.getServer().getPlayerList().broadcastSystemMessage(
                 Component.literal("<" + player.getGameProfile().getName() + "> " + text), false);
-        return 1;
     }
 }

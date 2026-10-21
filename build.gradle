@@ -6,7 +6,7 @@ plugins {
     id 'org.spongepowered.mixin' version '0.7.+'
 }
 
-version = '4.5'
+version = '4.5.1'
 group = 'com.hanchen.veritycustomapi'
 archivesBaseName = 'Verity\u6269\u5c55\u589e\u5f3a'
 

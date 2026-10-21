@@ -13,7 +13,7 @@ public final class CloudProtocolTest {
     public static void main(String[] args) {
         // 版本号变更的「绊线」：改 build.gradle / FALLBACK_VERSION 时这里会失败，
         // 提醒同步确认云端协议（mod_version 上报）也要一起发布。
-        require("4.5".equals(CloudConfigFetcher.modVersion()), "cloud request mod version is stale");
+        require("4.5.1".equals(CloudConfigFetcher.modVersion()), "cloud request mod version is stale");
         CloudConfig billingConfig = new Gson().fromJson("{\"code\":0,\"billing\":{"
                 + "\"protocol_version\":2,\"pre_authorization_required_for_paid_chat\":true,"
                 + "\"reserve_url\":\"/api/v1/credits/reserve\"},\"data\":{\"version\":1}}", CloudConfig.class);

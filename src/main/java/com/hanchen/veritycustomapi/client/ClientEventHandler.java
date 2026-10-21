@@ -150,8 +150,8 @@ public class ClientEventHandler {
         }
 
         /**
-         * 旧版 KeyConflictFixer 曾把语音键从 V 自动改到 CAPS LOCK。
-         * 现在只做一次性恢复：当前仍是 CAPS LOCK 且没有迁移标记时，改回 V。
+         * 原版 Verity 的 PUSH_TO_TALK 固定占用 V，扩展语音键不能再用 V。
+         * 不做冲突扫描，只做一次性迁移：旧版的 V 改成固定 CAPS LOCK。
          * 用户后来自己改的键不会被反复覆盖。
          */
         private static void restoreLegacySpeechKey(Minecraft mc) {
@@ -159,24 +159,25 @@ public class ClientEventHandler {
             legacySpeechKeyChecked = true;
             try {
                 if (mc.options == null || mc.gameDirectory == null) return;
-                if (KeyBindings.SPEECH_KEY.getKey().getType() != InputConstants.Type.KEYSYM
-                        || KeyBindings.SPEECH_KEY.getKey().getValue() != GLFW.GLFW_KEY_CAPS_LOCK) {
-                    return;
-                }
+                if (KeyBindings.SPEECH_KEY.getKey().getType() != InputConstants.Type.KEYSYM) return;
+                int key = KeyBindings.SPEECH_KEY.getKey().getValue();
+                if (key != GLFW.GLFW_KEY_V && key != GLFW.GLFW_KEY_CAPS_LOCK) return;
                 Path marker = mc.gameDirectory.toPath()
                         .resolve("config").resolve("verity_extended")
-                        .resolve("keyconflict-fixer-removed.flag");
+                        .resolve("speech-key-capslock.flag");
                 if (Files.exists(marker)) return;
 
-                KeyBindings.SPEECH_KEY.setKey(
-                        InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_V));
-                KeyMapping.resetMapping();
-                mc.options.save();
+                if (key == GLFW.GLFW_KEY_V) {
+                    KeyBindings.SPEECH_KEY.setKey(
+                            InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_CAPS_LOCK));
+                    KeyMapping.resetMapping();
+                    mc.options.save();
+                    OllamaProxyMod.LOGGER.info("[按键] 语音键固定为 CAPS LOCK（原版 Verity 占用 V）");
+                }
                 Files.createDirectories(marker.getParent());
-                Files.writeString(marker, "KeyConflictFixer removed; speech key restored to V.\n");
-                OllamaProxyMod.LOGGER.info("[按键] 已移除自动避让，语音键从 CAPS LOCK 恢复为 V");
+                Files.writeString(marker, "Speech key fixed to CAPS LOCK; original Verity uses V.\n");
             } catch (Throwable t) {
-                OllamaProxyMod.LOGGER.warn("[按键] 恢复语音键失败: {}", t.getMessage());
+                OllamaProxyMod.LOGGER.warn("[按键] 迁移语音键失败: {}", t.getMessage());
             }
         }
 

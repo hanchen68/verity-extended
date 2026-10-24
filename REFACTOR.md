@@ -124,18 +124,21 @@
 3. 每完成一个类，跑一次 `selfcheck.ps1`，并在游戏里过一遍对应功能。
 4. 一个类没拆完不要开下一个。
 
-## P3 兼容层收敛 —— 待做（最后）
+## P3 兼容层收敛 —— ✅ 已完成
 
-`compat/` 34 个类里，`StellarRemoteCompat`、`OriginalVeritySttInjector`、`OriginalVerityVoiceBridge`
-等重复同一套「反射 + 熔断」样板，可抽 `compat/reflect/ReflectiveTarget`：
+`compat/ReflectiveTarget` 已落地（153 行），统一了 `type / method / declaredMethod /
+field / invoke / get / set`，日志分级：类缺失 warn、方法与字段缺失 debug、全部带 tag。
 
-```java
-ReflectiveTarget target = ReflectiveTarget.of("varmite.verity...", "可选模组名");
-Method m = target.method("sendReplyPart", String.class);
-if (m != null) { ... }
-```
+**已迁移**：`OriginalVerityStateAccess`（302 → 279 行）——它是唯一已把反射集中成
+`findClass/findMethod/findField` 的类，迁移零风险。
 
-**必须在 P2 稳定后再做**：这是最容易碰坏适配的一层，且没有运行时回归就发现不了。
+**未迁移（有意）**：其余 compat 类里的内联反射多是
+`try { Class.forName(...) } catch { return false; }` 这种**版本探测**，
+换成 `type()` 会改变日志级别与降级行为。按「只搬代码、不顺手改逻辑」的规则，
+新代码用新 helper，老代码逐步迁移，不做一次性机械替换。
+
+**仍然成立的约束**：判断「原版有没有某功能」必须走 `VerityStructureDetector`
+的字节扫描——`Class.forName` 会触发静态初始化，可能直接带崩启动。
 
 ## 明确不做
 

@@ -296,10 +296,6 @@ public class ClientEventHandler {
         @SubscribeEvent
         public static void onClientChatReceived(ClientChatReceivedEvent event) {
             String messageText = event.getMessage().getString();
-            // 原版 AI 的英文报错对小白不友好：换成中文指引，教程提示直接隐藏
-            if (friendlyAiError(event, messageText)) {
-                return;
-            }
             // HUD 对话气泡：识别 Verity 的发言并缓存最近一句
             VerityDialogueFeed.captureFromChat(messageText);
             // 摄像头技能：代理层判定这一句只是"请求观察"，直接隐藏，只展示看图后的回复
@@ -338,41 +334,6 @@ public class ClientEventHandler {
                 messageText = sanitized;
             }
             TtsChatListener.handleChatMessage(messageText);
-        }
-
-        /** 原版 AI 报错/教程提示转小白友好的中文指引；命中返回 true。 */
-        private static boolean friendlyAiError(ClientChatReceivedEvent event, String messageText) {
-            if (messageText == null || messageText.isBlank()) {
-                return false;
-            }
-            if (messageText.contains("Problem setting up AI")) {
-                event.setMessage(Component.literal(
-                        "【提示】Verity 的 AI 功能没有启动成功（常见原因：接口配置有误，或装了冲突的模组）。"
-                                + "打开「Verity 扩展增强」的设置 →「服务连接检查」→「重新检查」按提示修复即可；"
-                                + "站头、骑乘、语音等本地功能不受影响。"));
-                return true;
-            }
-            if (messageText.strip().equals("Setup Tutorial")) {
-                event.setCanceled(true);
-                return true;
-            }
-            // 原版的报错有三种前缀形态，只匹配 "> ERROR:" 会漏掉带 @玩家名 的那种：
-            //   "> ERROR: ..."         单人
-            //   "@玩家名: ERROR: ..."  多人（截图里就是这种，之前漏了）
-            //   "ERROR: ..."           无前缀
-            // 所以判据放宽成「含 ERROR: 且整条不长」——报错都很短，
-            // 正常台词里出现 ERROR: 且短于 200 字符的情况实际上不存在。
-            String stripped = messageText.strip();
-            boolean looksLikeError = stripped.contains("ERROR:")
-                    && stripped.length() <= 200;
-            if (looksLikeError) {
-                event.setMessage(Component.literal(
-                        "【提示】Verity 的 AI 刚才报了一个错，已写进日志。偶尔一次可以忽略；"
-                                + "反复出现的话，到设置 →「服务连接检查」里点「重新检查」，"
-                                + "或「导出诊断包」发给作者查看。"));
-                return true;
-            }
-            return false;
         }
 
         private static boolean cloudWarningShown = false;

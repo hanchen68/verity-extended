@@ -25,9 +25,15 @@ public class LocalVoskRecognizer implements SpeechRecognizer {
         try {
             File modelDir = new File(modelPath);
             if (!modelDir.exists()) {
-                OllamaProxyMod.LOGGER.error("Vosk模型目录不存在: {}", modelDir.getAbsolutePath());
+                // 没装离线模型是正常状态（大多数人用在线识别），不是错误。
+                // 而且这个构造器会被重试循环反复调用，不限流会一秒刷三条。
+                com.hanchen.veritycustomapi.util.Log.throttled("vosk.model.missing", 300, () ->
+                        OllamaProxyMod.LOGGER.warn("Vosk 离线模型目录不存在，离线识别不可用: {}（仅提示一次，5 分钟内不再重复）",
+                                modelDir.getAbsolutePath()));
             } else if (!modelDir.isDirectory()) {
-                OllamaProxyMod.LOGGER.error("Vosk模型路径不是目录: {}", modelDir.getAbsolutePath());
+                com.hanchen.veritycustomapi.util.Log.throttled("vosk.model.notdir", 300, () ->
+                        OllamaProxyMod.LOGGER.warn("Vosk 模型路径不是目录: {}",
+                                modelDir.getAbsolutePath()));
             } else {
                 File amFile = new File(modelDir, "am/final.mdl");
                 if (!amFile.exists()) {

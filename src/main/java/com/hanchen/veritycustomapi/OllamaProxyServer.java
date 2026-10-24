@@ -387,7 +387,9 @@ public class OllamaProxyServer {
                 }
                 byte[] requestBytes = readLimited(exchange.getRequestBody(), MAX_REQUEST_BODY_BYTES, "请求体", 413);
                 String requestBody = new String(requestBytes, StandardCharsets.UTF_8);
-                LOGGER.info("========== 收到Verity请求 [{}] ==========", VERSION);
+                // 每轮只保留一条 INFO（出口那条带全部关键信息）；入口降到 debug，
+                // 避免一次正常对话刷两行分隔线。
+                LOGGER.debug("收到Verity请求 [{}]，{} 字节", VERSION, requestBytes.length);
 
                 // 预处理流水线：**只解析一次**，各阶段原地改同一棵 JSON 树，最后序列化一次。
                 // 原来是每个阶段各自 fromJson + toJson，一条请求要解析 6~7 次、序列化 4 次；
@@ -591,7 +593,7 @@ public class OllamaProxyServer {
                     }
                 }
                 boolean hasUsableResponse = hasUsableText || hasAssistantOperation;
-                LOGGER.info("最终回复长度: {} 字符, toolCall={}", extractedText.length(), hasAssistantOperation);
+                LOGGER.debug("最终回复长度: {} 字符, toolCall={}", extractedText.length(), hasAssistantOperation);
                 completeVisionRequestIfNeeded(hasUsableResponse);
                 if (!hasUsableResponse) {
                     LOGGER.warn("Chat 响应没有有效文本或工具调用，返回代理兜底提示并跳过用量上报");
@@ -623,7 +625,12 @@ public class OllamaProxyServer {
                 }
                 settleSettlements(pendingSettlements);
 
-                LOGGER.info("========== 请求处理完成（本次共 {} ms）==========", elapsedMs());
+                // 每轮请求只留这一条 INFO：线路、耗时、回复长度、是否工具调用。
+                // 原来这些分散在 5~6 条 INFO 里（入口/线路/长度/完成各一条），
+                // 一次正常对话就刷满一屏，真出问题时反而找不到异常。
+                LOGGER.info("[Chat] 完成 route={} 耗时 {}ms 回复{}字符 tool={} 有效={}",
+                        result.route() != null ? result.route().id() : "unknown",
+                        elapsedMs(), extractedText.length(), hasAssistantOperation, hasUsableResponse);
 
             } catch (PayloadTooLargeException e) {
                 releaseSettlements(pendingSettlements, "response_too_large");
@@ -683,7 +690,7 @@ public class OllamaProxyServer {
                     LOGGER.debug("云端内置 Chat 线路尝试: routeId={}, tier={}, status={}",
                             route.id(), route.tier(), last.status());
                 } else {
-                    LOGGER.info("Chat线路尝试: source={}, endpoint={}, status={}", route.source(),
+                    LOGGER.debug("Chat线路尝试: source={}, endpoint={}, status={}", route.source(),
                             NetworkSecurity.sanitizedEndpoint(route.apiUrl()), last.status());
                 }
                 if (last.error() == null && last.status() >= 200 && last.status() < 300) {

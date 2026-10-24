@@ -147,7 +147,10 @@ public final class MmdPlaybackManager {
                 .filter(project -> project.cameraClip() == null)
                 .map(MmdDanceProject::displayName).sorted(String.CASE_INSENSITIVE_ORDER).toList();
         if (!missingCameras.isEmpty()) {
-            LOGGER.warn("以下 MMD 项目未找到镜头，将仅播放动作: {}；已搜索 {}", missingCameras, stageAnimRoots);
+            // 每次扫描都会算一遍，进一次界面能触发好几次；同样内容没必要重复刷。
+            com.hanchen.veritycustomapi.util.Log.throttled("mmd.missing.camera", 60, () ->
+                    LOGGER.warn("以下 MMD 项目未找到镜头，将仅播放动作: {}；已搜索 {}",
+                            missingCameras, stageAnimRoots));
         }
 
         projectCache.clear();

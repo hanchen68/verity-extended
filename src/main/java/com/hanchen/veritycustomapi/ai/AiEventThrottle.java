@@ -11,6 +11,13 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class AiEventThrottle {
     /** value[0]=上次放行 tick，value[1]=窗口内被合并的事件数。 */
+    /**
+     * 上限：key 由调用方拼「事件名:实体id」，实体 id 每存档重新计数，
+     * 长时间不重启会不断累积旧 key。超过上限就整体清空——
+     * 代价是冷却状态丢一次，换来的是不会无限占内存。
+     */
+    private static final int MAX_TRACKED_KEYS = 512;
+
     private static final Map<String, long[]> LAST_AT = new ConcurrentHashMap<>();
 
     private AiEventThrottle() {
@@ -25,6 +32,10 @@ public final class AiEventThrottle {
         if (slot != null && nowTicks - slot[0] < cooldownTicks) {
             slot[1]++;
             return false;
+        }
+        if (LAST_AT.size() >= MAX_TRACKED_KEYS) {
+            // 简单粗暴地清空：冷却状态丢一次不影响正确性，只可能让某次事件早放行。
+            LAST_AT.clear();
         }
         LAST_AT.put(key, new long[]{nowTicks, 0L});
         return true;

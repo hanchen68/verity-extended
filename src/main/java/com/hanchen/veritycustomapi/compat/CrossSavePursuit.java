@@ -33,6 +33,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -56,9 +57,10 @@ public final class CrossSavePursuit {
     private static final long TRIGGER_DELAY_MS = 8000L;
 
     /** 全局记录：玩家 UUID → 追击状态。文件放在 config，不在任何存档目录内。 */
-    private static final Map<UUID, Entry> ENTRIES = new LinkedHashMap<>();
-    private static final Map<UUID, Long> PENDING = new HashMap<>();
-    private static final Map<UUID, Integer> ATTEMPTS = new HashMap<>();
+    // 并发容器：tick 与登录/登出事件都会碰这几张表，普通 Map 在并发下会 CME。
+    private static final Map<UUID, Entry> ENTRIES = java.util.Collections.synchronizedMap(new LinkedHashMap<>());
+    private static final Map<UUID, Long> PENDING = new ConcurrentHashMap<>();
+    private static final Map<UUID, Integer> ATTEMPTS = new ConcurrentHashMap<>();
     private static int tickCounter;
     private static boolean loaded;
 

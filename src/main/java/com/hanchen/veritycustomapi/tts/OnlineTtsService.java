@@ -1363,8 +1363,19 @@ public class OnlineTtsService {
         );
         long durationMillis = Math.max(250L, Math.round(audioData.length * 1000.0 / Math.max(1.0, format.getFrameRate() * format.getFrameSize())) + 500L);
         OllamaProxyMod.LOGGER.info("Android/FCL 使用 Minecraft OpenAL 声音线程播放在线 TTS");
+        // 等播放结束，但**必须可被打断**：
+        // 原来是一整段 Thread.sleep(最长 120s)，这一句还没念完，下一句就只能干等——
+        // 表现为「说话卡住/延迟好几分钟」。改成每 50ms 检查一次会话代数，
+        // 玩家发新消息（SESSION_GENERATION 递增）或 stopPlayback 中断时立刻退出。
+        long sessionAtStart = SESSION_GENERATION;
+        long deadline = System.currentTimeMillis() + Math.min(120000L, durationMillis);
         try {
-            Thread.sleep(Math.min(120000L, durationMillis));
+            while (System.currentTimeMillis() < deadline && SESSION_GENERATION == sessionAtStart) {
+                Thread.sleep(50L);
+            }
+        } catch (InterruptedException interrupted) {
+            // 被 stopPlayback 打断是正常路径，恢复中断标记后继续走清理
+            Thread.currentThread().interrupt();
         } finally {
             executor.execute(() -> {
                 if (CURRENT_OPENAL_SOURCE == startedSource) stopMinecraftOpenAlOnSoundThread();

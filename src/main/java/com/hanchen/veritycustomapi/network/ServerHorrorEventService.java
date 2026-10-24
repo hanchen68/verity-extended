@@ -11,6 +11,7 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.registries.ForgeRegistries;
 import varmite.verity.entity.verity.VerityEntity;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -22,8 +23,10 @@ public final class ServerHorrorEventService {
     private static final double MAX_DISTANCE_SQ = 1024.0D;
     private static final long TYPE_COOLDOWN = 30000L;
     private static final ResourceLocation VERITY_ID = ResourceLocation.fromNamespaceAndPath("verity", "verity");
-    private static final Map<UUID, Long> NEXT_EVENT = new HashMap<>();
-    private static final Map<UUID, long[]> TYPE_HISTORY = new HashMap<>();
+    // 用并发容器：这两张表虽然主要在服务端线程读写，但 clear() 由 ServerStopping 事件触发，
+    // 事件线程与服务端 tick 未必是同一个，普通 HashMap 在清空时并发读会 CME。
+    private static final Map<UUID, Long> NEXT_EVENT = new ConcurrentHashMap<>();
+    private static final Map<UUID, long[]> TYPE_HISTORY = new ConcurrentHashMap<>();
     private static long serverTick;
 
     private ServerHorrorEventService() {

@@ -16,6 +16,7 @@ import com.hanchen.veritycustomapi.ai.WebSearchClient;
 import com.hanchen.veritycustomapi.cloud.BillingService;
 import com.hanchen.veritycustomapi.cloud.RouteHealthRegistry;
 import com.hanchen.veritycustomapi.cloud.UsageMeter;
+import com.hanchen.veritycustomapi.proxy.BillingSettlement;
 import com.hanchen.veritycustomapi.config.ModConfig;
 import com.hanchen.veritycustomapi.compat.BilingualSpeechText;
 import com.hanchen.veritycustomapi.compat.OverheadOnlySpeechText;
@@ -68,7 +69,6 @@ public class OllamaProxyServer {
     /** 玩家对话缺省的 max_tokens：上游没配时兜底，防推理模型把 token 烧进思维链。 */
     static final int DEFAULT_MAX_TOKENS = 2048;
     private static final int MAX_UPSTREAM_RESPONSE_BYTES = 8 * 1024 * 1024;
-    private record BillingSettlement(BillingService.Reservation reservation, UsageMeter.ChatUsage usage) {}
 
     private record AttemptResult(ConfigManager.ChatRoute route, int status, String body, String error,
                                  List<BillingSettlement> settlements) {
@@ -1146,15 +1146,7 @@ public class OllamaProxyServer {
         }
 
         private void injectBilingualSpeechRequirement(JsonObject bodyJson) {
-            if (!ConfigManager.isBilingualSpeechSubtitlesEnabled()) return;
-            // 优先让模型在同一次回复里带上中文，不增加额外往返延迟；
-            // 模型未给出中文时代理才补一次翻译调用（见 requestChineseTranslation），避免每条回复都多花约 3 秒。
-            appendSystemContext(bodyJson,
-                    "Bilingual output rules: write the spoken line in natural English only. "
-                  + "Then output the literal delimiter <|verity_zh|> on its own line, followed by a faithful Simplified Chinese translation of that English line. "
-                  + "Do NOT write Chinese before the delimiter. "
-                  + "Do NOT add any other labels such as 【原文】, 【翻译】, [Original], [Translation], Original:, Translation:. "
-                  + "Preserve all action, emotion, plan, and blueprint fields required by the existing schema, and do not include markdown or text outside the JSON object.");
+            com.hanchen.veritycustomapi.proxy.PromptInjections.injectBilingualSpeechRequirement(bodyJson);
         }
 
         /**
@@ -1162,15 +1154,7 @@ public class OllamaProxyServer {
          * 只在视觉能力启用且允许技能调用时注入，避免模型凭空声称"看到了"。
          */
         private void injectCameraSkillRule(JsonObject bodyJson) {
-            if (!isCameraSkillAvailable()) return;
-            appendSkillRule(bodyJson,
-                    "【视觉技能】你可以采集画面来观察玩家，来源包括玩家面前的真实摄像头，以及他当前的游戏内屏幕画面。默认情况下你看不到任何画面。\n"
-                  + "- 当你确实需要视觉信息时（例如玩家让你看他、看他周围、看他手里或身边的东西，"
-                  + "或问你他在游戏里看到什么、身边有什么、正在做什么，"
-                  + "或你判断只有看到画面才能给出准确回应），在返回的 JSON 顶层额外加上 \"camera_look\": true。\n"
-                  + "- camera_look 必须作为 JSON 字段返回，绝对不要把它写进 message / response 的台词正文里，也不要无意义地反复调用。\n"
-                  + "- 系统收到后会立刻采集画面，并单独发起一次视觉观察；届时结合画面内容自然回应即可。\n"
-                  + "- 平时不要调用，也不要连续调用；更不要在没获得画面时假装自己看到了什么。");
+            com.hanchen.veritycustomapi.proxy.PromptInjections.injectCameraSkillRule(bodyJson);
         }
 
         /**
@@ -1178,44 +1162,16 @@ public class OllamaProxyServer {
          * give_item 内部为 new ItemStack(item, count)、不带 NBT，带附魔/名称/耐久的物品须改用 run_command 执行 /give。
          */
         private void injectItemDataRule(JsonObject bodyJson) {
-            if (!com.hanchen.veritycustomapi.compat.VerityStructureDetector.hasRunCommandTool()) return;
-            appendSkillRule(bodyJson,
-                    "【给物品必须带上正确的数据】give_item 只能生成不带任何数据（NBT）的纯净物品。"
-                  + "用它给附魔书，玩家拿到的是一本没有附魔的书，不是他要的那本；"
-                  + "不要靠「多给几本猜一个」来解决，那样只会给出一堆错的书。\n"
-                  + "- 只要物品带附魔、自定义名称、等级、耐久等任何数据，一律改用 run_command 执行 /give，"
-                  + "把数据写在物品 ID 后面的花括号里。例如玩家要「锋利 V 的附魔书」：\n"
-                  + "  /give @p minecraft:enchanted_book{Enchantments:[{id:\"minecraft:sharpness\",lvl:5}]} 1\n"
-                  + "- 附魔 ID 用原版命名空间（如 minecraft:sharpness / minecraft:protection），"
-                  + "等级 lvl 按玩家说的填（罗马数字 V = 5）。\n"
-                  + "- 只有玩家要的是完全不带数据的普通物品（如石头、面包）时，才用 give_item。\n"
-                  + "- 一次只给玩家真正要的那一件。");
+            com.hanchen.veritycustomapi.proxy.PromptInjections.injectItemDataRule(bodyJson);
         }
 
         /** 把技能规则合并进第一条 system 消息；没有 system 时新建一条。 */
         private void appendSkillRule(JsonObject bodyJson, String rule) {
-            JsonArray messages = bodyJson.getAsJsonArray("messages");
-            if (messages == null || messages.isEmpty()) return;
-            JsonElement firstElement = messages.get(0);
-            if (firstElement.isJsonObject()) {
-                JsonObject first = firstElement.getAsJsonObject();
-                if (first.has("role") && "system".equals(first.get("role").getAsString())) {
-                    String content = first.has("content") && first.get("content").isJsonPrimitive()
-                            ? first.get("content").getAsString() : "";
-                    first.addProperty("content", content.isBlank() ? rule : content + "\n\n" + rule);
-                    return;
-                }
-            }
-            appendSystemContext(bodyJson, rule);
+            com.hanchen.veritycustomapi.proxy.PromptInjections.appendSkillRule(bodyJson, rule);
         }
 
         private boolean isCameraSkillAvailable() {
-            if (!net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) return false;
-            try {
-                return com.hanchen.veritycustomapi.client.CameraChatVision.isSkillAvailable();
-            } catch (Throwable t) {
-                return false;
-            }
+            return com.hanchen.veritycustomapi.proxy.PromptInjections.isCameraSkillAvailable();
         }
 
         /**
@@ -1538,24 +1494,8 @@ public class OllamaProxyServer {
          * 明确写出「你有这个能力、这些情况该用」才能让它真的去用。
          */
         private void injectWebSearchGuidance(JsonObject bodyJson) {
-            if (!bodyJson.has("messages") || !bodyJson.get("messages").isJsonArray()) return;
-            String guidance = "You have a web_search tool available and it works. Whenever the player asks "
-                    + "about anything outside this game that you cannot know from memory - news, current "
-                    + "events, the date or time, weather, prices, people, releases, versions - call "
-                    + "web_search first instead of saying you cannot see the outside world. Only say you "
-                    + "cannot look something up after web_search actually returned nothing.";
-            JsonArray messages = bodyJson.getAsJsonArray("messages");
-            for (JsonElement element : messages) {
-                if (!element.isJsonObject()) continue;
-                JsonObject message = element.getAsJsonObject();
-                if (!message.has("role") || !"system".equals(message.get("role").getAsString())) continue;
-                if (!message.has("content") || !message.get("content").isJsonPrimitive()) continue;
-                String existing = message.get("content").getAsString();
-                if (existing.contains("web_search tool available")) return;   // 已经加过
-                message.addProperty("content", existing + "\n\n" + guidance);
-                LOGGER.debug("[联网搜索] 已把联网指引并入系统提示词");
-                return;
-            }
+            com.hanchen.veritycustomapi.proxy.PromptInjections.injectWebSearchGuidance(bodyJson);
+            LOGGER.debug("[联网搜索] 已把联网指引并入系统提示词");
         }
 
         /**
@@ -1946,17 +1886,7 @@ public class OllamaProxyServer {
         };
 
         private void appendSystemContext(JsonObject bodyJson, String context) {
-            JsonArray messages = bodyJson.getAsJsonArray("messages");
-            if (messages == null) return;
-            JsonObject system = new JsonObject();
-            system.addProperty("role", "system");
-            system.addProperty("content", context);
-            JsonArray updated = new JsonArray();
-            updated.add(system);
-            for (int i = 0; i < messages.size(); i++) {
-                updated.add(messages.get(i));
-            }
-            bodyJson.add("messages", updated);
+            com.hanchen.veritycustomapi.proxy.PromptInjections.appendSystemContext(bodyJson, context);
         }
 
         /** 动态上下文追加到消息尾部，保持前部 system 静态前缀字节级稳定以命中上游前缀缓存。 */
@@ -2731,28 +2661,19 @@ public class OllamaProxyServer {
                     .extractContentText(content);
         }
         
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.BillingGuard}。 */
         private static void settleSettlements(List<BillingSettlement> settlements) {
-            while (!settlements.isEmpty()) {
-                BillingSettlement settlement = settlements.get(0);
-                BillingService.settlePaidChat(settlement.reservation(), settlement.usage());
-                settlements.remove(0);
-            }
+            com.hanchen.veritycustomapi.proxy.BillingGuard.settleAll(settlements);
         }
 
         private static void releaseSettlements(List<BillingSettlement> settlements, String reason) {
-            while (!settlements.isEmpty()) {
-                BillingSettlement settlement = settlements.get(0);
-                BillingService.releasePaidChat(settlement.reservation(), reason);
-                settlements.remove(0);
-            }
+            com.hanchen.veritycustomapi.proxy.BillingGuard.releaseAll(settlements, reason);
         }
 
         private void reportCreditUsage(String requestId, ConfigManager.ChatRoute route,
                                        String requestBody, String responseBody, String outputText) {
-            if (route == null || !"builtin".equals(route.source())) return;
-            String tier = route.tier() != null ? route.tier() : "free";
-            BillingService.reportChat(requestId, tier, route.id(),
-                    UsageMeter.chat(requestBody, responseBody, outputText, !"paid".equalsIgnoreCase(tier)));
+            com.hanchen.veritycustomapi.proxy.BillingGuard
+                    .reportUsage(requestId, route, requestBody, responseBody, outputText);
         }
 
         /** 记录上游提示词前缀缓存命中情况；上游没提供缓存字段时静默跳过。 */
@@ -2770,78 +2691,29 @@ public class OllamaProxyServer {
 
         /** 汇总上游缓存命中字段：hit 取两种风格中非空值，都没有时输出 none、不算命中率。 */
         private static String describeCacheHit(JsonObject usage) {
-            Long hit = extractCacheHitTokens(usage);
-            if (hit == null) return "none";
-            Long miss = readUsageLong(usage, "prompt_cache_miss_tokens");
-            Long prompt = readUsageLong(usage, "prompt_tokens");
-            if (prompt == null) prompt = readUsageLong(usage, "input_tokens");
-            StringBuilder summary = new StringBuilder("hit=").append(hit);
-            if (miss != null) summary.append(", miss=").append(miss);
-            // DeepSeek 的 prompt_tokens 已包含命中部分：有 miss 字段时用「命中 /（命中+未命中）」计算，
-            // 缺 miss 时退回「命中 / prompt_tokens」（OpenAI 的 prompt_tokens 同样含命中部分）。
-            long denominator = miss != null ? hit + Math.max(0, miss)
-                    : (prompt != null ? Math.max(0, prompt) : 0);
-            if (denominator > 0) {
-                summary.append(", hitRate=").append(
-                        String.format(java.util.Locale.ROOT, "%.2f%%", hit * 100.0D / denominator));
-            }
-            return summary.toString();
+            return com.hanchen.veritycustomapi.proxy.BillingGuard.describeCacheHit(usage);
         }
 
         /** 取命中 token 数：DeepSeek 的 prompt_cache_hit_tokens 优先，其次 OpenAI 嵌套的 prompt_tokens_details.cached_tokens。 */
         private static Long extractCacheHitTokens(JsonObject usage) {
-            Long hit = readUsageLong(usage, "prompt_cache_hit_tokens");
-            if (hit == null && usage != null
-                    && usage.has("prompt_tokens_details") && usage.get("prompt_tokens_details").isJsonObject()) {
-                hit = readUsageLong(usage.getAsJsonObject("prompt_tokens_details"), "cached_tokens");
-            }
-            return hit;
+            return com.hanchen.veritycustomapi.proxy.BillingGuard.extractCacheHitTokens(usage);
         }
 
         private static Long readUsageLong(JsonObject object, String field) {
-            if (object == null || !object.has(field) || object.get(field).isJsonNull()
-                    || !object.get(field).isJsonPrimitive()) return null;
-            try {
-                return object.get(field).getAsLong();
-            } catch (Exception ignored) {
-                return null;
-            }
+            return com.hanchen.veritycustomapi.proxy.BillingGuard.readUsageLong(object, field);
         }
 
-        /** 客户端请求里的 stream 是不是 true；字段缺失或解析失败都按 false。 */
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.StreamFlags}。 */
         private boolean clientRequestedStream(String rawBody) {
-            if (rawBody == null || rawBody.isBlank()) return false;
-            try {
-                JsonObject json = GSON.fromJson(rawBody, JsonObject.class);
-                if (json != null && json.has("stream") && json.get("stream").isJsonPrimitive()) {
-                    return json.get("stream").getAsBoolean();
-                }
-            } catch (Exception ignored) { Silent.ignore("OllamaProxyServer", ignored); }
-            return false;
+            return com.hanchen.veritycustomapi.proxy.StreamFlags.clientRequestedStream(rawBody);
         }
 
-        /** 把请求体的 stream 强制改成 false：代理本身按非流式处理，但仍要接住客户端发来的 stream=true。 */
         private String forceNonStream(String rawBody) {
-            try {
-                JsonObject json = GSON.fromJson(rawBody, JsonObject.class);
-                if (json == null) return rawBody;
-                json.addProperty("stream", false);
-                return GSON.toJson(json);
-            } catch (Exception ignored) {
-                return rawBody;
-            }
+            return com.hanchen.veritycustomapi.proxy.StreamFlags.forceNonStream(rawBody);
         }
 
-        /** 系统提示词注入完再强制 stream=true，让上游按 SSE 吐回来。 */
         private String ensureStreamFlag(String rawBody) {
-            try {
-                JsonObject json = GSON.fromJson(rawBody, JsonObject.class);
-                if (json == null) return rawBody;
-                json.addProperty("stream", true);
-                return GSON.toJson(json);
-            } catch (Exception ignored) {
-                return rawBody;
-            }
+            return com.hanchen.veritycustomapi.proxy.StreamFlags.ensureStream(rawBody);
         }
 
         /**

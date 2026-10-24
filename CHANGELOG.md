@@ -10,7 +10,10 @@
 
 ## 4.5.3 — 2026-10-24
 
-> **P2a 进展（本轮）**：`OllamaProxyServer` 3441 → 3371 行。
+> **P2a 进展**：`OllamaProxyServer` **3441 → 3243 行（-198）**，`proxy/` 包已建四块：
+> `ToolCallNormalizer`（工具调用/消息规范化）、`BillingGuard`（结算与用量上报，含 `BillingSettlement` 提为顶层类型）、
+> `StreamFlags`（stream 标志读写）、`PromptInjections`（无状态提示词注入）。
+> 原类一律保留同名委托，调用点零改动。
 > 工具调用规范化抽成 `proxy/ToolCallNormalizer`（`extractContentText` /
 > `sanitizeAssistantHistory` / `hasValidToolCalls` / `hasValidFunctionCall` /
 > `hasNamedFunction` / `hasNonBlankPrimitive` / `toolNameOf`），

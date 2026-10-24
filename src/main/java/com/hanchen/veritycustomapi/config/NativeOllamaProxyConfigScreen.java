@@ -339,7 +339,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private static String sectionKey(String categoryTitle, String sectionTitle) {
-        return categoryTitle + '|' + sectionTitle;
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.sectionKey(categoryTitle, sectionTitle);
     }
 
     /** 命中分组标题时切换收起状态：先缓存控件值再重排，收起后把滚动位置夹回合法范围。 */
@@ -2061,12 +2061,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private static String backendLabel(String backend) {
-        return switch (backend == null ? "auto" : backend) {
-            case "powershell" -> "Windows 内置";
-            case "ffmpeg" -> "ffmpeg";
-            case "http" -> "HTTP 快照";
-            default -> "自动";
-        };
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.backendLabel(backend);
     }
 
     private void aiBuildingCategory() {
@@ -2215,21 +2210,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
      * 之前用 24 会把这类短说明误判成状态。
      */
     private static boolean isStatusValue(String value) {
-        if (value == null) return false;
-        String trimmed = value.trim();
-        if (trimmed.isEmpty()) return false;
-        // 先排除带标点的句子：状态词与命令清单都不会有句号分号，
-        // 而「关闭后 → /v! 会被服务器拒绝；/v 私聊仍然可用」这种说明会。
-        for (int i = 0; i < trimmed.length(); i++) {
-            char c = trimmed.charAt(i);
-            if (c == '，' || c == '。' || c == '；' || c == '：'
-                    || c == ',' || c == '.' || c == ';' || c == ':') {
-                return false;
-            }
-        }
-        // 命令清单本身就是给人照着敲的，长度不限也常驻
-        if (trimmed.charAt(0) == '/') return true;
-        return trimmed.length() <= 10;
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.isStatusValue(value);
     }
 
     private void image(String label, int imageSize) {
@@ -2323,139 +2304,69 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     // ==================== Utility ====================
 
     private static String describeRecognitionMode(String value) {
-        return "local".equalsIgnoreCase(value) ? "本地识别" : "在线识别";
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.describeRecognitionMode(value);
     }
 
     private static String describePlatform() {
-        if (RuntimePlatform.isAndroidRuntime()) return "Android / FCL";
-        return "PC (Desktop)";
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.describePlatform();
     }
 
     private static String describeLocalTtsModel() {
-        String path = ModConfig.TTS_MODEL_PATH.get();
-        if (path == null || path.isBlank()) return "路径未配置";
-        try {
-            java.nio.file.Path modelPath = Paths.get(path);
-            if (!java.nio.file.Files.isDirectory(modelPath)) return "目录不存在";
-            try (var stream = java.nio.file.Files.list(modelPath)) {
-                long count = stream.limit(10).count();
-                return count > 0 ? "已检测到模型文件" : "目录为空";
-            }
-        } catch (Exception e) {
-            return "路径无效";
-        }
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.describeLocalTtsModel();
     }
 
     private static String getTtsProviderDisplay() {
-        try {
-            return TtsApiProviderEnum.valueOf(ModConfig.TTS_API_PROVIDER.get()).displayName;
-        } catch (Exception e) {
-            return ModConfig.TTS_API_PROVIDER.get();
-        }
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.getTtsProviderDisplay();
     }
 
     private static String getLlmProviderDisplay() {
-        try {
-            return ApiProviderEnum.valueOf(ModConfig.LLM_API_PROVIDER.get()).displayName;
-        } catch (Exception e) {
-            return ModConfig.LLM_API_PROVIDER.get();
-        }
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.getLlmProviderDisplay();
     }
 
     private static String maskKey(String key) {
-        if (key == null || key.isBlank()) return "";
-        if (key.length() <= 8) return "*".repeat(key.length());
-        return key.substring(0, 4) + "****" + key.substring(key.length() - 4);
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.maskKey(key);
     }
 
     private static ConfigManager.PromptPreset getCurrentPreset() {
-        String selectedName = ModConfig.SELECTED_PRESET.get();
-        for (ConfigManager.PromptPreset preset : ConfigManager.PromptPreset.values()) {
-            if (preset.name().equals(selectedName) || preset.displayName.equals(selectedName)) {
-                return preset;
-            }
-        }
-        return ConfigManager.PromptPreset.ORIGINAL_VERITY;
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.getCurrentPreset();
     }
 
     private static String[] promptNames() {
-        ConfigManager.PromptPreset[] presets = ConfigManager.PromptPreset.values();
-        String[] result = new String[presets.length];
-        for (int i = 0; i < presets.length; i++) result[i] = presets[i].displayName;
-        return result;
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.promptNames();
     }
 
     private static String[] promptValues() {
-        ConfigManager.PromptPreset[] presets = ConfigManager.PromptPreset.values();
-        String[] result = new String[presets.length];
-        for (int i = 0; i < presets.length; i++) result[i] = presets[i].name();
-        return result;
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.promptValues();
     }
 
     /** 一句话说明当前实际会注入什么人设（注入来源 + 实际字符数，0 字符表示不会注入）。 */
     private static String describeEffectivePersona() {
-        if (!ModConfig.ENABLE_CUSTOM_PROMPT.get()) {
-            return "未启用，使用原版 Verity 提示词";
-        }
-        ConfigManager.PromptPreset preset = getCurrentPreset();
-        String label;
-        String persona = ConfigManager.getCustomPersona();
-        if (persona != null && !persona.isBlank()) {
-            label = "自定义人设（覆盖预设）";
-        } else if (preset == ConfigManager.PromptPreset.CUSTOM_FILE) {
-            String file = ModConfig.CUSTOM_PROMPT_FILE.get();
-            label = "外部文件 " + (file == null || file.isBlank() ? "（未填写路径）" : file);
-        } else if (preset == ConfigManager.PromptPreset.ORIGINAL_VERITY) {
-            label = "原版人设";
-        } else {
-            label = preset.displayName;
-        }
-        String effective = ConfigManager.getCustomPersonaPrompt();
-        int length = effective == null ? 0 : effective.strip().length();
-        return length == 0
-                ? label + " —— 不会注入任何内容（等于用原版提示词）"
-                : label + " —— 实际注入 " + length + " 字符";
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.describeEffectivePersona();
     }
 
     /** 是否连着别人的服务器（配置作用域提示用）。 */
     private static boolean isRemoteServerSession() {
-        Minecraft mc = Minecraft.getInstance();
-        return mc != null && mc.getCurrentServer() != null && !mc.hasSingleplayerServer();
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.isRemoteServerSession();
     }
 
     private static String[] names(Enum<?>[] enums) {
-        String[] result = new String[enums.length];
-        for (int i = 0; i < enums.length; i++) result[i] = enums[i].toString();
-        return result;
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.names(enums);
     }
 
     private static String[] values(Enum<?>[] enums) {
-        String[] result = new String[enums.length];
-        for (int i = 0; i < enums.length; i++) result[i] = enums[i].name();
-        return result;
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.values(enums);
     }
 
     private static int clamp(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.clamp(value, min, max);
     }
 
     private static double clamp(double value, double min, double max) {
-        return Math.max(min, Math.min(max, value));
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.clamp(value, min, max);
     }
 
     private static String fitText(net.minecraft.client.gui.Font font, String value, int maxWidth) {
-        if (value == null || value.isBlank()) return "";
-        String singleLine = value.replace('\n', ' ').replace('\r', ' ');
-        if (font.width(singleLine) <= maxWidth) return singleLine;
-        String ellipsis = "...";
-        int ellipsisWidth = font.width(ellipsis);
-        StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < singleLine.length(); i++) {
-            String next = builder + String.valueOf(singleLine.charAt(i));
-            if (font.width(next) + ellipsisWidth > maxWidth) break;
-            builder.append(singleLine.charAt(i));
-        }
-        return builder + ellipsis;
+        return com.hanchen.veritycustomapi.config.ConfigDisplay.fitText(font, value, maxWidth);
     }
 
     // ==================== Data Classes ====================

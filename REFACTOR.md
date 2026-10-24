@@ -36,7 +36,7 @@
 | 顺序 | 目标 | 行数 | 建议拆法 | 风险 |
 |---|---|---|---|---|
 | P2a | `OllamaProxyServer` | 3441 → **3243** | `proxy/` 包。✅ 已完成：`ToolCallNormalizer` / `BillingGuard`（+ `BillingSettlement` 提为顶层）/ `StreamFlags` / `PromptInjections`。⏳ 未做：`ChatRequestAdapter`（剩余实例态注入）、`HttpRouter`（`handle()` 与 exchange/routes 深度耦合，建议不拆） | 中高（请求链路，必须有真实对话回归） |
-| P2b | `config/NativeOllamaProxyConfigScreen` | 3060 | 每个分类一个 `Category` 类，保留框架/绘制/滚动；行控件抽 `widget/` | 中（纯 UI，易回归截图） |
+| P2b | `config/NativeOllamaProxyConfigScreen` | 3060 → **2971** | 每个分类一个 `Category` 类，保留框架/绘制/滚动；行控件抽 `widget/` | 中（纯 UI，易回归截图） |
 | P2c | `ConfigManager` | 1924 | 保留为门面，抽 `voice/VoiceSettings`、`ai/ModelRouting`、`cloud/Credits`、`prompt/Persona` | 中（807 处调用依赖它，方法签名不能变） |
 | P2d | `tts/OnlineTtsService` | 1949 | `tts/engine/`：按协议拆分（OpenAI 兼容 / Mimo / 自定义），公共的重试与限流提到基类 | 中 |
 | P2e | `action/AiBuildingManager` | 1861 | 计划/执行/回滚三段拆开，蓝图 IO 独立 | 中高（会改世界） |
@@ -60,6 +60,16 @@
 收益小于回归风险。剩余可拆的是 `injectPlayerStateContext` / `injectMemoryRules` /
 `injectBuildingContext` / `injectCustomSystemPrompt` 四项——它们读实例上下文
 （玩家状态快照、记忆库、建造意图），要连依赖一起搬，建议单独一轮做。
+
+### P2b 进度（2026-10-24）
+
+抽出 `config/ConfigDisplay`（19 个静态纯函数）：配置值→中文、密钥脱敏、人设描述、
+下拉选项数组、`clamp`、按像素裁剪的 `fitText`、说明文字分流 `isStatusValue`。
+界面类 3060 → 2971 行，方法体全部改成一行委托，调用点零改动。
+
+剩余可拆：15 个行控件（`Row`/`InfoRow`/`ToggleRow`/`TextRow`/`ChoiceRow`…，约 600 行）
+是**非静态内部类**，依赖宿主屏幕的 `font` / `addRenderableWidget` / `requestRebuild`，
+要拆得先定义一个宿主接口——收益中等、改动面大，建议等 P2c 之后单独一轮。
 
 拆的时候的硬规则：
 

@@ -67,6 +67,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     /** 分组标题色：比正文弱、比说明文字略亮。 */
     private static final int SECTION_TITLE = VerityUiTheme.SECTION_TITLE;
     private static final int ROW_HEIGHT = 28;
+    /** 分组头在普通行高之外多出的顶部留白：让相邻两组之间有呼吸感。 */
+    private static final int SECTION_GAP = 8;
     /** 换行符。写成常量是为了避免在源码里出现转义序列，被工具链反复吃掉。 */
     private static final String NEWLINE = "\n";
     private static final ExecutorService CAMERA_TEST_POOL = Executors.newSingleThreadExecutor(runnable -> {
@@ -2401,6 +2403,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             this.defaultCollapsed = defaultCollapsed;
         }
 
+        @Override
+        int getHeight() {
+            return ROW_HEIGHT + SECTION_GAP;
+        }
+
         boolean isCollapsed(String categoryTitle) {
             return collapsedSections.getOrDefault(sectionKey(categoryTitle, title), defaultCollapsed);
         }
@@ -2419,7 +2426,10 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             // 分组头 = 抬升底色块 + 左侧强调条 + 顶部 1px 强调线。
             // 三层叠加而不是只靠底色：半透明卡片上单靠底色差容易糊成一片，
             // 一条细线能明确划出「这一组从这里开始」。
-            int blockTop = top + 2;
+            // 分组头比普通行高 8px，且多出来的空间全放在**顶部**：
+            // 原来分组头也是 28px，和上一组的最后一行之间只隔 5px，
+            // 整屏看下来是一整片，分不出组。留白只加在上方，所以它仍然贴着本组内容。
+            int blockTop = top + SECTION_GAP;
             int blockBottom = top + getHeight() - 3;
             if (blockBottom <= blockTop) return;
             VerityUiDraw.fillRounded(graphics, left, blockTop, left + rowWidth, blockBottom,
@@ -2427,9 +2437,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             VerityUiDraw.fillRounded(graphics, left, blockTop, left + 3, blockBottom, 2, ACCENT);
             graphics.fill(left + 3, blockTop, left + rowWidth, blockTop + 1, VerityUiTheme.ACCENT_SOFT);
             boolean collapsed = !categories.isEmpty() && isCollapsed(categories.get(categoryIndex).title);
-            graphics.drawString(font, collapsed ? "▸" : "▾", left + 8, top + 14, SECTION_TITLE, false);
+            // 文字在块内垂直居中：块高 23、字高 9 → 相对块顶 7
+            int textY = blockTop + 7;
+            graphics.drawString(font, collapsed ? "▸" : "▾", left + 8, textY, SECTION_TITLE, false);
             graphics.drawString(font, fitText(font, title, Math.max(36, rowWidth - 26)),
-                    left + 20, top + 14, SECTION_TITLE, false);
+                    left + 20, textY, SECTION_TITLE, false);
         }
     }
 

@@ -41,10 +41,10 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 跨存档追击：Verity 恶魔化后，把“她记住了你”写进世界之外的全局文件。
+ * 跨存档追击：Verity 恶魔化后，把“Verity 记住了你”写进世界之外的全局文件。
  *
  * <p>删除旧存档、新建世界后，客户端仍会读取这个文件；延迟几秒在玩家附近生成
- * 一只追击恶魔，并让她说一句“你换了存档也没用”。击败这只恶魔后标记解除。
+ * 一只追击恶魔，并让 Verity 说一句“你换了存档也没用”。击败这只恶魔后标记解除。
  *
  * <p>刻意不做视频里的“吃掉退出按钮”“强制删档”“无限不可击杀”：
  * 这些会把玩家锁死在存档里，属于破坏性设计。这里是可关闭、可解除的追击。
@@ -52,7 +52,7 @@ import java.util.UUID;
 public final class CrossSavePursuit {
     private static final Gson GSON = new Gson();
     private static final ResourceLocation DEMON_ID =
-            ResourceLocation.fromNamespaceAndPath("verity", "verity_demon");
+            new ResourceLocation("verity", "verity_demon");
     private static final String TAG = "verity_extended_cross_save_pursuit";
     private static final long TRIGGER_DELAY_MS = 8000L;
 

@@ -3,9 +3,11 @@ package com.hanchen.veritycustomapi.client;
 import com.hanchen.veritycustomapi.util.Silent;
 
 import com.hanchen.veritycustomapi.ConfigManager;
+import com.hanchen.veritycustomapi.compat.ReflectiveTarget;
 import com.hanchen.veritycustomapi.compat.VerityGrowthState;
 import com.hanchen.veritycustomapi.memory.VerityMemoryBridge;
 import com.hanchen.veritycustomapi.skin.SkinManager;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.math.Axis;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -13,9 +15,11 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.util.Mth;
 import net.minecraftforge.client.gui.overlay.IGuiOverlay;
 import varmite.verity.entity.verity.VerityEntity;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -41,6 +45,19 @@ public final class VerityHudOverlay {
     /** 圆形头像的描边色，用来掩盖逐行裁切产生的锯齿。 */
     private static final int PORTRAIT_RING = 0xFF2B3138;
     private static final int BUBBLE_MAX_LINES = 4;
+
+    /**
+     * 原版 {@code VerityConfig.COLOR} 字段。首次用到时解析，取不到（老版本没有这个配置）就一直是 null。
+     *
+     * <p>🔴 为什么头像要读它：Verity 6.0.0 把表情贴图从饱和黄（{@code #EADE19}）改成了
+     * 淡奶油色（{@code #FFFDD5}），但**实体渲染时会用这个配置给贴图着色**，所以世界里
+     * 的球看起来仍然是黄的。我们的气泡头像直接 blit 贴图、不做着色，结果头像比实体淡一大截
+     * ——玩家看到的就是「头像颜色变淡了」。
+     *
+     * <p>所以这里必须跟原版用**同一套**着色规则，头像才和实体一致。
+     */
+    private static volatile Field verityColorField;
+    private static volatile boolean verityColorResolved;
 
     /** 记忆条数不需要每帧统计，缓存几秒即可。 */
     private static final long MEMORY_CACHE_MS = 5000L;
@@ -138,26 +155,98 @@ public final class VerityHudOverlay {
         float cropWidth = crop[2] - crop[0];
         float cropHeight = crop[3] - crop[1];
         double radius = size / 2.0D;
-        for (int row = 0; row < size; row++) {
-            double dy = row + 0.5D - radius;
-            double halfWidth = Math.sqrt(Math.max(0.0D, radius * radius - dy * dy));
-            int inset = (int) Math.round(radius - halfWidth);
-            int width = size - inset * 2;
-            if (width <= 0) {
-                continue;
+        // 跟原版实体一致的着色：贴图本身是淡色的，不加这层头像会比实体白一截。
+        // 🔴 必须 try/finally 复原——setShaderColor 是全局状态，
+        // 漏掉复原会让之后画的每一个 HUD 元素（包括聊天栏、快捷栏）都染上这层颜色。
+        boolean tinted = applyVerityTint();
+        try {
+            for (int row = 0; row < size; row++) {
+                double dy = row + 0.5D - radius;
+                double halfWidth = Math.sqrt(Math.max(0.0D, radius * radius - dy * dy));
+                int inset = (int) Math.round(radius - halfWidth);
+                int width = size - inset * 2;
+                if (width <= 0) {
+                    continue;
+                }
+                int x = left + inset;
+                graphics.fill(x - 1, top + row, x, top + row + 1, PORTRAIT_RING);
+                graphics.fill(x + width, top + row, x + width + 1, top + row + 1, PORTRAIT_RING);
+                float u0 = crop[0] + inset / (float) size * cropWidth;
+                float u1 = crop[0] + (inset + width) / (float) size * cropWidth;
+                float v0 = crop[1] + row / (float) size * cropHeight;
+                float v1 = crop[1] + (row + 1) / (float) size * cropHeight;
+                graphics.blit(texture, x, top + row, width, 1,
+                        u0 * PORTRAIT_UV, v0 * PORTRAIT_UV,
+                        Math.max(1, Math.round((u1 - u0) * PORTRAIT_UV)),
+                        Math.max(1, Math.round((v1 - v0) * PORTRAIT_UV)),
+                        PORTRAIT_UV, PORTRAIT_UV);
             }
-            int x = left + inset;
-            graphics.fill(x - 1, top + row, x, top + row + 1, PORTRAIT_RING);
-            graphics.fill(x + width, top + row, x + width + 1, top + row + 1, PORTRAIT_RING);
-            float u0 = crop[0] + inset / (float) size * cropWidth;
-            float u1 = crop[0] + (inset + width) / (float) size * cropWidth;
-            float v0 = crop[1] + row / (float) size * cropHeight;
-            float v1 = crop[1] + (row + 1) / (float) size * cropHeight;
-            graphics.blit(texture, x, top + row, width, 1,
-                    u0 * PORTRAIT_UV, v0 * PORTRAIT_UV,
-                    Math.max(1, Math.round((u1 - u0) * PORTRAIT_UV)),
-                    Math.max(1, Math.round((v1 - v0) * PORTRAIT_UV)),
-                    PORTRAIT_UV, PORTRAIT_UV);
+        } finally {
+            if (tinted) {
+                RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+            }
+        }
+    }
+
+    /**
+     * 按原版 {@code SphereEntityRenderer} 的规则给头像着色。
+     *
+     * <p>规则与原版逐条对齐：
+     * <ul>
+     *   <li>{@code COLOR == 0}（默认）→ 固定 {@code (255,225,30)}；</li>
+     *   <li>{@code COLOR > 360} → 当作 {@code 0xRRGGBB} 直接用；</li>
+     *   <li>否则 → 当作 0~360 的色相，饱和度与亮度取 1。</li>
+     * </ul>
+     *
+     * @return 是否真的设置了着色（没设置就不用复原）
+     */
+    private static boolean applyVerityTint() {
+        int rgb = verityTintRgb();
+        if (rgb < 0) return false;
+        RenderSystem.setShaderColor(
+                ((rgb >> 16) & 0xFF) / 255.0F,
+                ((rgb >> 8) & 0xFF) / 255.0F,
+                (rgb & 0xFF) / 255.0F,
+                1.0F);
+        return true;
+    }
+
+    /**
+     * 原版当前的颜色设置对应的 RGB。
+     *
+     * @return {@code 0xRRGGBB}；读不到这个配置时返回 -1（表示「不处理，按贴图原色画」）
+     */
+    private static int verityTintRgb() {
+        Object raw = readVerityColor();
+        if (!(raw instanceof Integer color)) return -1;
+        if (color == 0) {
+            // 原版的默认值就是「不填颜色」，此时它自己用这个固定的黄
+            return 0xFFE11E;
+        }
+        if (color > 360) {
+            return color & 0xFFFFFF;
+        }
+        return Mth.hsvToRgb(color / 360.0F, 1.0F, 1.0F) & 0xFFFFFF;
+    }
+
+    /** 读原版 {@code VerityConfig.COLOR} 的当前值；读不到返回 null。 */
+    private static Object readVerityColor() {
+        try {
+            if (!verityColorResolved) {
+                verityColorResolved = true;
+                Class<?> config = ReflectiveTarget.type("varmite.verity.VerityConfig", "[HudTint]");
+                verityColorField = ReflectiveTarget.field(config, "COLOR", "[HudTint]");
+            }
+            Field field = verityColorField;
+            if (field == null) return null;
+            Object holder = ReflectiveTarget.get(field, null);
+            // ForgeConfigSpec.ConfigValue 实现了 Supplier，直接取当前值比反射调 get() 省事
+            if (holder instanceof java.util.function.Supplier<?> supplier) {
+                return supplier.get();
+            }
+            return null;
+        } catch (Throwable ignored) {
+            return null;
         }
     }
 

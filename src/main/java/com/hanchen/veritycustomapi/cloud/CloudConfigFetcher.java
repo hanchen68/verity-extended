@@ -183,8 +183,15 @@ public class CloudConfigFetcher {
 
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
-                OllamaProxyMod.LOGGER.warn("配对码兑换失败: HTTP {}", response.statusCode());
-                return ExchangeResult.failure(response.statusCode(), exchangeStatusMessage(response.statusCode()));
+                // 服务端在 400/404 时返回的仍然是业务信封
+                // {"code":400,"message":"配对码格式无效","data":null}。
+                // 丢掉 body 只报「配对失败（HTTP 400）」等于让玩家对着一个状态码猜，
+                // 所以优先把服务端那句话原样给出去，抠不到才退回按状态码写的兜底文案。
+                String serverMessage = extractServerMessage(response.body());
+                OllamaProxyMod.LOGGER.warn("配对码兑换失败: HTTP {}，服务端返回: {}",
+                        response.statusCode(), serverMessage == null ? "(无 message)" : serverMessage);
+                return ExchangeResult.failure(response.statusCode(),
+                        serverMessage != null ? serverMessage : exchangeStatusMessage(response.statusCode()));
             }
 
             JsonObject json = JsonParser.parseString(response.body()).getAsJsonObject();
@@ -209,12 +216,39 @@ public class CloudConfigFetcher {
         }
     }
 
-    private static String exchangeStatusMessage(int status) {
+    /** 包内可见：{@code CloudProtocolTest} 直接验证这条兜底文案。 */
+    static String exchangeStatusMessage(int status) {
         return switch (status) {
+            case 400 -> "配对码格式无效（配对码是 6 位字母数字）";
             case 404 -> "配对码不存在、已使用或已过期";
             case 429 -> "操作过于频繁，请稍后再试";
             default -> status >= 500 ? "云端服务暂时不可用" : "配对失败（HTTP " + status + "）";
         };
+    }
+
+    /**
+     * 从错误响应体里抠出可读的 {@code message}。
+     *
+     * <p>只认业务信封里的那几种常见字段；网关返回 HTML 错误页、纯文本、空 body 都退化成
+     * {@code null}，由调用方按状态码给兜底文案——**绝不能因为解析失败把异常抛出去**，
+     * 那样玩家看到的会是「网络异常」，比 HTTP 状态码更没有信息量。
+     *
+     * <p>包内可见：{@code CloudProtocolTest} 直接验证这条解析。
+     */
+    static String extractServerMessage(String body) {
+        if (body == null || body.isBlank()) return null;
+        try {
+            JsonObject json = JsonParser.parseString(body).getAsJsonObject();
+            for (String key : new String[]{"message", "msg", "error", "detail"}) {
+                if (json.has(key) && json.get(key).isJsonPrimitive()) {
+                    String text = json.get(key).getAsString();
+                    if (text != null && !text.isBlank()) return safeMessage(text);
+                }
+            }
+        } catch (Throwable ignored) {
+            // 非 JSON 响应，交给状态码兜底
+        }
+        return null;
     }
 
     public record ExchangeResult(boolean success, String apiKey, String configId, int status, String error) {
@@ -347,9 +381,23 @@ public class CloudConfigFetcher {
         if (message == null || message.isBlank()) {
             return "unknown";
         }
-        String apiKey = CloudCredentialStore.getInstance().apiKey();
-        String sanitized = apiKey.isBlank() ? message : message.replace(apiKey, "[REDACTED]");
-        return sanitized.replaceAll("sk_[A-Za-z0-9_-]+", "sk_****")
+        String sanitized = message;
+        try {
+            String apiKey = CloudCredentialStore.getInstance().apiKey();
+            if (apiKey != null && !apiKey.isBlank()) {
+                sanitized = sanitized.replace(apiKey, "[REDACTED]");
+            }
+        } catch (Throwable ignored) {
+            // 🔴 凭据存储要读游戏目录，测试环境/未初始化时会抛异常。
+            // 这里**不能**让异常冒到外层——外层的 catch 会把整条消息吞成 null，
+            // 结果是「脱敏失败 = 什么都不显示」。退化成纯正则脱敏即可。
+        }
+        return scrubSecrets(sanitized);
+    }
+
+    /** 纯正则脱敏：不依赖任何外部状态，任何环境下都能跑。 */
+    private static String scrubSecrets(String text) {
+        return text.replaceAll("sk_[A-Za-z0-9_-]+", "sk_****")
                 .replaceAll("sk-[A-Za-z0-9_-]+", "sk-****");
     }
 

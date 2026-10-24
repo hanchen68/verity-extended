@@ -179,7 +179,7 @@ public final class MemoryManagementScreen extends Screen {
     }
 
     private void confirmDelete(String key) {
-        minecraft.setScreen(new ConfirmScreen(confirmed -> {
+        minecraft.setScreen(VerityConfirmScreen.dangerous(this, confirmed -> {
             minecraft.setScreen(this);
             if (confirmed) runOnServer(store -> {
                 store.removeMemory(key);
@@ -197,7 +197,7 @@ public final class MemoryManagementScreen extends Screen {
     }
 
     private void confirmClear() {
-        minecraft.setScreen(new ConfirmScreen(confirmed -> {
+        minecraft.setScreen(VerityConfirmScreen.dangerous(this, confirmed -> {
             minecraft.setScreen(this);
             if (confirmed) runOnServer(store -> {
                 for (String key : store.getAllKeys()) store.removeMemory(key);

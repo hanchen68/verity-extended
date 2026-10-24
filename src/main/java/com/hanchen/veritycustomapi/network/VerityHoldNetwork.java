@@ -20,7 +20,7 @@ public final class VerityHoldNetwork {
     private static final String PROTOCOL = "1";
     /** 允许对端完全没有这个通道：老版本客户端/服务端不会因为少一个纯视觉包就被断开连接。 */
     private static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
-            ResourceLocation.fromNamespaceAndPath(OllamaProxyMod.MOD_ID, "verity_hold"),
+            new ResourceLocation(OllamaProxyMod.MOD_ID, "verity_hold"),
             () -> PROTOCOL,
             NetworkRegistry.acceptMissingOr(PROTOCOL::equals),
             NetworkRegistry.acceptMissingOr(PROTOCOL::equals));

@@ -49,6 +49,21 @@ public class KeyBindings {
             "category.veritycustomapi"
     );
 
+    /**
+     * 骑上 / 从 Verity 身上下来（默认 R 键）。
+     *
+     * <p>🔴 为什么不能继续用「潜行 + 空手右键」：PatPat 的抚摸手势**默认就是潜行右键**，
+     * 而我们为了拦住原版「空手右键把 Verity 收进物品」必须在 HIGHEST 优先级取消那个事件——
+     * 一取消，PatPat 就永远收不到抚摸请求。两个功能抢同一个手势，只能有一个生效。
+     * 单独给骑乘一个键，抚摸还给 PatPat，两边互不干扰。
+     */
+    public static final KeyMapping RIDE_KEY = new KeyMapping(
+            "key.veritycustomapi.ride",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_R,
+            "category.veritycustomapi"
+    );
+
     @SubscribeEvent
     public static void registerKeys(RegisterKeyMappingsEvent event) {
         event.register(SPEECH_KEY);
@@ -56,5 +71,6 @@ public class KeyBindings {
         event.register(CAMERA_LOOK_KEY);
         event.register(QUICK_COMMAND_KEY);
         event.register(HEAD_PERCH_KEY);
+        event.register(RIDE_KEY);
     }
 }

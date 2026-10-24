@@ -62,14 +62,6 @@ public final class HeadPerchManager {
             feedback(player, "✖ 现在没找到你的 Verity，走近一点再试试吧", ChatFormatting.RED);
             return;
         }
-        com.hanchen.veritycustomapi.OllamaProxyMod.LOGGER.info(
-                "【站头】请求：verity={} 距离²={} 站头中={} Verity 的载具={} Verity 的乘客={} 恶魔={} 求饶={} 开关={}",
-                verity.getId(), String.format("%.1f", verity.distanceToSqr(player)),
-                HeadPerchState.isPerched(verity.getUUID()),
-                verity.getVehicle() == null ? "无" : verity.getVehicle().getType().toString(),
-                verity.getFirstPassenger() == null ? "无" : verity.getFirstPassenger().getType().toString(),
-                verity.isMonstrous(), verity.pleadingTimer,
-                ModConfig.SERVER_VERITY_HEAD_PERCH.get());
 
         // 已经站在你头上 -> 下来
         if (player.getUUID().equals(HeadPerchState.carrierOf(verity.getUUID()))) {

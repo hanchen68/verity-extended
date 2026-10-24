@@ -16,7 +16,7 @@ import java.util.function.Supplier;
 public final class HorrorEventNetwork {
     private static final String PROTOCOL = "1";
     private static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
-            ResourceLocation.fromNamespaceAndPath(OllamaProxyMod.MOD_ID, "horror_event"),
+            new ResourceLocation(OllamaProxyMod.MOD_ID, "horror_event"),
             () -> PROTOCOL,
             PROTOCOL::equals,
             PROTOCOL::equals

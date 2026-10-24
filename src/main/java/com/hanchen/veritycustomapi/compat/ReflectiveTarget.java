@@ -150,4 +150,27 @@ public final class ReflectiveTarget {
         Object value = get(field, target);
         return value instanceof Boolean flag ? flag : fallback;
     }
+
+    /**
+     * 判断类是否**能加载**，不写任何日志、不缓存。
+     *
+     * <p>专门给 {@code isAvailable()} 这类「可用性探测」用，与 {@link #type} 的区别有两点：
+     * <ul>
+     *   <li>不写日志：探测是正常流程（每个启动都会问一遍），打 warn 会刷屏；</li>
+     *   <li>语义只是「装了没有」，**不代表可以用**——真正访问成员仍然走
+     *       {@link #method} / {@link #field}，它们各自处理缺失。</li>
+     * </ul>
+     *
+     * <p>🔴 仍然要谨慎：{@code Class.forName} 会触发目标类的静态初始化。
+     * 只在「原版 Verity 必然已加载」的前提下用（例如已经确认过 mixin 生效），
+     * 判断某个可选模组装没装请用字节扫描（{@link VerityStructureDetector}）。
+     */
+    public static boolean canLoad(String name) {
+        try {
+            Class.forName(name);
+            return true;
+        } catch (Throwable missing) {
+            return false;
+        }
+    }
 }

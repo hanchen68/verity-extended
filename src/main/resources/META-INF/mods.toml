@@ -22,7 +22,9 @@ description='''Verity 扩展增强 ${version}
 [[dependencies."verity_extended"]]
 modId="forge"
 mandatory=true
-versionRange="[47.4.20,48)"
+# 5.0 起放宽到 47.3：编译基准是 47.3.0（见 build.gradle），所以 47.3.x 全系列 + 47.4.x 都能跑。
+# 原版 Verity 6.0.0 自己只要求 [47,)，真正卡住旧整合包的只有这一行。
+versionRange="[47.3,48)"
 ordering="NONE"
 side="BOTH"
 

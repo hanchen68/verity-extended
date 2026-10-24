@@ -17,7 +17,7 @@ import java.util.Locale;
 
 public final class MmdTextureCache {
     private static final ResourceLocation FALLBACK =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "textures/block/white_concrete.png");
+            new ResourceLocation("minecraft", "textures/block/white_concrete.png");
     private static final Map<Path, ResourceLocation> LOCATIONS = new ConcurrentHashMap<>();
 
     private MmdTextureCache() {
@@ -53,7 +53,7 @@ public final class MmdTextureCache {
                 return FALLBACK;
             }
             String key = Integer.toUnsignedString(path.toAbsolutePath().normalize().toString().hashCode(), 36);
-            ResourceLocation location = ResourceLocation.fromNamespaceAndPath("customsoul", "mmd/" + key);
+            ResourceLocation location = new ResourceLocation("customsoul", "mmd/" + key);
             Minecraft.getInstance().getTextureManager().register(location, new DynamicTexture(image));
             return location;
         } catch (Exception ignored) {

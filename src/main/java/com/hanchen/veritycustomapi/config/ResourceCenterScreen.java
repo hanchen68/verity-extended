@@ -305,7 +305,7 @@ public final class ResourceCenterScreen extends Screen {
     }
 
     private void confirmClearCache() {
-        minecraft.setScreen(new ConfirmScreen(confirmed -> {
+        minecraft.setScreen(VerityConfirmScreen.dangerous(this, confirmed -> {
             minecraft.setScreen(this);
             if (!confirmed || blank(ConfigManager.getCloudApiKey())) return;
             runItemTask("正在清理当前账号缓存...", () -> {

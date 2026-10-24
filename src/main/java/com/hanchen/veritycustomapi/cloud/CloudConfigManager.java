@@ -64,7 +64,9 @@ public final class CloudConfigManager {
             CloudConfig cached = SNAPSHOTS.load(apiKey);
             if (cached != null) {
                 applyOnServerThread(cached, currentGeneration, false);
-                OllamaProxyMod.LOGGER.info("已加载云端配置磁盘快照，版本 {}", cached.data.version);
+                // 措辞只说「读到了快照」：真正有没有写进内存由 apply 决定，
+                // 这里同步打「已加载」会在被去重跳过时变成假日志（曾经因此误判很久）。
+                OllamaProxyMod.LOGGER.info("已读取云端配置磁盘快照，版本 {}", cached.data.version);
                 warnIfSnapshotLacksBuiltinCredentials();
             }
         }
@@ -115,8 +117,34 @@ public final class CloudConfigManager {
         }
     }
 
+    /**
+     * 配置保存后同步云端拉取线程的状态。
+     *
+     * <p>🔴 这里必须处理「玩家自己把开关关掉」的情况：
+     * 以前只在 {@code active} 时重配周期，关掉开关后线程虽然不再拉取
+     * （{@code requestPull} 会检查 {@code isCloudEnabled()}），
+     * 但**内存里的云端配置与覆盖还留着**——所有 getter 仍返回云端下发的值，
+     * 玩家在本地改了也会被覆盖抢回去。表现就是「我把云端关了，设置却还是云端那套、改不动」。
+     *
+     * <p>所以关掉时必须走 {@link #stop()}：它除了停线程，还会
+     * {@code clearCloudConfig()}（含 {@code CloudOverrides.clear()}），
+     * 把覆盖值还原成本地值，让运行时立刻回到本地配置。
+     */
     public static synchronized void onConfigSaved() {
-        if (!active) return;
+        if (!ConfigManager.isCloudEnabled()) {
+            // 关掉了：停线程 + 清内存配置 + 撤覆盖。
+            // 加短路是因为这个方法每次保存配置都会调；已经在关闭状态时
+            // 再跑一遍 stop() 只会白增 generation、反复 shutdown 线程池。
+            if (active || executor != null) {
+                stop();
+            }
+            return;
+        }
+        if (!active) {
+            // 之前 stop 过（玩家关过又打开）：重新拉起，否则要重启游戏才生效
+            startClient();
+            return;
+        }
         configurePeriodicTask(ConfigManager.getCloudPullIntervalSeconds(), generation);
     }
 
@@ -138,6 +166,9 @@ public final class CloudConfigManager {
         CloudRuntimeReload.clear();
         FETCHING_GENERATION.set(-1L);
         ConfigManager.clearCloudConfig();
+        // 配置被清空，去重标记必须一起作废：否则紧接着的重新 start
+        // 会把「应用快照」和「网络拉取」都当成重复下发跳过，内存配置永远补不回来。
+        resetAppliedTracking();
         if (periodicTask != null) {
             periodicTask.cancel(false);
             periodicTask = null;
@@ -267,6 +298,19 @@ public final class CloudConfigManager {
 
     private static boolean isDuplicateWithinWindow(CloudConfig config) {
         if (config == null || config.data == null) return false;
+        // 🔴 内存里已经没有云端配置时，绝不能算「重复」。
+        //
+        // 这条是 2026-10-25 那个「进存档后提示云端配置不同步 / API 地址未配置」的根因：
+        // 进存档时客户端会 stop() → clearCloudConfig() 把内存配置清空，
+        // 但 lastAppliedId/Version/At 这三个去重标记**没有跟着清**。
+        // 紧接着服务端 start()，先应用磁盘快照、再拉网络，两次都落在 60 秒窗口内，
+        // 于是两次都被判「已应用过」而静默跳过——cloudConfig 一直是 null，
+        // 内置线路拿不到地址，聊天直接报「API 地址未配置」。
+        // 而日志里那句「已加载云端配置磁盘快照」是调用方打的，跳过了也照打，极具误导性。
+        //
+        // 判据用「内存里到底有没有配置」而不是「标记清没清」，
+        // 这样任何路径把配置清掉（stop / 手动清 / 异常）都不会再被错误抑制。
+        if (!ConfigManager.isCloudConfigLoaded()) return false;
         // 只压网络重复拉取。快照里没有内置线路密钥（按设计不落盘），
         // 网络那次必须照常应用，否则密钥要等到下一次轮询才回来。
         if (!lastAppliedFromNetwork) return false;
@@ -275,6 +319,14 @@ public final class CloudConfigManager {
         if (id == null || version == null) return false;
         if (!id.equals(lastAppliedId) || !version.equals(lastAppliedVersion)) return false;
         return System.currentTimeMillis() - lastAppliedAt < DUPLICATE_APPLY_WINDOW_MS;
+    }
+
+    /** 内存配置被清掉后，去重标记必须一起作废，否则下一次下发会被误判成「已应用过」。 */
+    private static void resetAppliedTracking() {
+        lastAppliedId = null;
+        lastAppliedVersion = null;
+        lastAppliedAt = 0L;
+        lastAppliedFromNetwork = false;
     }
 
     private static boolean apply(CloudConfig config, boolean persist) {

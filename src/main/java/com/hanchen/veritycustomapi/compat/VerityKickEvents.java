@@ -20,7 +20,7 @@ import varmite.verity.entity.verity.VerityEntity;
  * 踢 Verity 一脚。
  *
  * <p>手势：**潜行 + 左键**。普通左键保持原版攻击，不会误触。
- * 踢不造成伤害，只把她推开、播音效粒子，并让她用一句话回应。
+ * 踢不造成伤害，只把 Verity 推开、播音效粒子，并让 Verity 用一句话回应。
  */
 public final class VerityKickEvents {
     private static final int COOLDOWN_TICKS = 20 * 10;
@@ -64,7 +64,7 @@ public final class VerityKickEvents {
         cooldowns.putLong(serverPlayer.getStringUUID(), now + COOLDOWN_TICKS);
         verity.getPersistentData().put(COOLDOWN_KEY, cooldowns);
 
-        // 从玩家指向她的方向推开，带一点向上的弧度
+        // 从玩家指向 Verity 的方向推开，带一点向上的弧度
         Vec3 away = verity.position().subtract(serverPlayer.position());
         if (away.lengthSqr() < 1.0E-4D) {
             away = serverPlayer.getLookAngle();

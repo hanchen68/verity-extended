@@ -4,11 +4,11 @@
 
 ## 这是什么
 
-**Verity 扩展增强（`verity_extended`）4.5.2** —— Minecraft 1.20.1 / Forge 47.4.x 的客户端+服务端模组，
+**Verity 扩展增强（`verity_extended`）5.0** —— Minecraft 1.20.1 / Forge 47.3+ 的客户端+服务端模组，
 基于第三方模组 **Verity JE 6.0.0-beta.9**（实体 `varmite.verity.entity.verity.VerityEntity`）做扩展。
 
 一句话定位：**它不重写 Verity，而是在它的边界上加东西**——AI 对话链路、云端配置、语音/朗读、
-好感与送礼、恐怖事件、MMD 播放、插件系统，以及若干第三方模组的兼容层。
+好感与送礼、恐怖事件、MMD 播放、主动行为（溜达/护主/护主打怪），以及若干第三方模组的兼容层。
 
 ## 五分钟建立坐标
 
@@ -16,7 +16,7 @@
 |---|---|
 | 模组入口 / 注册 | `OllamaProxyMod.java`（`@Mod("verity_extended")`） |
 | AI 对话与提示词 | `ConfigManager.java`（1 万行级，人设/路由/额度都在这）、`compat/OriginalVerityChatBridge.java` |
-| 与原版 Verity 的耦合 | `mixin/`（31 个注入类 + 插件）+ `compat/`（34 个反射封装） |
+| 与原版 Verity 的耦合 | `mixin/`（35 个已声明类：30 注入 + 5 Accessor）+ `compat/`（34 个反射封装） |
 | 配置定义 | `config/ModConfig.java`（两个 spec） |
 | 配置界面 | `config/NativeOllamaProxyConfigScreen.java`（自绘，非 Cloth） |
 | 云端下发 | `cloud/CloudConfigManager.java` + `config/CloudOverrides.java` |
@@ -89,7 +89,7 @@ powershell -ExecutionPolicy Bypass -File tools/prepare-lib.ps1 -JarPath "<path>/
 **兼容性**
 - 适配基准：Verity JE `6.0.0-beta.9`；注入点与反射成员核对：通过 / N 处待适配
 - 网络协议：变 / 未变
-- 依赖区间：Forge `[47.4.20,48)`、GeckoLib `[4.4,)`
+- 依赖区间：Forge `[47.3,48)`（编译基准 47.3.0）、GeckoLib `[4.4,)`
 
 **已知问题**
 - ……（结构性限制照 docs/08 写，不要写「暂无」糊过去）

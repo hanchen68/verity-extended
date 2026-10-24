@@ -1604,21 +1604,9 @@ public final class AiBuildingManager {
 
     // ============================ 蓝图本地库 ============================
 
+    /** 蓝图目录解析；实现在 {@link BlueprintStore#directory}。 */
     private Path blueprintDir(MinecraftServer server) {
-        String configured = ModConfig.AI_BUILDING_BLUEPRINT_DIR.get();
-        if (configured == null || configured.isBlank()) {
-            configured = "./config/verity_extended/blueprints";
-        }
-        Path base = Paths.get(configured);
-        if (!base.isAbsolute()) {
-            String root = server == null ? System.getProperty("user.dir") : server.getServerDirectory().toString();
-            base = Paths.get(root, configured).normalize();
-        }
-        try {
-            Files.createDirectories(base);
-        } catch (IOException ignored) {
-        }
-        return base;
+        return BlueprintStore.directory(server == null ? null : server.getServerDirectory().toString());
     }
 
     public void saveCurrentBlueprint(ServerPlayer player, String name) {
@@ -1646,8 +1634,7 @@ public final class AiBuildingManager {
                 items.add(op);
             }
             save.add("operations", items);
-            Files.writeString(blueprintDir(player.server).resolve(safeName + ".json"),
-                    GSON.toJson(save), StandardCharsets.UTF_8);
+            BlueprintStore.write(blueprintDir(player.server), safeName, GSON.toJson(save));
             notifyPlayer(player, "已保存蓝图: " + safeName + " (" + job.placements.size() + " 个方块)");
         } catch (IOException e) {
             notifyPlayer(player, "保存蓝图失败: " + e.getMessage());
@@ -1656,9 +1643,7 @@ public final class AiBuildingManager {
 
     public void listBlueprints(ServerPlayer player) {
         try {
-            List<Path> files = Files.list(blueprintDir(player.server))
-                    .filter(p -> p.toString().endsWith(".json"))
-                    .toList();
+            List<Path> files = BlueprintStore.list(blueprintDir(player.server));
             if (files.isEmpty()) {
                 notifyPlayer(player, "蓝图库为空");
                 return;
@@ -1674,13 +1659,15 @@ public final class AiBuildingManager {
     }
 
     public boolean loadBlueprint(ServerPlayer player, String name) {
-        Path file = blueprintDir(player.server).resolve(sanitizeFileName(name) + ".json");
+        String safeName = sanitizeFileName(name);
+        Path dir = blueprintDir(player.server);
+        Path file = BlueprintStore.fileFor(dir, safeName);
         if (!Files.isRegularFile(file)) {
             notifyPlayer(player, "找不到蓝图: " + name);
             return false;
         }
         try {
-            String json = Files.readString(file, StandardCharsets.UTF_8);
+            String json = BlueprintStore.read(dir, safeName);
             String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(
                     json.getBytes(StandardCharsets.UTF_8));
             startBlueprint(player.server, player, new String[]{encoded});
@@ -1711,20 +1698,9 @@ public final class AiBuildingManager {
         return true;
     }
 
+    /** 蓝图名净化：**这是一道路径穿越防线**，实现在 {@link BlueprintStore#sanitizeFileName}。 */
     private static String sanitizeFileName(String raw) {
-        if (raw == null) return "blueprint";
-        String trimmed = raw.trim();
-        if (trimmed.isEmpty()) return "blueprint";
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < trimmed.length() && i < 48; i++) {
-            char c = trimmed.charAt(i);
-            if (Character.isLetterOrDigit(c) || c == '_' || c == '-' || (c >= 0x4e00 && c <= 0x9fff)) {
-                sb.append(c);
-            } else {
-                sb.append('_');
-            }
-        }
-        return sb.length() == 0 ? "blueprint" : sb.toString();
+        return BlueprintStore.sanitizeFileName(raw);
     }
 
     // ============================ 任务持久化 ============================

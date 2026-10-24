@@ -102,20 +102,19 @@ public final class RideManager {
         if (!Boolean.TRUE.equals(ModConfig.SERVER_VERITY_BALL_RIDE.get())) {
             return false;
         }
-        // 只有潜行 + 空手才接管；其余情况（含普通右键、手持物品）都保留原版行为
-        if (!player.getMainHandItem().isEmpty() || !player.isShiftKeyDown()) {
-            return false;
-        }
+        // 🔴 这里**不再校验手势**（潜行 + 空手）。
+        // 骑乘已经改成独立按键（默认 R，见 RideKeyHandler）：原来那个「潜行 + 空手右键」
+        // 和 PatPat 的抚摸手势完全重合，两边只能有一个生效。手势判断由按键入口负责。
         if (VerityShoulderCarry.isCarried(verity)) {
             player.displayClientMessage(Component.literal("✖ " + RefuseReason.SHOULDER.text())
                     .withStyle(ChatFormatting.RED), true);
             return true;
         }
-        // Verity 正站在别人（或你）头上时不能同时被骑——两套定位会打架
+        // Verity 正站在玩家头上时按骑乘键：**自动先下来再骑**。
+        // 以前这里是「拒绝 + 提示先按 H」，但玩家根本分不清「站头」和「骑乘」两种状态，
+        // 看到的就是「按了骑乘键没反应」。两套定位不能同时生效，所以必须先解除站头。
         if (HeadPerchState.isPerched(verity.getUUID())) {
-            player.displayClientMessage(Component.literal("✖ Verity 正站在你头上，先按 H 下来再骑")
-                    .withStyle(ChatFormatting.RED), true);
-            return true;
+            HeadPerchManager.releaseQuietly(verity);
         }
         if (player.getVehicle() == verity) {
             player.displayClientMessage(Component.literal("● 按 Shift 或 H 键可以下来")

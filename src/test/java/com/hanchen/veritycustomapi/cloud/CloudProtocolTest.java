@@ -2,6 +2,7 @@ package com.hanchen.veritycustomapi.cloud;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.hanchen.veritycustomapi.config.ConfigText;
 
 import java.util.List;
 import java.net.URI;
@@ -13,7 +14,31 @@ public final class CloudProtocolTest {
     public static void main(String[] args) {
         // 版本号变更的「绊线」：改 build.gradle / FALLBACK_VERSION 时这里会失败，
         // 提醒同步确认云端协议（mod_version 上报）也要一起发布。
-        require("4.5.3".equals(CloudConfigFetcher.modVersion()), "cloud request mod version is stale");
+        require("5.0".equals(CloudConfigFetcher.modVersion()), "cloud request mod version is stale");
+        // 配对失败时**必须**把服务端那句话带出来。曾经非 200 直接把 body 丢掉，
+        // 玩家只看到「配对失败（HTTP 400）」，而真正的原因是「配对码格式无效」（长度不是 6 位）。
+        require("配对码格式无效".equals(CloudConfigFetcher.extractServerMessage(
+                        "{\"code\":400,\"message\":\"配对码格式无效\",\"data\":null}")),
+                "server error message was discarded on non-200 response");
+        require(CloudConfigFetcher.extractServerMessage("<html>502 Bad Gateway</html>") == null,
+                "non-json error body should fall back to the status message");
+        require(CloudConfigFetcher.extractServerMessage("") == null
+                        && CloudConfigFetcher.extractServerMessage(null) == null,
+                "empty error body should fall back to the status message");
+        require(CloudConfigFetcher.exchangeStatusMessage(400).contains("6 位"),
+                "http 400 fallback should explain the 6-character pairing code");
+        require(CloudConfigFetcher.exchangeStatusMessage(404).contains("过期"),
+                "http 404 fallback should explain the expired pairing code");
+        // 配对码必须正好 6 位；粘贴时带进的零宽字符会让长度变成 7 → 服务端 400
+        require("ABC234".equals(ConfigText.normalizePairingCode("abc234")),
+                "pairing code was not upper-cased");
+        require("ABC234".equals(ConfigText.normalizePairingCode(" ABC2\u200B34\n")),
+                "pairing code kept whitespace or zero-width characters");
+        require("".equals(ConfigText.normalizePairingCode(null)),
+                "null pairing code should collapse to an empty string");
+        require("AB-234".equals(ConfigText.normalizePairingCode("ab-234")),
+                "pairing code content must not be stripped down to alphanumerics");
+
         CloudConfig billingConfig = new Gson().fromJson("{\"code\":0,\"billing\":{"
                 + "\"protocol_version\":2,\"pre_authorization_required_for_paid_chat\":true,"
                 + "\"reserve_url\":\"/api/v1/credits/reserve\"},\"data\":{\"version\":1}}", CloudConfig.class);
@@ -30,8 +55,7 @@ public final class CloudProtocolTest {
         require(BillingService.fingerprint("account-a").equals(BillingService.fingerprint("account-a"))
                         && !BillingService.fingerprint("account-a").equals(BillingService.fingerprint("account-b")),
                 "billing account fingerprint is unstable");
-        requireThrows(() -> BillingService.requireRequestId("short"), "short request id accepted");
-        require("request-12345678".equals(BillingService.requireRequestId("request-12345678")),
+        requireThrows(() -> BillingService.requireRequestId("short"), "short request id accepted");        require("request-12345678".equals(BillingService.requireRequestId("request-12345678")),
                 "valid request id rejected");
         require(BillingService.pendingDelay(1) == 30000L && BillingService.pendingDelay(10) == 300000L,
                 "pending billing retry delay is invalid");

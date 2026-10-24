@@ -1,8 +1,16 @@
 package com.hanchen.veritycustomapi.config;
 
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.BufferBuilder;
+import com.mojang.blaze3d.vertex.BufferUploader;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.Tesselator;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.renderer.GameRenderer;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
+import org.joml.Matrix4f;
 
 /**
  * 界面绘制原语：圆角矩形、圆角描边、药丸、开关。
@@ -18,6 +26,42 @@ import net.minecraftforge.api.distmarker.OnlyIn;
 public final class VerityUiDraw {
 
     private VerityUiDraw() {
+    }
+
+    /**
+     * 立即提交一个**完全不透明**的矩形，绕过 {@link GuiGraphics} 的批量管线。
+     *
+     * <p>为什么需要这个：{@code GuiGraphics.fill} 只是把顶点塞进
+     * {@code RenderType.gui()} 的缓冲，真正光栅化要等 {@code flush()}。
+     * 而 {@code RenderType.gui()} 自带 {@code TRANSLUCENT_TRANSPARENCY}——
+     * flush 时会把混合重新打开，于是「颜色 alpha = FF」只代表顶点 alpha 是 1，
+     * 最终像素仍然由混合公式决定。想让一块底**无论什么状态都实心**，
+     * 唯一可靠的办法是自己在关闭混合的状态下立即提交。
+     *
+     * <p>用途：说明浮层这类「必须盖住底下所有内容」的面板。
+     *
+     * @param argb 颜色；alpha 会被忽略（因为混合是关的），传 {@code 0xFF......} 即可
+     */
+    public static void fillOpaqueNow(GuiGraphics g, int left, int top, int right, int bottom, int argb) {
+        if (right <= left || bottom <= top) return;
+        Matrix4f matrix = g.pose().last().pose();
+        int r = (argb >> 16) & 0xFF;
+        int green = (argb >> 8) & 0xFF;
+        int b = argb & 0xFF;
+        RenderSystem.disableDepthTest();
+        RenderSystem.disableBlend();
+        RenderSystem.setShader(GameRenderer::getPositionColorShader);
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+        BufferBuilder buffer = Tesselator.getInstance().getBuilder();
+        buffer.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        buffer.vertex(matrix, (float) left, (float) bottom, 0.0F).color(r, green, b, 255).endVertex();
+        buffer.vertex(matrix, (float) right, (float) bottom, 0.0F).color(r, green, b, 255).endVertex();
+        buffer.vertex(matrix, (float) right, (float) top, 0.0F).color(r, green, b, 255).endVertex();
+        buffer.vertex(matrix, (float) left, (float) top, 0.0F).color(r, green, b, 255).endVertex();
+        BufferUploader.drawWithShader(buffer.end());
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.enableDepthTest();
     }
 
     /**

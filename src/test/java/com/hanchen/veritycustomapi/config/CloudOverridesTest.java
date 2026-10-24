@@ -45,6 +45,9 @@ public final class CloudOverridesTest {
         localEditBeatsCloudOverride();
         webSearchSettingsAreLocalOnly();
         overridesDoNotTouchCloudSwitch();
+        onlyApiConnectionKeysAreAllowed();
+        cloudOffClearsInMemoryOverrides();
+        duplicateWindowRespectsClearedConfig();
         saveSitesGoThroughGuard();
 
         CloudOverrides.clear();
@@ -84,8 +87,12 @@ public final class CloudOverridesTest {
         require(overridable.equals(fromSpec), "有配置项没被覆盖通道接上：" + difference(fromSpec, overridable));
         // 这个数字是「配置项总数」的哨兵：新增/删除配置键时必须同步改这里，
         // 否则说明有人加了键却没意识到云端覆盖通道、配置界面、文档都要跟着动。
-        // 181（4.5.1）+ 4（stellar_remote）+ 5（verity_jelly）= 190
-        require(overridable.size() == 190, "配置项总数变了（期望 190，实际 " + overridable.size() + "）");
+        // 181（4.5.1）+ 4（stellar_remote）+ 5（verity_jelly）= 190，
+        // 再减掉 2 个从没被读过、2026-10-24 清掉的死键 = 188
+        // 2026-10-25 加 verity_wander.enabled（闲置四处走动）= 189
+        // 2026-10-25 加 verity_help.enabled（低血量护主）= 190
+        // 2026-10-25 删掉整个插件系统（plugin.enabled / maxLoaded / allowBlockEdit）= 187
+        require(overridable.size() == 187, "配置项总数变了（期望 187，实际 " + overridable.size() + "）");
 
         // cloud.* 是唯一被硬禁的一段，其余全部可下发
         int forbidden = 0;
@@ -121,35 +128,23 @@ public final class CloudOverridesTest {
 
     // 类型转换
 
+    /**
+     * 类型按**声明类型**转换，而不是按 JSON 里的字面类型。
+     *
+     * <p>🔴 白名单制之后这里只能用 API 连接键做样本（功能开关已经不允许下发），
+     * 所以样本是 {@code llm.requestTimeout}（整数）与 {@code text_to_speech.apiVoice}（字符串）。
+     * 布尔键不再有白名单成员，因此原来那段布尔转换用例已删除——
+     * 判据仍然存在（{@code coerce} 里），只是没有可下发的布尔键能触发它。
+     */
     private static void coercionFollowsDeclaredType() {
-        // 布尔：字符串和数字写法都认
-        CloudOverrides.clear();
-        apply("{\"hud.dialogueHud\":\"off\"}");
-        require(!ModConfig.HUD_ENABLED.get(), "字符串 off 没被转成 false");
-        require(CloudOverrides.activeKeys().contains("hud.dialogueHud"), "布尔项没有被覆盖");
-
-        CloudOverrides.clear();
-        apply("{\"hud.dialogueHud\":1}");
-        require(ModConfig.HUD_ENABLED.get(), "数字 1 没被转成 true");
-
-        CloudOverrides.clear();
-        apply("{\"hud.dialogueHud\":\"maybe\"}");
-        require(ModConfig.HUD_ENABLED.get(), "非法的布尔写法被写进去了");
-        require(CloudOverrides.activeCount() == 0, "非法布尔写法不应产生覆盖");
-
         // 整数：字符串可解析、小数四舍五入
         CloudOverrides.clear();
-        apply("{\"hud.dialogueSeconds\":\"20\"}");
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 20, "字符串数字没被转成整数");
+        apply("{\"llm.requestTimeout\":\"20\"}");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 20, "字符串数字没被转成整数");
 
         CloudOverrides.clear();
-        apply("{\"hud.dialogueSeconds\":21.6}");
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 22, "小数没有四舍五入到整数");
-
-        // 小数
-        CloudOverrides.clear();
-        apply("{\"text_to_speech.speed\":2.5}");
-        require(Math.abs(ModConfig.TTS_SPEED.get() - 2.5D) < 1e-6D, "小数项没有被写入");
+        apply("{\"llm.requestTimeout\":21.6}");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 22, "小数没有四舍五入到整数");
 
         // 字符串：数字转成文本
         CloudOverrides.clear();
@@ -168,101 +163,103 @@ public final class CloudOverridesTest {
     private static void flattenPrefersFlatForm() {
         // 嵌套写法
         CloudOverrides.clear();
-        apply("{\"hud\":{\"dialogueHud\":false}}");
-        require(!ModConfig.HUD_ENABLED.get(), "嵌套写法没有生效");
+        apply("{\"llm\":{\"apiUrl\":\"https://nested.example/v1\"}}");
+        require("https://nested.example/v1".equals(ModConfig.TARGET_API_URL.get()), "嵌套写法没有生效");
 
         // 扁平写法
         CloudOverrides.clear();
-        apply("{\"hud.dialogueHud\":true}");
-        require(ModConfig.HUD_ENABLED.get(), "点分写法没有生效");
+        apply("{\"llm.apiUrl\":\"https://flat.example/v1\"}");
+        require("https://flat.example/v1".equals(ModConfig.TARGET_API_URL.get()), "点分写法没有生效");
 
         // 两种写法同时出现：以点分写法为准
         CloudOverrides.clear();
-        apply("{\"hud\":{\"dialogueHud\":true},\"hud.dialogueHud\":false}");
-        require(!ModConfig.HUD_ENABLED.get(), "同键同时给出两种写法时没有以点分写法为准");
+        apply("{\"llm\":{\"apiUrl\":\"https://nested.example/v1\"},"
+                + "\"llm.apiUrl\":\"https://flat.example/v1\"}");
+        require("https://flat.example/v1".equals(ModConfig.TARGET_API_URL.get()),
+                "同键同时给出两种写法时没有以点分写法为准");
 
         CloudOverrides.clear();
+        ModConfig.TARGET_API_URL.set("");
     }
 
     private static void outOfRangeValuesAreRejected() {
-        // hud.dialogueSeconds 声明范围 3..60
+        // llm.requestTimeout 声明范围 5..300
         CloudOverrides.clear();
-        apply("{\"hud.dialogueSeconds\":1}");
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 12, "超范围的值被写进去了");
+        apply("{\"llm.requestTimeout\":1}");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 30, "超范围的值被写进去了");
         require(CloudOverrides.activeCount() == 0, "超范围的值不应产生覆盖");
 
         CloudOverrides.clear();
-        apply("{\"hud.dialogueSeconds\":60}");
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 60, "边界值应当被接受");
-
-        // 小数范围 0.25..4.0
-        CloudOverrides.clear();
-        apply("{\"text_to_speech.speed\":9.0}");
-        require(Math.abs(ModConfig.TTS_SPEED.get() - 1.0D) < 1e-6D, "超范围的小数被写进去了");
+        apply("{\"llm.requestTimeout\":300}");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 300, "边界值应当被接受");
 
         CloudOverrides.clear();
+        ModConfig.REQUEST_TIMEOUT.set(30);
     }
 
     private static void forbiddenSectionIsDropped() {
         CloudOverrides.clear();
-        apply("{\"cloud.enable\":true,\"cloud.timeout\":5,\"cloud.apiKey\":\"hijack\",\"hud.dialogueHud\":false}");
+        apply("{\"cloud.enable\":true,\"cloud.timeout\":5,\"cloud.apiKey\":\"hijack\","
+                + "\"llm.apiUrl\":\"https://ok.example/v1\"}");
 
         require(!ModConfig.CLOUD_ENABLE.get(), "cloud.enable 被云端改掉了——这等于把引导过程交出去");
         require(ModConfig.CLOUD_TIMEOUT.get() == 10, "cloud.timeout 被云端改掉了");
         require(ModConfig.CLOUD_API_KEY.get().isEmpty(), "cloud.apiKey 被云端改掉了");
         // 同一批里合法的键照常生效，一个非法键不该拖累整批
-        require(!ModConfig.HUD_ENABLED.get(), "合法键被同一批里的非法键拖累了");
-        require(CloudOverrides.activeKeys().equals(Set.of("hud.dialogueHud")),
+        require("https://ok.example/v1".equals(ModConfig.TARGET_API_URL.get()),
+                "合法键被同一批里的非法键拖累了");
+        require(CloudOverrides.activeKeys().equals(Set.of("llm.apiUrl")),
                 "cloud.* 不应进入生效集合，实际 " + CloudOverrides.activeKeys());
 
         CloudOverrides.clear();
+        ModConfig.TARGET_API_URL.set("");
     }
 
     private static void unknownAndEmptyPayloadsAreTolerated() {
         CloudOverrides.clear();
-        apply("{\"nope.nothing\":1,\"hud.nope\":2,\"hud\":{\"alsoNope\":3}}");
+        apply("{\"nope.nothing\":1,\"llm.nope\":2,\"llm\":{\"alsoNope\":3}}");
         require(CloudOverrides.activeCount() == 0, "未知配置项不应生效");
 
         // 下发里没有 overrides（null）或空对象：视为「本次没有覆盖」，应当清空
-        apply("{\"hud.dialogueHud\":false}");
-        require(!ModConfig.HUD_ENABLED.get(), "前置覆盖没有生效");
+        apply("{\"llm.apiUrl\":\"https://temp.example/v1\"}");
+        require("https://temp.example/v1".equals(ModConfig.TARGET_API_URL.get()), "前置覆盖没有生效");
         CloudOverrides.apply(null);
         require(CloudOverrides.activeCount() == 0, "null 下发没有清空覆盖");
-        require(ModConfig.HUD_ENABLED.get(), "null 下发没有把值还原成本地值");
+        require(ModConfig.TARGET_API_URL.get().isEmpty(), "null 下发没有把值还原成本地值");
 
-        apply("{\"hud.dialogueHud\":false}");
+        apply("{\"llm.apiUrl\":\"https://temp.example/v1\"}");
         CloudOverrides.apply(new JsonObject());
         require(CloudOverrides.activeCount() == 0, "空对象下发没有清空覆盖");
-        require(ModConfig.HUD_ENABLED.get(), "空对象下发没有把值还原成本地值");
+        require(ModConfig.TARGET_API_URL.get().isEmpty(), "空对象下发没有把值还原成本地值");
 
         CloudOverrides.clear();
     }
 
     private static void overridesApplyAndClearRestoresLocal() {
         // 本地值先落盘，作为「玩家的配置」
-        ModConfig.HUD_ENABLED.set(true);
-        ModConfig.HUD_DIALOGUE_SECONDS.set(12);
-        CloudOverrides.saveClient();
+        ModConfig.TARGET_API_URL.set("");
+        ModConfig.REQUEST_TIMEOUT.set(30);
+        CloudOverrides.saveCommon();
 
-        int applied = apply("{\"hud.dialogueHud\":false,\"hud.dialogueSeconds\":30}");
+        int applied = apply("{\"llm.apiUrl\":\"https://cloud.example/v1\",\"llm.requestTimeout\":45}");
         require(applied == 2, "生效项数不对，实际 " + applied);
-        require(!ModConfig.HUD_ENABLED.get(), "布尔项覆盖没生效");
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 30, "整数项覆盖没生效");
-        require(CloudOverrides.activeKeys().containsAll(Set.of("hud.dialogueHud", "hud.dialogueSeconds")),
+        require("https://cloud.example/v1".equals(ModConfig.TARGET_API_URL.get()), "字符串项覆盖没生效");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 45, "整数项覆盖没生效");
+        require(CloudOverrides.activeKeys().containsAll(Set.of("llm.apiUrl", "llm.requestTimeout")),
                 "生效集合不完整：" + CloudOverrides.activeKeys());
 
         // 重复下发同一份：本地值不能被当成「上一次的覆盖值」记下来
-        apply("{\"hud.dialogueHud\":false,\"hud.dialogueSeconds\":30}");
+        apply("{\"llm.apiUrl\":\"https://cloud.example/v1\",\"llm.requestTimeout\":45}");
         CloudOverrides.clear();
-        require(ModConfig.HUD_ENABLED.get(), "clear 之后没有还原成本地值");
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 12, "clear 之后整数项没有还原成本地值");
+        require(ModConfig.TARGET_API_URL.get().isEmpty(), "clear 之后没有还原成本地值");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 30, "clear 之后整数项没有还原成本地值");
 
         // 新一份下发里不再包含某项 -> 该项还原
-        apply("{\"hud.dialogueHud\":false,\"hud.dialogueSeconds\":30}");
-        apply("{\"hud.dialogueHud\":false}");
-        require(!ModConfig.HUD_ENABLED.get(), "仍在下发的项不应被还原");
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 12, "不再下发的项应当还原成本地值");
-        require(!CloudOverrides.activeKeys().contains("hud.dialogueSeconds"), "不再下发的项仍留在生效集合里");
+        apply("{\"llm.apiUrl\":\"https://cloud.example/v1\",\"llm.requestTimeout\":45}");
+        apply("{\"llm.apiUrl\":\"https://cloud.example/v1\"}");
+        require("https://cloud.example/v1".equals(ModConfig.TARGET_API_URL.get()), "仍在下发的项不应被还原");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 30, "不再下发的项应当还原成本地值");
+        require(!CloudOverrides.activeKeys().contains("llm.requestTimeout"), "不再下发的项仍留在生效集合里");
 
         CloudOverrides.clear();
     }
@@ -278,58 +275,64 @@ public final class CloudOverridesTest {
     private static void saveGuardKeepsPlayerTomlClean() throws Exception {
         CloudOverrides.clear();
 
-        // 本地：dialogueHud=true，先正常落盘
-        ModConfig.HUD_ENABLED.set(true);
-        CloudOverrides.saveClient();
-        require(Boolean.TRUE.equals(readToml(clientFile, "hud", "dialogueHud")), "本地值没写进文件");
+        // 本地：apiUrl 为空，先正常落盘
+        ModConfig.TARGET_API_URL.set("https://local.example/v1");
+        CloudOverrides.saveCommon();
+        require("https://local.example/v1".equals(readToml(commonFile, "llm", "apiUrl")),
+                "本地值没写进文件");
 
-        // 云端覆盖成 false
-        apply("{\"hud.dialogueHud\":false}");
-        require(!ModConfig.HUD_ENABLED.get(), "覆盖没有生效");
+        // 云端覆盖成另一个地址
+        apply("{\"llm.apiUrl\":\"https://cloud.example/v1\"}");
+        require("https://cloud.example/v1".equals(ModConfig.TARGET_API_URL.get()), "覆盖没有生效");
 
         // 保存（配置界面点保存 / 恢复默认值都会走到这里）
-        CloudOverrides.saveClient();
+        CloudOverrides.saveCommon();
 
-        Object persisted = readToml(clientFile, "hud", "dialogueHud");
-        require(Boolean.TRUE.equals(persisted), "云端下发值被写进了玩家的 TOML：" + persisted);
-        require(!ModConfig.HUD_ENABLED.get(), "保存之后运行期不再是覆盖值");
-        require(CloudOverrides.activeKeys().contains("hud.dialogueHud"), "保存之后覆盖被丢掉了");
+        Object persisted = readToml(commonFile, "llm", "apiUrl");
+        require("https://local.example/v1".equals(persisted),
+                "云端下发值被写进了玩家的 TOML：" + persisted);
+        require("https://cloud.example/v1".equals(ModConfig.TARGET_API_URL.get()),
+                "保存之后运行期不再是覆盖值");
+        require(CloudOverrides.activeKeys().contains("llm.apiUrl"), "保存之后覆盖被丢掉了");
 
         CloudOverrides.clear();
-        require(ModConfig.HUD_ENABLED.get(), "clear 之后没有还原成本地值");
+        require("https://local.example/v1".equals(ModConfig.TARGET_API_URL.get()),
+                "clear 之后没有还原成本地值");
+        ModConfig.TARGET_API_URL.set("");
     }
 
     private static void localEditBeatsCloudOverride() throws Exception {
         CloudOverrides.clear();
 
-        ModConfig.HUD_DIALOGUE_SECONDS.set(12);
-        CloudOverrides.saveClient();
+        ModConfig.REQUEST_TIMEOUT.set(30);
+        CloudOverrides.saveCommon();
 
-        apply("{\"hud.dialogueSeconds\":30}");
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 30, "覆盖没有生效");
+        apply("{\"llm.requestTimeout\":45}");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 45, "覆盖没有生效");
 
-        // 玩家在配置界面把它改成 45：这与云端写进去的 30 不一致，说明是人改的
-        ModConfig.HUD_DIALOGUE_SECONDS.set(45);
-        CloudOverrides.saveClient();
+        // 玩家在配置界面把它改成 60：这与云端写进去的 45 不一致，说明是人改的
+        ModConfig.REQUEST_TIMEOUT.set(60);
+        CloudOverrides.saveCommon();
 
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 45, "本地改动被云端覆盖盖掉了");
-        require(!CloudOverrides.activeKeys().contains("hud.dialogueSeconds"), "本地改动后仍保留着云端覆盖");
-        Object persisted = readToml(clientFile, "hud", "dialogueSeconds");
-        require(persisted instanceof Number number && number.intValue() == 45,
+        require(ModConfig.REQUEST_TIMEOUT.get() == 60, "本地改动被云端覆盖盖掉了");
+        require(!CloudOverrides.activeKeys().contains("llm.requestTimeout"), "本地改动后仍保留着云端覆盖");
+        Object persisted = readToml(commonFile, "llm", "requestTimeout");
+        require(persisted instanceof Number number && number.intValue() == 60,
                 "玩家的改动没有落盘：" + persisted);
 
         // 下一次拉取下发的还是同一个值：不能把玩家刚改好的设置抢回去
-        apply("{\"hud.dialogueSeconds\":30}");
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 45, "下一次拉取把玩家的改动抢回去了");
-        require(!CloudOverrides.activeKeys().contains("hud.dialogueSeconds"), "已采纳的键又被云端接管了");
+        apply("{\"llm.requestTimeout\":45}");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 60, "下一次拉取把玩家的改动抢回去了");
+        require(!CloudOverrides.activeKeys().contains("llm.requestTimeout"), "已采纳的键又被云端接管了");
 
         // 云端把这一项改成别的值 = 云端改主意了，重新接管
-        apply("{\"hud.dialogueSeconds\":50}");
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 50, "云端改值之后应当重新接管");
-        require(CloudOverrides.activeKeys().contains("hud.dialogueSeconds"), "云端改值之后应当重新接管");
+        apply("{\"llm.requestTimeout\":90}");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 90, "云端改值之后应当重新接管");
+        require(CloudOverrides.activeKeys().contains("llm.requestTimeout"), "云端改值之后应当重新接管");
 
         CloudOverrides.clear();
-        require(ModConfig.HUD_DIALOGUE_SECONDS.get() == 45, "采纳后应当以玩家的值作为新的本地值");
+        require(ModConfig.REQUEST_TIMEOUT.get() == 60, "采纳后应当以玩家的值作为新的本地值");
+        ModConfig.REQUEST_TIMEOUT.set(30);
     }
 
     // 源码级守卫
@@ -381,9 +384,133 @@ public final class CloudOverridesTest {
     private static void overridesDoNotTouchCloudSwitch() {
         CloudOverrides.clear();
         ModConfig.CLOUD_ENABLE.set(true);
-        apply("{\"hud.dialogueHud\":false,\"ai_extensions.memoryEnabled\":false}");
+        apply("{\"llm.apiUrl\":\"https://x.example/v1\",\"ai_extensions.memoryEnabled\":false}");
         require(ModConfig.CLOUD_ENABLE.get(), "云端覆盖不应改动 cloud.enable");
         CloudOverrides.clear();
+        ModConfig.TARGET_API_URL.set("");
+    }
+
+    /**
+     * 🔴 白名单自检：云端**只能**下发 API 连接配置。
+     *
+     * <p>这是 2026-10-24 的策略变更：之前 190 项全量可下发，结果凡是云端下发过的
+     * 功能开关，玩家在本地都改不回来——下一轮拉取又盖回去，表现为「设置自己变回去了」。
+     *
+     * <p>这里从两头钉：
+     * <ol>
+     *   <li><b>正向</b>：白名单里的每个键都必须在配置规格里真实存在（否则白名单写错了键名，
+     *       云端下发永远"未知配置项"，而且没人会发现）；</li>
+     *   <li><b>反向</b>：白名单里不允许出现任何功能开关 / 行为参数
+     *       （按命名特征扫：{@code enabled} / {@code allow*} / {@code enable*} / 速率 / 上限等）。</li>
+     * </ol>
+     */
+    private static void onlyApiConnectionKeysAreAllowed() {
+        List<String> allowed = CloudOverrides.cloudAllowedKeys();
+        require(!allowed.isEmpty(), "白名单不应为空");
+
+        // 正向：每个白名单键都必须真实存在于配置规格里
+        Set<String> all = new LinkedHashSet<>(CloudOverrides.allOverridableKeys());
+        for (String key : allowed) {
+            require(all.contains(key), "白名单里的 " + key + " 在配置规格里不存在（键名写错了？）");
+        }
+
+        // 反向：白名单里不能有功能开关或行为参数
+        List<String> suspicious = new ArrayList<>();
+        for (String key : allowed) {
+            String leaf = key.substring(key.lastIndexOf('.') + 1).toLowerCase();
+            boolean isSwitch = leaf.startsWith("enable") || leaf.startsWith("allow")
+                    || leaf.equals("enabled") || leaf.startsWith("disable")
+                    || leaf.equals("mode") || leaf.endsWith("seconds")
+                    || leaf.endsWith("ticks") || leaf.endsWith("size")
+                    || leaf.endsWith("count") || leaf.endsWith("limit")
+                    || leaf.equals("speed") || leaf.equals("volume");
+            // 注意 requestTimeout 是连接参数（等多久算超时），不是行为参数，允许
+            if (leaf.equals("requesttimeout")) isSwitch = false;
+            if (isSwitch) suspicious.add(key);
+        }
+        require(suspicious.isEmpty(),
+                "白名单里混进了功能开关/行为参数，它们被云端覆盖后玩家改不回来：" + suspicious);
+
+        // 端到端：一个典型功能开关下发后必须不生效
+        CloudOverrides.clear();
+        ModConfig.MEMORY_ENABLED.set(true);
+        int applied = apply("{\"ai_extensions.memoryEnabled\":false}");
+        require(applied == 0, "功能开关不应被云端覆盖，实际生效 " + applied + " 项");
+        require(ModConfig.MEMORY_ENABLED.get(), "功能开关被云端改掉了");
+        require(CloudOverrides.activeCount() == 0, "功能开关不应进入生效集合");
+        CloudOverrides.clear();
+    }
+
+    /**
+     * 🔴 关掉云端开关 / 清除授权时，**内存里的覆盖必须一起撤掉**。
+     *
+     * <p>这是 2026-10-24 用户报的「我自己关闭之后设置还是云端那套、改不动」：
+     * 以前只在 {@code active} 时重配周期，关掉开关后线程确实不再拉取
+     * （{@code requestPull} 检查 {@code isCloudEnabled()}），
+     * 但 {@code CloudOverrides.active} 还留着——所有 getter 仍返回云端值，
+     * 本地改了也会被覆盖抢回去。
+     *
+     * <p>这条用源码级断言守：`CloudConfigManager` / 配置界面都要加载 FML 游戏目录，
+     * 纯 JVM 里起不来，没法做行为测试。断言点选的是「必须调用某个方法」，
+     * 而不是具体实现细节，重构时不容易误伤。
+     */
+    private static void cloudOffClearsInMemoryOverrides() throws Exception {
+        Path root = Path.of("src", "main", "java");
+        String manager = Files.readString(root.resolve(
+                "com/hanchen/veritycustomapi/cloud/CloudConfigManager.java"), StandardCharsets.UTF_8);
+
+        int onSaved = manager.indexOf("public static synchronized void onConfigSaved()");
+        require(onSaved >= 0, "找不到 CloudConfigManager.onConfigSaved");
+        String onSavedBody = manager.substring(onSaved, Math.min(manager.length(), onSaved + 1400));
+        require(onSavedBody.contains("!ConfigManager.isCloudEnabled()"),
+                "onConfigSaved 没有判断开关状态");
+        require(onSavedBody.contains("stop()"),
+                "开关关闭时没有调用 stop()，内存里的云端覆盖不会被撤掉");
+
+        String screen = Files.readString(root.resolve(
+                "com/hanchen/veritycustomapi/config/NativeOllamaProxyConfigScreen.java"), StandardCharsets.UTF_8);
+        int clearAuth = screen.indexOf("clearAuthorization()");
+        require(clearAuth > 0, "找不到「清除授权」的调用点");
+        String beforeClear = screen.substring(Math.max(0, clearAuth - 1200), clearAuth);
+        require(beforeClear.contains("CloudConfigManager.stop()"),
+                "「清除授权」没有先停掉云端线程并撤覆盖，会出现「已清除授权但设置仍是云端那套」");
+    }
+
+    /**
+     * 🔴 「重复下发抑制」不能在配置被清空后继续生效。
+     *
+     * <p>2026-10-25 用户报「进游戏云端配置正常，一进存档就提示云端配置不同步」。
+     * 链路是：进存档时客户端 {@code stop()} → {@code clearCloudConfig()} 把内存配置清空，
+     * 但 {@code lastAppliedId/Version/At} 三个去重标记没跟着清。
+     * 紧接着服务端 {@code start()}，应用磁盘快照和网络拉取**两次都落在 60 秒窗口内**，
+     * 于是两次都被判「已应用过」静默跳过 → {@code cloudConfig} 一直是 null →
+     * 内置线路取不到地址 → 聊天报「API 地址未配置」。
+     *
+     * <p>修法两条，都要守住：
+     * <ol>
+     *   <li>去重判据里加「内存里到底有没有配置」，没有就绝不判重复；</li>
+     *   <li>{@code stop()} 里显式作废去重标记。</li>
+     * </ol>
+     * 只做其中一条也不够：前者防任何清空路径，后者防标记残留。
+     */
+    private static void duplicateWindowRespectsClearedConfig() throws Exception {
+        String manager = Files.readString(Path.of(
+                "src", "main", "java", "com", "hanchen", "veritycustomapi", "cloud", "CloudConfigManager.java"),
+                StandardCharsets.UTF_8);
+
+        int dedupe = manager.indexOf("private static boolean isDuplicateWithinWindow");
+        require(dedupe > 0, "找不到 isDuplicateWithinWindow");
+        int end = manager.indexOf("private static boolean apply(", dedupe);
+        require(end > dedupe, "找不到 isDuplicateWithinWindow 的结尾");
+        String body = manager.substring(dedupe, end);
+        require(body.contains("ConfigManager.isCloudConfigLoaded()"),
+                "去重判据没有检查内存里是否还有配置——配置被清空后仍会跳过下发");
+
+        int stop = manager.indexOf("public static synchronized void stop()");
+        require(stop > 0, "找不到 stop()");
+        String stopBody = manager.substring(stop, Math.min(manager.length(), stop + 1200));
+        require(stopBody.contains("resetAppliedTracking()"),
+                "stop() 没有作废去重标记，重新 start 时下发会被误判成重复");
     }
 
     private static void saveSitesGoThroughGuard() throws Exception {
@@ -404,7 +531,14 @@ public final class CloudOverridesTest {
 
         String guard = Files.readString(root.resolve(
                 "com/hanchen/veritycustomapi/config/CloudOverrides.java"), StandardCharsets.UTF_8);
-        require(guard.contains("spec.save();"), "保存守卫本身没有真的执行保存");
+        // 守卫本体搬到了 ForgeConfigRepair.saveWithGuard（保存前后比键数），
+        // 所以这里断言的是「调了带守卫的保存」而不是裸的 spec.save()
+        require(guard.contains("ForgeConfigRepair.saveWithGuard(spec)"),
+                "保存守卫本身没有真的执行保存");
+        String repair = Files.readString(root.resolve(
+                "com/hanchen/veritycustomapi/config/ForgeConfigRepair.java"), StandardCharsets.UTF_8);
+        require(repair.contains("spec.save();"), "守卫里没有真的调用 spec.save()");
+        require(repair.contains("restoreIfShrunk("), "守卫没有做保存前后的键数比对");
 
         String manager = Files.readString(root.resolve("com/hanchen/veritycustomapi/ConfigManager.java"),
                 StandardCharsets.UTF_8);

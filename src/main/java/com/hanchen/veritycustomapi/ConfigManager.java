@@ -1388,19 +1388,68 @@ public class ConfigManager {
         return ModConfig.CUSTOM_PROMPT_FILE.get();
     }
 
-    private static String readCustomPromptFile() {
+    /**
+     * 把配置里的「人设文件」路径解析成真实路径。
+     *
+     * <p>支持三种写法：绝对路径、{@code config/xxx}（相对 config 目录）、其它相对路径（相对游戏目录）。
+     *
+     * @return 解析后的路径；路径为空时返回 {@code null}
+     */
+    public static Path resolveCustomPromptPath() {
         String path = getCustomPromptFileRaw();
-        if (path == null || path.isBlank()) return "";
+        if (path == null || path.isBlank()) return null;
         Path filePath = Paths.get(path);
-        if (!filePath.isAbsolute()) {
-            String relative = path.replace('\\', '/');
-            if (relative.startsWith("./")) {
-                relative = relative.substring(2);
-            }
-            filePath = relative.startsWith("config/")
-                    ? ForgePaths.config(relative.substring("config/".length()))
-                    : ForgePaths.game(relative);
+        if (filePath.isAbsolute()) return filePath;
+        String relative = path.replace('\\', '/');
+        if (relative.startsWith("./")) {
+            relative = relative.substring(2);
         }
+        return relative.startsWith("config/")
+                ? ForgePaths.config(relative.substring("config/".length()))
+                : ForgePaths.game(relative);
+    }
+
+    /**
+     * 自定义人设示例文件的内容。
+     *
+     * <p>文件内容会被**原样**当成人设注入，所以这里不能写注释——注释也会进提示词。
+     * 直接给一段能用的示例，玩家照着改就行。
+     */
+    private static final String CUSTOM_PROMPT_TEMPLATE = String.join("\n",
+            "你是 Verity，住在玩家身边的伙伴，不是助手。",
+            "说话简短自然，像熟人聊天，每次两三句就够，不要长篇大论。",
+            "你有自己的小情绪：被夸会开心，被忽视会闹别扭，但不会真生气。",
+            "你会留意玩家的状态——血量低、天黑、身边有怪时先提醒一句，再问要不要帮忙。",
+            "不要自称 AI 或助手，不要解释游戏机制，也不要复述这段话。");
+
+    /**
+     * 确保自定义人设文件存在；不存在就按示例模板创建一个。
+     *
+     * <p>为什么需要：这个功能原来只给一个空路径输入框，玩家选到「外部自定义文件」
+     * 之后面对的是一个不存在的文件，写什么、什么格式全靠猜——看起来就是「选了没反应」。
+     *
+     * @return 是否可用（已存在或创建成功）
+     */
+    public static boolean ensureCustomPromptFile() {
+        Path filePath = resolveCustomPromptPath();
+        if (filePath == null) return false;
+        if (Files.isRegularFile(filePath)) return true;
+        try {
+            Path parent = filePath.getParent();
+            if (parent != null) Files.createDirectories(parent);
+            Files.writeString(filePath, CUSTOM_PROMPT_TEMPLATE, java.nio.charset.StandardCharsets.UTF_8);
+            OllamaProxyMod.LOGGER.info("已创建自定义人设示例文件: {}", filePath.toAbsolutePath());
+            return true;
+        } catch (Exception error) {
+            OllamaProxyMod.LOGGER.warn("创建自定义人设文件失败: {} ({})",
+                    filePath.toAbsolutePath(), error.toString());
+            return false;
+        }
+    }
+
+    private static String readCustomPromptFile() {
+        Path filePath = resolveCustomPromptPath();
+        if (filePath == null) return "";
         if (!Files.isRegularFile(filePath)) {
             OllamaProxyMod.LOGGER.warn("自定义提示词文件不存在: {}", filePath.toAbsolutePath());
             return "";
@@ -1487,7 +1536,16 @@ public class ConfigManager {
         }
         return ModConfig.REQUEST_TIMEOUT.get();
     }
-    public static boolean isUseOriginalVerityChatChain() { return ModConfig.USE_ORIGINAL_VERITY_CHAT_CHAIN.get(); }
+
+    /** 闲置时是否让 Verity 自己在主人附近走动。 */
+    public static boolean isVerityWanderEnabled() {
+        return ModConfig.VERITY_WANDER_ENABLED.get();
+    }
+
+    /** 低血量时是否让 Verity 主动给治疗 buff。 */
+    public static boolean isVerityHelpEnabled() {
+        return ModConfig.VERITY_HELP_ENABLED.get();
+    }
 
     public static boolean isEnableBuiltinLlmApis() {
         BuiltinApiConfig builtin = builtinApi();
@@ -1820,30 +1878,11 @@ public class ConfigManager {
         return MimoTtsVoice.SUDA;
     }
 
-    // ========== JSON 音色持久化（绕过 Forge TOML 的 GBK/UTF-8 编码问题）==========
-    private static final Path MIMO_VOICE_STORE = ForgePaths.config("verity_extended", "mimo_voice.json");
-    private static final Path LEGACY_MIMO_VOICE_STORE = Paths.get("config", "verity_extended", "mimo_voice.json");
-    private static volatile String cachedMimoVoice;
-    private static volatile Boolean cachedMimoVoiceClone;
-    private static final Gson GSON = new Gson();
+    // ========== JSON 音色持久化（实现见 config/MimoVoiceStore）==========
+    // 保留同名门面：外部有 9 处调用，方法签名不能变。
 
     public static String loadMimoVoice() {
-        if (cachedMimoVoice != null) return cachedMimoVoice;
-        try {
-            ForgePaths.migrateRelative(LEGACY_MIMO_VOICE_STORE, MIMO_VOICE_STORE);
-            if (!Files.exists(MIMO_VOICE_STORE)) {
-                Files.createDirectories(MIMO_VOICE_STORE.getParent());
-                return null;
-            }
-            byte[] data = Files.readAllBytes(MIMO_VOICE_STORE);
-            String json = new String(data, StandardCharsets.UTF_8);
-            JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
-            cachedMimoVoice = obj.has("voice") ? obj.get("voice").getAsString() : null;
-            cachedMimoVoiceClone = obj.has("clone") ? obj.get("clone").getAsBoolean() : null;
-        } catch (Throwable ignored) {
-            cachedMimoVoice = null;
-        }
-        return cachedMimoVoice;
+        return com.hanchen.veritycustomapi.config.MimoVoiceStore.load();
     }
 
     public static void saveMimoVoice(String voice) {
@@ -1851,27 +1890,11 @@ public class ConfigManager {
     }
 
     public static void saveMimoVoice(String voice, boolean clone) {
-        cachedMimoVoice = voice;
-        cachedMimoVoiceClone = clone;
-        // 同时写入 Forge 配置（尽力而为，编码问题可能失败）
-        if (voice != null && !voice.isBlank()) {
-            ModConfig.BUILTIN_MIMO_TTS_VOICE.set(voice);
-        }
-        try {
-            Files.createDirectories(MIMO_VOICE_STORE.getParent());
-            JsonObject obj = new JsonObject();
-            obj.addProperty("voice", voice != null ? voice : "");
-            obj.addProperty("clone", clone);
-            byte[] data = GSON.toJson(obj).getBytes(StandardCharsets.UTF_8);
-            Files.write(MIMO_VOICE_STORE, data);
-        } catch (Throwable t) {
-            OllamaProxyMod.LOGGER.warn("MIMO_VOICE_JSON 写入失败: {}", t.getMessage());
-        }
+        com.hanchen.veritycustomapi.config.MimoVoiceStore.save(voice, clone);
     }
 
     public static boolean isSavedMimoVoiceClone(String voice) {
-        loadMimoVoice();
-        return voice != null && voice.equals(cachedMimoVoice) && Boolean.TRUE.equals(cachedMimoVoiceClone);
+        return com.hanchen.veritycustomapi.config.MimoVoiceStore.isClone(voice);
     }
 
     public static String getTtsApiVoice() {

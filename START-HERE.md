@@ -14,7 +14,7 @@
 | 项 | 要求 |
 |---|---|
 | 游戏 | Minecraft 1.20.1 |
-| 加载器 | Forge 47.4.20 以上（实测 47.4.21 / 47.4.23） |
+| 加载器 | Forge **47.3 以上**（47.3.x / 47.4.x 均可；编译基准 47.3.0） |
 | 必装 | Verity JE（实测 6.0.0-beta.9）、GeckoLib 4.4+ |
 | 选装 | PatPat（摸头联动）、《The Shooting Star》（星之遥控器） |
 
@@ -54,7 +54,6 @@
 ```text
 /verity-ai follow | stop | come | goto <x> <y> <z> | remind <分钟> <事> | status
 /verity-mmd list | play <项目> | stop | speed <倍数>
-/verity-plugin create <一句话需求> | list | disable <名字>
 /verity-admin status | list | cleanup | config        （多人服管理）
 /verity-stellar list | cast <技能> [x y z] | hold <秒> （需装该模组）
 ```
@@ -106,7 +105,7 @@
 需要更多细节时按需读 docs/02（目录）、04（配置）、05（网络/命令）、06（构建/排障）、07（扩展骨架）、08（已知限制）。
 
 【第二步：本项目的事实】
-- 环境：MC 1.20.1 / Forge 47.4.x / Java 17；依赖 Verity JE 6.0.0-beta.9 与 GeckoLib 4.4+。
+- 环境：MC 1.20.1 / Forge 47.3+（编译基准 47.3.0）/ Java 17；依赖 Verity JE 6.0.0 与 GeckoLib 4.4+。
 - 本质：不重写 Verity，只在它的边界上加功能（AI 对话链路、云端配置、语音、好感、恐怖事件、MMD、插件、第三方兼容层）。
 - 构建：首次需 `powershell -ExecutionPolicy Bypass -File tools/prepare-lib.ps1 -JarPath "<你的 verity jar>"`
   展开依赖，然后 `./gradlew compileJava`；发布用 `./gradlew clean productionJar`。

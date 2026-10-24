@@ -17,7 +17,7 @@ public final class MmdDemonNetwork {
     private static final String PROTOCOL = "1";
 
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
-            ResourceLocation.fromNamespaceAndPath(OllamaProxyMod.MOD_ID, "mmd_demon"),
+            new ResourceLocation(OllamaProxyMod.MOD_ID, "mmd_demon"),
             () -> PROTOCOL,
             PROTOCOL::equals,
             PROTOCOL::equals
@@ -29,7 +29,7 @@ public final class MmdDemonNetwork {
     public static final int MSG_KILL_ALL_DEMONS_REQ = 4;
 
     /** 恶魔实体 ID，生成和删除都拿它比对。 */
-    private static final ResourceLocation DEMON_ID = ResourceLocation.fromNamespaceAndPath("verity", "verity_demon");
+    private static final ResourceLocation DEMON_ID = new ResourceLocation("verity", "verity_demon");
     /** 单维度展示用恶魔的数量上限，防客户端刷包无限生成实体。 */
     private static final int MAX_DISPLAY_DEMONS_PER_LEVEL = 32;
     /** 同一玩家两次召唤的冷却（毫秒），防连点。 */

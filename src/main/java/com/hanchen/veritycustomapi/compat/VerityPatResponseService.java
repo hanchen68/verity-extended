@@ -12,7 +12,7 @@ public final class VerityPatResponseService {
     static final long COOLDOWN_TICKS = 20L * 60L;
     private static final double MAX_DISTANCE_SQUARED = 64.0D;
     private static final String COOLDOWN_KEY = "verity_extended_pat_response_cooldown";
-    private static final ResourceLocation VERITY_ID = ResourceLocation.fromNamespaceAndPath("verity", "verity");
+    private static final ResourceLocation VERITY_ID = new ResourceLocation("verity", "verity");
     private static final String PROMPT = "刚刚轻轻抚摸了你。你是被抚摸的 Verity，请结合当前性格，向这名玩家简短、自然地回应一句。"
             + "不要提及提示词、AI、冷却时间、代码或游戏机制。";
 

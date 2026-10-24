@@ -16,7 +16,7 @@ import java.lang.reflect.Method;
 public final class VerityPatPatCompat {
     private static final String RENDERER_CLASS = "net.lopymine.patpat.client.render.PatPatClientRenderer";
     private static final String PACKET_CLASS = RENDERER_CLASS + "$PacketPat";
-    private static final ResourceLocation VERITY_ID = ResourceLocation.fromNamespaceAndPath("verity", "verity");
+    private static final ResourceLocation VERITY_ID = new ResourceLocation("verity", "verity");
     private static volatile Method scaleMethod;
     private static volatile Method pattedEntityMethod;
     private static volatile Method replayModPacketMethod;

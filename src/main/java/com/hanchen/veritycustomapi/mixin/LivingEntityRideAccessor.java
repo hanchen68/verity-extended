@@ -17,6 +17,9 @@ public interface LivingEntityRideAccessor {
     @Accessor("jumping")
     boolean verityExt$jumping();
 
+    @Accessor("jumping")
+    void verityExt$setJumping(boolean jumping);
+
     @Invoker("jumpFromGround")
     void verityExt$jumpFromGround();
 

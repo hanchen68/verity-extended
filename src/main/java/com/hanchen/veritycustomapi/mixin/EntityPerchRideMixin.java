@@ -65,13 +65,25 @@ public abstract class EntityPerchRideMixin {
         }
     }
 
-    /** 骑乘时乘客的定位统一走 positionRider，避免与乘客自己的 tick 互相覆盖。 */
-    @Inject(method = "positionRider", at = @At("HEAD"), cancellable = true)
-    private void verityExt$ridePosition(Entity passenger, CallbackInfo ci) {
+    /**
+     * 骑乘时乘客（玩家）坐在 Verity 头顶。
+     *
+     * <p>🔴 <b>这里只给「偏移量」，绝不接管 {@code positionRider}</b>。原版
+     * {@code Entity.positionRider(passenger)} 是 {@code positionRider(passenger, Entity::setPos)}，
+     * 而 {@code Entity.setPos(x,y,z)} **不动 {@code xo/yo/zo}**，所以渲染时
+     * {@code Mth.lerp(partialTick, xo, x)} 能正常插值。
+     *
+     * <p>曾经我们直接注入 {@code positionRider} 并调 {@code rider.moveTo(x, y, z)}：
+     * {@code moveTo} 三参版会转发到五参版，里面调了 {@code setOldPosAndRot()}，
+     * 把玩家的 {@code xo/yo/zo} 和 {@code yRotO/xRotO} 每 tick 都对齐到当前值——
+     * 位置与旋转的渲染插值全部失效，镜头只能按 20tps 一格一格跳。
+     * 位移数值看着完全正常（0.30 格/tick，正好是原版稳态），手感却是「移动一卡一卡」。
+     */
+    @Inject(method = "getPassengersRidingOffset", at = @At("HEAD"), cancellable = true)
+    private void verityExt$rideOffset(CallbackInfoReturnable<Double> cir) {
         Entity self = (Entity) (Object) this;
-        if (self instanceof VerityEntity verity && passenger instanceof Player rider) {
-            rider.moveTo(verity.getX(), verity.getY() + verity.getBbHeight() + 0.12D, verity.getZ());
-            ci.cancel();
+        if (self instanceof VerityEntity verity && verity.getFirstPassenger() instanceof Player) {
+            cir.setReturnValue((double) verity.getBbHeight() + 0.12D);
         }
     }
 
@@ -144,12 +156,6 @@ public abstract class EntityPerchRideMixin {
             Player carrier = self.level().getPlayerByUUID(carrierId);
             if (carrier != null) {
                 HeadPerchManager.placeOnHead(self, carrier);
-                if (self.level().getGameTime() % 200 == 0) {
-                    com.hanchen.veritycustomapi.OllamaProxyMod.LOGGER.info(
-                            "【站头·客户端】Verity=({}, {}, {}) 差Y={}",
-                            fmt(self.getX()), fmt(self.getY()), fmt(self.getZ()),
-                            fmt(self.getY() - carrier.getY()));
-                }
             }
             return true;
         }
@@ -166,15 +172,6 @@ public abstract class EntityPerchRideMixin {
             return false;
         }
         HeadPerchManager.placeOnHead(self, carrier);
-        long tick = self.level().getGameTime();
-        // 位置对比：左侧是 Verity，右侧是承载者。功能已稳定，10 秒一条足够排查用，不再刷屏。
-        if (tick % 200 == 0) {
-            com.hanchen.veritycustomapi.OllamaProxyMod.LOGGER.info(
-                    "【站头】位置 Verity=({}, {}, {}) 玩家=({}, {}, {}) 差Y={} noPhysics={}",
-                    fmt(self.getX()), fmt(self.getY()), fmt(self.getZ()),
-                    fmt(carrier.getX()), fmt(carrier.getY()), fmt(carrier.getZ()),
-                    fmt(self.getY() - carrier.getY()), self.noPhysics);
-        }
         return true;
     }
 

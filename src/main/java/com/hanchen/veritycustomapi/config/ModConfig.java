@@ -15,7 +15,6 @@ public class ModConfig {
     public static final ForgeConfigSpec.ConfigValue<String> TARGET_API_KEY;
     public static final ForgeConfigSpec.ConfigValue<String> TARGET_MODEL;
     public static final ForgeConfigSpec.BooleanValue ENABLE_CUSTOM_PROMPT;
-    public static final ForgeConfigSpec.BooleanValue USE_ORIGINAL_VERITY_CHAT_CHAIN;
     public static final ForgeConfigSpec.BooleanValue BILINGUAL_SPEECH_SUBTITLES;
     public static final ForgeConfigSpec.BooleanValue BILINGUAL_SECOND_PASS;
     public static final ForgeConfigSpec.BooleanValue OVERHEAD_ONLY_CHAT;
@@ -211,7 +210,6 @@ public class ModConfig {
     // ========== 恶魔 MMD ==========
     public static final ForgeConfigSpec.DoubleValue MMD_CAMERA_HEIGHT;
     public static final ForgeConfigSpec.BooleanValue AI_DEMON_AUTO_SPAWN;
-    public static final ForgeConfigSpec.BooleanValue AI_DEMON_FRIENDLY_MODE;
     public static final ForgeConfigSpec.IntValue AI_DEMON_SPAWN_RETRY_MS;
 
     // ========== 内置 PMX 模型（新增功能，默认关闭） ==========
@@ -222,6 +220,12 @@ public class ModConfig {
     public static final ForgeConfigSpec.ConfigValue<String> VERITY_SKIN_NAME;
 
     // ========== 原版界面汉化 ==========
+    /**
+     * 这个字段在 Java 里没有任何读取方，但**键本身是活的**：
+     * {@code MixinPlugin} 在 Mixin 阶段（Forge 配置系统还没加载）直接正则读 TOML 原文
+     * 的 {@code enableVerityLocalization}。删掉这个定义，TOML 里就不会再写出这个键，
+     * 汉化开关会变成永久默认值、玩家再也关不掉。
+     */
     public static final ForgeConfigSpec.BooleanValue ENABLE_VERITY_LOCALIZATION;
 
     // ========== Verity 说话时的 Q 弹形变 ==========
@@ -237,9 +241,11 @@ public class ModConfig {
     public static final ForgeConfigSpec.IntValue DEBUG_RUNTIME_METRICS_INTERVAL_SECONDS;
 
     // ========== 插件系统 ==========
-    public static final ForgeConfigSpec.BooleanValue PLUGIN_ENABLED;
-    public static final ForgeConfigSpec.IntValue PLUGIN_MAX_LOADED;
-    public static final ForgeConfigSpec.BooleanValue PLUGIN_ALLOW_BLOCK_EDIT;
+    /** 闲置时自己在主人附近走动（更灵动）。 */
+    public static final ForgeConfigSpec.BooleanValue VERITY_WANDER_ENABLED;
+
+    /** 玩家血量过低时，Verity 主动给一个治疗 buff。 */
+    public static final ForgeConfigSpec.BooleanValue VERITY_HELP_ENABLED;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -248,7 +254,7 @@ public class ModConfig {
         // 服务配置
         builder.push("server");
         SERVER_PORT = builder
-                .comment("代理服务器监听端口，默认与Verity原生配置保持一致")
+                .comment("代理服务器监听端口，默认与 Verity 原生配置保持一致")
                 .defineInRange("port", 4000, 1, 65535);
         builder.pop();
 
@@ -267,11 +273,8 @@ public class ModConfig {
                 .comment("使用的大模型名称")
                 .define("model", "");
         ENABLE_CUSTOM_PROMPT = builder
-                .comment("是否启用自定义提示词（关闭则使用Verity原版提示词）")
+                .comment("是否启用自定义提示词（关闭则使用 Verity 原版提示词）")
                 .define("enableCustomPrompt", false);
-        USE_ORIGINAL_VERITY_CHAT_CHAIN = builder
-                .comment("是否由本 Mod 入口直接代理调用原版 Verity 对话处理链路")
-                .define("useOriginalVerityChatChain", true);
         BILINGUAL_SPEECH_SUBTITLES = builder
                 .comment("让 Verity 使用英文回答和朗读，并在实体上方显示对应的中文字幕")
                 .define("bilingualSpeechSubtitles", false);
@@ -433,7 +436,10 @@ public class ModConfig {
                 .comment("ffmpeg 可执行文件路径；留空表示用 PATH 里的 ffmpeg")
                 .define("ffmpegPath", "");
         CAMERA_DEVICE_NAME = clientBuilder
-                .comment("DirectShow 摄像头设备名（ffmpeg 后端使用），留空则自动枚举第一个可用设备")
+                .comment("要使用的摄像头设备名；留空=自动挑选能出画面的那台。",
+                        "Windows 内置后端(powershell)与 ffmpeg 后端共用这一项；",
+                        "机器上装了手机投屏 / 虚拟摄像头时，系统默认那台常常输出纯黑画面，",
+                        "在配置界面「摄像头视觉 → 使用的摄像头」里直接选真实摄像头即可。")
                 .define("deviceName", "");
         CAMERA_HTTP_URL = clientBuilder
                 .comment("HTTP 快照地址（http 后端使用），例如手机摄像头 App 提供的 http://192.168.1.5:8080/shot.jpg")
@@ -674,7 +680,7 @@ public class ModConfig {
                 .comment("允许玩家潜行 + 丢弃物品（Q）对准 Verity 送礼：每次消耗 1 个，30 秒冷却，好感度 +1")
                 .define("allowVerityGift", true);
         ALLOW_VERITY_KICK = builder
-                .comment("允许玩家潜行 + 左键踢 Verity：不造成伤害，只推开并让她回应，10 秒冷却")
+                .comment("允许玩家潜行 + 左键踢 Verity：不造成伤害，只推开并让 Verity 回应，10 秒冷却")
                 .define("allowVerityKick", true);
         CROSS_SAVE_PURSUIT = builder
                 .comment("实验性：Verity 恶魔化后记住你，删除存档/新建世界仍会追来；击败追击恶魔可解除。关闭后不再触发新的追击")
@@ -710,14 +716,17 @@ public class ModConfig {
                 .comment("是否允许原版 Verity 第二阶段扫描并删除全世界生物；关闭可避免服务器卡顿")
                 .define("allowGlobalEntityPurge", false);
         SERVER_VERITY_BALL_RIDE = builder
-                .comment("允许玩家潜行 + 空手右键骑乘球形态（非恶魔形态）的 Verity，由玩家操控移动；"
-                        + "普通右键仍为原版的「把Verity收进物品」")
+                .comment("允许玩家骑乘球形态（非恶魔形态）的 Verity，由玩家操控移动。",
+                        "骑乘用独立按键（默认 R，可在「选项 → 控制」里改），",
+                        "不再用「潜行 + 空手右键」——那个手势和 PatPat 的抚摸完全重合，",
+                        "两个功能抢同一个右键只能有一个生效。",
+                        "普通右键仍是原版的「把 Verity 收进物品」。")
                 .define("ballRideEnabled", true);
         SERVER_VERITY_RIDE_OWNER_ONLY = builder
                 .comment("是否只有 Verity 的主人能骑；关闭后所有玩家都可请求骑乘（Verity 仍可在求饶等状态下拒绝）")
                 .define("rideOwnerOnly", true);
         SERVER_VERITY_HEAD_PERCH = builder
-                .comment("允许 Verity 站到玩家头上，快捷键（默认 H）可让Verity上来/下来")
+                .comment("允许 Verity 站到玩家头上，快捷键（默认 H）可让 Verity 上来/下来")
                 .define("headPerchEnabled", true);
         SERVER_VERITY_AI_EVENT_COOLDOWN_TICKS = builder
                 .comment("骑乘、头顶站坐等事件向 AI 反馈的最短冷却（tick，20=1秒），防止连点刷爆对话")
@@ -741,7 +750,7 @@ public class ModConfig {
                 .comment("允许 Verity 使用的技能 id 白名单，逗号分隔；留空表示不限制")
                 .define("allowedSkills", "");
         STELLAR_REMOTE_SHOW_IN_HAND = builder
-                .comment("施法时在 Verity 旁边显示她举着的星之遥控器（纯客户端渲染，不影响判定）")
+                .comment("施法时在 Verity 旁边显示 Verity 举着的星之遥控器（纯客户端渲染，不影响判定）")
                 .define("showInHand", true);
         builder.pop();
 
@@ -842,9 +851,6 @@ public class ModConfig {
         AI_DEMON_AUTO_SPAWN = clientBuilder
                 .comment("MMD 播放时如果当前维度内没有恶魔实体，自动向服务器请求生成一只。开启后\"播放空项目\"也会立即生效")
                 .define("autoSpawnDemon", true);
-        AI_DEMON_FRIENDLY_MODE = clientBuilder
-                .comment("永久让恶魔实体（VerityDemonEntity）不会把玩家当作攻击目标，包括按需生成的恶魔")
-                .define("friendlyMode", true);
         AI_DEMON_SPAWN_RETRY_MS = clientBuilder
                 .comment("客户端等待服务器恶魔 ACK 的最大毫秒数，超时后会再发送一次生成请求")
                 .defineInRange("spawnRetryMs", 8000, 2000, 30000);
@@ -873,7 +879,7 @@ public class ModConfig {
 
         clientBuilder.push("verity_jelly");
         VERITY_JELLY_ENABLED = clientBuilder
-                .comment("Verity 说话时的「Q弹」形变开关：打开后她说话会明显一弹一弹，比原版夸张很多")
+                .comment("Verity 说话时的「Q弹」形变开关：打开后 Verity 说话会明显一弹一弹，比原版夸张很多")
                 .define("enabled", false);
         VERITY_JELLY_CHAOS = clientBuilder
                 .comment("鬼畜模式：在 Q 弹的基础上幅度 ×1.6、速度 ×2.6，再叠加高频抽搐、左右甩头和原地弹跳")
@@ -901,19 +907,20 @@ public class ModConfig {
                 .defineInRange("runtimeMetricsIntervalSeconds", 60, 5, 3600);
         builder.pop();
 
-        builder.push("plugin");
-        PLUGIN_ENABLED = builder
-                .comment("插件系统总开关：允许玩家把自己的想法交给 AI 生成插件并在游戏里运行。",
-                        "插件只能调用模组内置的动作，不能执行任意代码；每个插件只对创建它的玩家生效。",
-                        "服务器上如果不希望玩家自制功能，把它关掉即可，已生成的插件也不会再运行。")
+        builder.push("verity_wander");
+        VERITY_WANDER_ENABLED = builder
+                .comment("让 Verity 闲着的时候自己在主人附近慢慢走动，看起来更灵动。",
+                        "只在「没跟随、没打架、没在对话」时生效；跟随中的移动由原版自己的 goal 负责，",
+                        "两者不会打架。想让 Verity 老实站着就关掉。")
                 .define("enabled", true);
-        PLUGIN_MAX_LOADED = builder
-                .comment("最多加载多少个插件；超出后多余的插件不会被加载（日志会写明）")
-                .defineInRange("maxLoaded", 30, 0, 500);
-        PLUGIN_ALLOW_BLOCK_EDIT = builder
-                .comment("是否允许插件放置方块（set_block 动作）。默认关闭：放置类动作最容易影响服务器，",
-                        "只有确认可信时才打开。")
-                .define("allowBlockEdit", false);
+        builder.pop();
+
+        builder.push("verity_help");
+        VERITY_HELP_ENABLED = builder
+                .comment("玩家血量掉到一半以下时，身边的 Verity 会主动给一个短时间治疗 buff。",
+                        "30 秒最多触发一次，只在 Verity 附近 16 格内、且不是恶魔形态时生效；",
+                        "不消耗任何物品或额度。不想要这个「护主」行为就关掉。")
+                .define("enabled", true);
         builder.pop();
 
         COMMON_SPEC = builder.build();

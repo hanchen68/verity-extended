@@ -20,6 +20,7 @@ import com.hanchen.veritycustomapi.skin.SkinManager;
 import com.hanchen.veritycustomapi.stt.SpeechRecognitionManager;
 import com.hanchen.veritycustomapi.stt.VoskModelInstaller;
 import com.hanchen.veritycustomapi.stt.VoskRuntimeSupport;
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractSliderButton;
@@ -67,6 +68,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     /** 分组标题色：比正文弱、比说明文字略亮。 */
     private static final int SECTION_TITLE = VerityUiTheme.SECTION_TITLE;
     private static final int ROW_HEIGHT = 28;
+    /** 折行后每行占的高度：MC 默认字体 9px 高，留 1px 行距。 */
+    private static final int LINE_HEIGHT = 10;
     /** 分组头在普通行高之外多出的顶部留白：让相邻两组之间有呼吸感。 */
     private static final int SECTION_GAP = 8;
     /** 换行符。写成常量是为了避免在源码里出现转义序列，被工具链反复吃掉。 */
@@ -103,6 +106,34 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private int applySyncDelayTicks;
     private String statusMessage = "";
     private int statusMessageTimer;
+    /**
+     * 状态条是不是失败提示。
+     *
+     * <p>原来不分成功失败，一律画成绿色——「配对失败（HTTP 400）」用绿色显示，
+     * 玩家第一眼会以为成了。失败必须和成功在颜色上分开，不能只靠文案。
+     */
+    private boolean statusMessageError;
+
+    /** 成功/中性提示（绿色）。 */
+    private void statusOk(String text, int ticks) {
+        statusMessage = text;
+        statusMessageError = false;
+        statusMessageTimer = ticks;
+    }
+
+    /** 失败提示（红色）。 */
+    private void statusFail(String text, int ticks) {
+        statusMessage = text;
+        statusMessageError = true;
+        statusMessageTimer = ticks;
+    }
+
+    /** 结果取决于一个布尔值时的提示：{@code ok} 为假才画红。 */
+    private void status(boolean ok, String text, int ticks) {
+        statusMessage = text;
+        statusMessageError = !ok;
+        statusMessageTimer = ticks;
+    }
     /** 分组折叠状态：键为「分类标题|分组标题」，值为 true 表示已收起。 */
     private final Map<String, Boolean> collapsedSections = new HashMap<>();
     /** 摄像头"测试"按钮最近一次的结果文本；null 表示还没测过。 */
@@ -114,9 +145,20 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private double sidebarHighlightY = -1.0D;
     /** 最近一次切换分类的时间，用于标题轻微滑入。 */
     private long categorySwitchAt = openedAt;
-    /** 当前悬停的说明行与开始时间，用于浮层淡入上浮。 */
+    /** 当前悬停的说明行。浮层照着它画，同时给它一层高亮。 */
     private Row hintRow;
-    private long hintHoverAt;
+
+    /**
+     * 未保存的文本输入草稿（行标签 → 文本）。
+     *
+     * <p>🔴 为什么需要：界面任何一次重建（点开关、换下拉、行滚出视野）都会换掉所有 Row 对象，
+     * 而 {@link TextRow} 构造时是从**配置**读值的——玩家刚打的字就没了。
+     * 自定义人设这种长文本尤其明显：填完顺手点了个开关，回来发现框是空的，
+     * 玩家看到的就是「自定义人设根本填不进去 / 不能正常加载」。
+     *
+     * <p>保存成功后清空（{@link #saveAndClose()}），避免下次开界面还带着旧草稿。
+     */
+    private final java.util.Map<String, String> textDrafts = new java.util.HashMap<>();
 
     public NativeOllamaProxyConfigScreen(Screen parent) {
         super(Component.literal("Verity 扩展增强配置"));
@@ -370,33 +412,31 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     // ==================== Layout Calculations ====================
 
     private boolean isCompactLayout() {
-        return width < 680 || height < 400;
+        return com.hanchen.veritycustomapi.config.ConfigLayout.isCompact(width, height);
     }
 
     private boolean isUltraCompactLayout() {
-        return width < 430;
+        return com.hanchen.veritycustomapi.config.ConfigLayout.isUltraCompact(width);
     }
 
     /** 侧栏列表的顶部起点。 */
-    private static final int SIDEBAR_TOP = 44;
+    private static final int SIDEBAR_TOP = com.hanchen.veritycustomapi.config.ConfigLayout.SIDEBAR_TOP;
 
     private boolean usesPagedNavigation() {
         // 只留给真正放不下的极窄/极矮窗口；普通矮窗口保留左侧列表，改为列表内滚动。
-        return width < 300 || height < 220;
+        return com.hanchen.veritycustomapi.config.ConfigLayout.usesPagedNavigation(width, height);
     }
 
     private int getSidebarItemStep() {
-        if (categories.isEmpty()) return 22;
-        int available = Math.max(1, getContentBottom() - 44);
-        return Math.max(14, Math.min(22, available / categories.size()));
+        return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarItemStep(height, categories.size());
     }
 
     private int getSidebarButtonHeight() {
-        return Math.max(13, Math.min(19, getSidebarItemStep() - 2));
+        return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarButtonHeight(height, categories.size());
     }
 
     private int getSidebarViewport() {
-        return Math.max(1, getContentBottom() - SIDEBAR_TOP);
+        return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarViewport(height);
     }
 
     private int getSidebarContentHeight() {
@@ -423,31 +463,27 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private int getOuterMargin() {
-        return isCompactLayout() ? 8 : 14;
+        return com.hanchen.veritycustomapi.config.ConfigLayout.outerMargin(width, height);
     }
 
     private int getSidebarWidth() {
-        if (usesPagedNavigation()) return 0;
-        if (width < 560) return 108;
-        return isCompactLayout() ? 124 : 156;
+        return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarWidth(width, height);
     }
 
     private int getSidebarLeft() {
-        int usableWidth = Math.max(0, width - getOuterMargin() * 2);
-        int maxWidth = Math.min(920, usableWidth);
-        return Math.max(getOuterMargin(), (width - maxWidth) / 2);
+        return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarLeft(width, height);
     }
 
     private int getPanelRight() {
-        return Math.min(width - getOuterMargin(), getSidebarLeft() + 920);
+        return com.hanchen.veritycustomapi.config.ConfigLayout.panelRight(width, height);
     }
 
     private int getContentLeft() {
-        return getSidebarLeft() + getSidebarWidth() + (usesPagedNavigation() ? 0 : 12);
+        return com.hanchen.veritycustomapi.config.ConfigLayout.contentLeft(width, height);
     }
 
     private int getContentWidth() {
-        return Math.max(0, getPanelRight() - getContentLeft());
+        return com.hanchen.veritycustomapi.config.ConfigLayout.contentWidth(width, height);
     }
 
     /** 当前分类内容是否超出可视区域（只依赖行高，可安全用于布局判断）。 */
@@ -457,32 +493,27 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private int getContentTop() {
-        return 58;
+        return com.hanchen.veritycustomapi.config.ConfigLayout.contentTop();
     }
 
     private int getContentBottom() {
-        return height - 50;
+        return com.hanchen.veritycustomapi.config.ConfigLayout.contentBottom(height);
     }
 
     private int getVisibleRowsHeight() {
-        return getContentBottom() - getContentTop();
+        return com.hanchen.veritycustomapi.config.ConfigLayout.visibleRowsHeight(height);
     }
 
     private int getLabelWidth(int rowWidth) {
-        if (isUltraCompactLayout()) return Math.max(48, rowWidth - 16);
-        return Math.max(76, Math.min(148, rowWidth * 2 / 5));
+        return com.hanchen.veritycustomapi.config.ConfigLayout.labelWidth(width, rowWidth);
     }
 
     private int getControlWidth(int rowWidth) {
-        if (isUltraCompactLayout()) return Math.max(64, rowWidth - 12);
-        int labelWidth = getLabelWidth(rowWidth);
-        int available = rowWidth - labelWidth - 18;
-        return Math.max(72, Math.min(isCompactLayout() ? 190 : 260, available));
+        return com.hanchen.veritycustomapi.config.ConfigLayout.controlWidth(width, height, rowWidth);
     }
 
     private int getControlLeft(int left, int rowWidth) {
-        if (isUltraCompactLayout()) return left + 6;
-        return left + rowWidth - getControlWidth(rowWidth) - 6;
+        return com.hanchen.veritycustomapi.config.ConfigLayout.controlLeft(width, height, left, rowWidth);
     }
 
     private double getMaxScroll() {
@@ -671,6 +702,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         categoryIndex = target;
         scrollOffset = 0;
         statusMessage = "";
+        statusMessageError = false;
         categorySwitchAt = net.minecraft.Util.getMillis();
         addWidgets();
     }
@@ -701,12 +733,10 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
     private void startCameraTest(boolean screenOnly) {
         if (!CAMERA_TEST_RUNNING.compareAndSet(false, true)) {
-            statusMessage = "画面采集测试正在进行，请稍候";
-            statusMessageTimer = 120;
+            statusOk("画面采集测试正在进行，请稍候", 120);
             return;
         }
-        statusMessage = screenOnly ? "正在测试游戏画面…" : "正在测试画面采集…";
-        statusMessageTimer = 600;
+        statusOk(screenOnly ? "正在测试游戏画面…" : "正在测试画面采集…", 600);
         addWidgets();
 
         try {
@@ -730,24 +760,23 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 minecraft.execute(() -> {
                     if (minecraft.screen != this) return;
                     cameraTestResult = result;
-                    statusMessage = success
-                            ? (screenOnly ? "游戏画面测试成功" : "画面采集测试成功")
-                            : (screenOnly ? "游戏画面测试失败，详见下方结果" : "画面采集测试失败，详见下方结果");
-                    statusMessageTimer = 120;
+                    status(success,
+                            success
+                                    ? (screenOnly ? "游戏画面测试成功" : "画面采集测试成功")
+                                    : (screenOnly ? "游戏画面测试失败，详见下方结果" : "画面采集测试失败，详见下方结果"),
+                            120);
                     refreshCurrentCategory();
                 });
             });
         } catch (RuntimeException e) {
             CAMERA_TEST_RUNNING.set(false);
-            statusMessage = "无法启动画面采集测试";
-            statusMessageTimer = 120;
+            statusFail("无法启动画面采集测试", 120);
             addWidgets();
         }
     }
 
     private void installVoskModel() {
-        statusMessage = "已开始安装离线中文模型，进度会显示在聊天栏";
-        statusMessageTimer = 200;
+        statusOk("已开始安装离线中文模型，进度会显示在聊天栏", 200);
         addWidgets();
         VoskModelInstaller.installAsync(() -> {
             ModConfig.RECOGNITION_MODE.set("local");
@@ -761,15 +790,21 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
     private void exchangePairingCode() {
         // 直接从 EditBox 读取配对码，不走 pairingCode 字段（cacheWidgetValues 不会触发 saver 回调）
-        String code = readFirstEditBoxValue();
-        if (code == null || code.isBlank()) {
-            statusMessage = "请先输入配对码";
-            statusMessageTimer = 120;
+        String code = normalizePairingCode(readFirstEditBoxValue());
+        if (code.isEmpty()) {
+            statusFail("请先输入配对码", 120);
             addWidgets();
             return;
         }
-        statusMessage = "正在完成账号授权…";
-        statusMessageTimer = 300;
+        if (code.length() != PAIRING_CODE_LENGTH) {
+            // 服务端对长度做硬校验，长度不对一律 400「配对码格式无效」。
+            // 本地先拦一次：既省掉一次必然失败的请求，也能把「你多输了一位」说清楚。
+            statusFail("配对码应为 " + PAIRING_CODE_LENGTH + " 位，你输入了 "
+                    + code.length() + " 位：" + code, 240);
+            addWidgets();
+            return;
+        }
+        statusOk("正在完成账号授权…", 300);
         addWidgets();
 
         String apiUrl = ModConfig.CLOUD_API_URL.get();
@@ -792,8 +827,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                             ConfigManager.saveCommonConfig();
                             OllamaProxyMod.LOGGER.info("云端授权完成: cloud.enable={}, 凭据已写入",
                                     ModConfig.CLOUD_ENABLE.get());
-                            statusMessage = "授权成功，正在同步云端设置…";
-                            statusMessageTimer = 300;
+                            statusOk("授权成功，正在同步云端设置…", 300);
                             pairingCode = "";
                             ClientEventHandler.beginCloudAuthGuard();
                             // 旧界面里的开关可能还是授权前的 false，不能让它缓存回配置。
@@ -801,22 +835,20 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                             ClientEventHandler.syncCloudConfigNow(success -> {
                                 // 同步期间若被其他配置保存路径改回 false，这里再兜底确认一次。
                                 ensureCloudEnabledForAuthorization();
-                                statusMessage = success
-                                        ? "授权成功，云端设置已立即生效"
-                                        : "授权成功，但同步失败，继续使用本地备用设置";
-                                statusMessageTimer = 300;
+                                status(success,
+                                        success ? "授权成功，云端设置已立即生效"
+                                                : "授权成功，但同步失败，继续使用本地备用设置",
+                                        300);
                                 refreshCurrentCategory(false);
                             });
                         } catch (RuntimeException ignored) {
-                            statusMessage = "授权信息保存失败，请检查配置目录权限";
-                            statusMessageTimer = 200;
+                            statusFail("授权信息保存失败，请检查配置目录权限", 200);
                             addWidgets();
                         }
                     });
                 } else {
                     mc.execute(() -> {
-                        statusMessage = result.error() != null ? result.error() : "兑换失败";
-                        statusMessageTimer = 200;
+                        statusFail(result.error() != null ? result.error() : "兑换失败", 200);
                         addWidgets();
                     });
                 }
@@ -824,8 +856,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 Minecraft mc = Minecraft.getInstance();
                 if (mc != null) {
                     mc.execute(() -> {
-                        statusMessage = "网络异常，请稍后重试";
-                        statusMessageTimer = 200;
+                        statusFail("网络异常，请稍后重试", 200);
                         addWidgets();
                     });
                 }
@@ -866,6 +897,20 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         return "";
     }
 
+    /**
+     * 配对码固定 6 位。
+     *
+     * <p>实测服务端对长度做**硬校验**：5 位、7 位都直接回 400「配对码格式无效」，
+     * 只有长度对上了才会去查库（查不到才是 404「无效或已过期」）。
+     * 所以长度必须在本地先判，否则玩家只会看到一个毫无信息量的 HTTP 400。
+     */
+    private static final int PAIRING_CODE_LENGTH = 6;
+
+    /** 规整配对码（去不可见字符 + 统一大写）。实现见 {@link ConfigText#normalizePairingCode}。 */
+    private static String normalizePairingCode(String raw) {
+        return ConfigText.normalizePairingCode(raw);
+    }
+
     private void confirmResetCategory() {
         cacheWidgetValues();
         if (categories.isEmpty()) return;
@@ -876,8 +921,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 valueRow.reset();
             }
         }
-        statusMessage = category.title + " 已恢复默认值";
-        statusMessageTimer = 120;
+        statusOk(category.title + " 已恢复默认值", 120);
         scrollOffset = 0;
         // 重置也立即生效：先按默认值重建控件（否则开关类控件里还留着旧状态，
         // 紧接着写回会把旧值又写一遍），再统一写回配置并同步子系统。
@@ -900,6 +944,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         for (ValueRow value : values) {
             value.save();
         }
+        // 已经落盘，草稿没有存在意义了；留着会让下次开界面把旧输入又贴回框里
+        textDrafts.clear();
         if (ConfigManager.isEnableBuiltinTtsApis()) {
             ModConfig.TTS_MODE.set("online");
         }
@@ -1015,7 +1061,14 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         graphics.enableScissor(contentLeft - 6, contentTop, contentLeft + contentWidth + 6, contentBottom);
         int y = contentTop - (int) scrollOffset;
         List<Row> rows = getCurrentCategoryRows();
+        // 先算出鼠标压在哪一行，再画行内容：悬停行要垫一层高亮。
+        // 浮层飘在好几行之上，没有这层高亮就分不清它说的是哪一行。
+        hintRow = findHoveredHintRow(mouseX, mouseY);
         for (Row row : rows) {
+            if (row == hintRow) {
+                VerityUiDraw.fillRounded(graphics, contentLeft, y,
+                        contentLeft + contentWidth, y + row.getHeight(), 4, VerityUiTheme.ROW_HOVER);
+            }
             row.render(graphics, contentLeft, y, contentWidth);
             y += row.getHeight();
         }
@@ -1041,13 +1094,34 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                     ? 255 : Math.max(0, statusMessageTimer * 255 / 10);
             graphics.drawString(font, text,
                     contentLeft + Math.max(0, (contentWidth - font.width(text)) / 2),
-                    height - 40, VerityUiDraw.withAlpha(SUCCESS, statusAlpha));
+                    height - 40, VerityUiDraw.withAlpha(statusMessageError ? DANGER : SUCCESS, statusAlpha));
         }
 
         super.render(graphics, mouseX, mouseY, partialTick);
         graphics.pose().popPose();
 
-        // 说明浮层画在最上层（super.render 之后），否则会被控件盖住
+        // 说明浮层不在这里画：改成由 ScreenEvent.Render.Post 触发
+        // （见 {@link #renderHintOverlay}）。原因见那个方法的注释——
+        // 在 render() 里画无论顺序怎么排，都会被后续批次盖住。
+    }
+
+    /**
+     * 画说明浮层。**由 {@code ScreenEvent.Render.Post} 调用**，不在 {@code render()} 里。
+     *
+     * <p>🔴 为什么必须挪到事件里：在 {@code render()} 末尾画，实测仍会被行文字盖住。
+     * Forge 的触发点是 {@code ForgeHooksClient.drawScreenInternal}：
+     * <pre>
+     *   post(Render.Pre);
+     *   screen.renderWithTooltip(...);   // ← 我们的 render() 和行渲染都在这
+     *   post(Render.Post);               // ← 这里才是真正的最后一层
+     * </pre>
+     * {@code Render.Post} 在 {@code renderWithTooltip} 返回之后才发，
+     * 所以在这里画的东西一定在所有行、控件、原生 tooltip 之上，不依赖任何批次顺序。
+     *
+     * <p>鼠标坐标和 {@code hintRow} 都用本帧 {@code render()} 留下的值：
+     * 事件紧跟在 {@code render()} 之后，同一帧，不会错位。
+     */
+    public void renderHintOverlay(GuiGraphics graphics, int mouseX, int mouseY) {
         drawHintTooltip(graphics, mouseX, mouseY);
     }
 
@@ -1057,43 +1131,47 @@ public class NativeOllamaProxyConfigScreen extends Screen {
      * <p>优先显示在鼠标上方（用户要求「放在按钮上面」），上方放不下才翻到下方；
      * 左右也会夹在屏幕内，避免贴边被切掉。
      */
-    private void drawHintTooltip(GuiGraphics graphics, int mouseX, int mouseY) {
-        if (!isInsideContent(mouseX, mouseY)) {
-            // 离开内容区就清掉，重新悬停同一行时重新播淡入
-            hintRow = null;
-            return;
-        }
-        List<Row> rows = getCurrentCategoryRows();
+    /** 当前鼠标压在哪一行「带说明」的行上；不在内容区或没压中任何行时返回 {@code null}。 */
+    private Row findHoveredHintRow(int mouseX, int mouseY) {
+        if (!isInsideContent(mouseX, mouseY)) return null;
         int y = getContentTop() - (int) scrollOffset;
-        Row hovered = null;
-        for (Row row : rows) {
+        for (Row row : getCurrentCategoryRows()) {
             int height = row.getHeight();
-            if (height > 0 && row.hint != null && mouseY >= y && mouseY < y + height) {
-                hovered = row;
-                break;
-            }
+            if (height > 0 && row.hint != null && mouseY >= y && mouseY < y + height) return row;
             y += height;
         }
-        if (hovered == null) {
-            hintRow = null;
-            return;
-        }
-        long now = net.minecraft.Util.getMillis();
-        if (hovered != hintRow) {
-            hintRow = hovered;
-            hintHoverAt = now;
-        }
-        double hintT = VerityUiAnimation.easeOutCubic(
-                VerityUiAnimation.clamp01((now - hintHoverAt) / 80.0D));
-        int hintLift = (int) Math.round((1.0D - hintT) * 4.0D);
-        int hintAlpha = (int) Math.round(255.0D * hintT);
+        return null;
+    }
 
-        int maxWidth = Math.min(240, Math.max(120, width - 40));
+    /**
+     * 鼠标悬停在某一行上时，把挂在它身上的说明浮出来。
+     *
+     * <p>优先显示在鼠标上方（用户要求「放在按钮上面」），上方放不下才翻到下方；
+     * 左右也会夹在屏幕内，避免贴边被切掉。
+     *
+     * <p>🔴 两条硬约束，改之前先读完：
+     * <ol>
+     *   <li><b>底色必须完全不透明，而且不能做 alpha 淡入。</b>
+     *       原来底色带 80ms 的 0 → 252 淡入，动画途中底色是半透明的，
+     *       底下几行的正文直接透上来，看起来就是「浮层和正文叠在一起、字糊成一团」。
+     *       浮层是盖在内容**之上**的东西，任何一帧都不能让人看见背后的字。</li>
+     *   <li><b>必须先 flush。</b> {@code fill} 与 {@code drawString} 走不同渲染批次，
+     *       不 flush 的话前面画过的文字会在浮层之后才提交，直接压在浮层上面。</li>
+     * </ol>
+     */
+    private void drawHintTooltip(GuiGraphics graphics, int mouseX, int mouseY) {
+        Row hovered = hintRow;
+        if (hovered == null || hovered.hint == null) return;
+
+        int maxWidth = Math.min(260, Math.max(120, width - 40));
         List<FormattedCharSequence> lines = new ArrayList<>();
-        // 标题单独一行、用强调色，和正文区分开
+        int titleLineCount = 0;
+        // 标题单独一段、用强调色，和正文拉开一点间距
         String title = hovered.hintTitle;
         if (title != null && !title.isBlank()) {
-            lines.addAll(font.split(Component.literal(title), maxWidth));
+            List<FormattedCharSequence> titleLines = font.split(Component.literal(title), maxWidth);
+            lines.addAll(titleLines);
+            titleLineCount = titleLines.size();
         }
         for (String paragraph : hovered.hint.split(NEWLINE)) {
             if (paragraph.isBlank()) continue;
@@ -1101,36 +1179,77 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         }
         if (lines.isEmpty()) return;
 
+        // 行距 12 而不是 10：9px 的字紧挨着排，中英混排时上下两行的字形会互相「咬」在一起
+        final int lineHeight = 12;
+        final int padding = 8;
+        final int titleGap = titleLineCount > 0 ? 4 : 0;
+
         int textWidth = 0;
         for (FormattedCharSequence line : lines) textWidth = Math.max(textWidth, font.width(line));
-        int boxWidth = textWidth + 14;
-        int lineHeight = 10;
-        int boxHeight = lines.size() * lineHeight + 10;
+        int boxWidth = textWidth + padding * 2;
+        int boxHeight = padding * 2 + lines.size() * lineHeight + titleGap;
 
-        int x = clamp(mouseX + 10, 4, Math.max(4, width - boxWidth - 4));
-        int boxY = mouseY - boxHeight - 10;
-        if (boxY < 4) boxY = Math.min(mouseY + 14, height - boxHeight - 4);
-        boxY = Math.max(2, Math.max(4, boxY) - hintLift);
+        int x = clamp(mouseX + 12, 4, Math.max(4, width - boxWidth - 4));
+        int boxY = mouseY - boxHeight - 12;
+        if (boxY < 4) boxY = Math.min(mouseY + 16, height - boxHeight - 4);
+        boxY = Math.max(4, boxY);
 
-        // 🔴 必须先 flush：GuiGraphics 的 fill 与 drawString 走不同渲染批次，
-        // 不 flush 的话前面画过的文字会在浮层之后才提交，直接压在浮层上面——
-        // 表现就像「浮层太透明、背后文字透出来」，其实根本不是透明度问题。
         graphics.flush();
 
-        // 浮层底色用接近实心：它盖在内容之上，透出背景只会干扰阅读
-        VerityUiDraw.fillRounded(graphics, x, boxY, x + boxWidth, boxY + boxHeight, 4,
-                VerityUiDraw.withAlpha(0xFC14171C, (int) Math.round(0xFC * hintT)));
-        VerityUiDraw.strokeRounded(graphics, x, boxY, x + boxWidth, boxY + boxHeight, 4,
-                VerityUiDraw.withAlpha(VerityUiTheme.CARD_BORDER,
-                        (int) Math.round(((VerityUiTheme.CARD_BORDER >>> 24) & 0xFF) * hintT)));
-        int lineY = boxY + 5;
+        // 🔴 先把 shader color 归位，再用**关闭混合**的方式画不透明底。
+        //
+        // 底色本身是 0xFF0E1116（alpha 全满），但「颜色不透明」不等于「画出来不透明」：
+        // 最终 alpha = 顶点色 alpha × ColorModulator（shader color）的 alpha。
+        // 只要上游有代码把 shader color 的 alpha 调低过（或异常路径没复原），
+        // 这块底就会和背后的正文混在一起，看起来就是「浮层是透明的」——
+        // 而检查代码只会看到 0xFF0E1116，怎么查都是不透明的。
+        //
+        // ⚠️ 关键细节：GuiGraphics.fill 是**攒批**的，真正光栅化发生在 flush 那一刻。
+        // 所以 disableBlend() 必须把 fill **和紧随其后的 flush** 一起包住；
+        // 只包住 fill 调用、让它在混合开启时才提交，等于什么都没改。
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+
+        // 投影要混合（半透明黑），所以先在混合开启时画完并提交
+        VerityUiDraw.fillRounded(graphics, x + 2, boxY + 3, x + boxWidth + 2, boxY + boxHeight + 3,
+                5, VerityUiTheme.CARD_SHADOW);
+        graphics.flush();
+
+        RenderSystem.disableBlend();
+        try {
+            // 🔴 用「立即提交 + 关闭混合」画底色，这是唯一能保证实心的办法。
+            //
+            // 之前用 graphics.fill(x, boxY, ..., 0xFF0E1116)：颜色 alpha 虽然是 FF，
+            // 但 fill 只是把顶点塞进 RenderType.gui() 的缓冲，而那个 RenderType 自带
+            // TRANSLUCENT_TRANSPARENCY —— flush 时混合会被重新打开，
+            // 「顶点 alpha = 1」不等于「最终像素不透明」。
+            // fillOpaqueNow 在关闭混合的状态下自己提交，写进去是什么颜色就是什么颜色，
+            // 同时它是立即执行的，不参与任何批次排序，所以一定盖在已经画完的行文字之上。
+            VerityUiDraw.fillOpaqueNow(graphics, x, boxY, x + boxWidth, boxY + boxHeight, 0xFF0E1116);
+            graphics.flush();
+        } finally {
+            RenderSystem.enableBlend();
+            // 复原混合函数：万一某个页面上的控件把它改成了叠加/加法混合且没复原，
+            // 后面画的描边和文字也会跟着变味。
+            RenderSystem.defaultBlendFunc();
+        }
+
+        // 描边负责勾出边界；用直角描边与上面的整矩形对齐，不再用圆角描边（会露出四角缺口）
+        graphics.fill(x, boxY, x + boxWidth, boxY + 1, VerityUiTheme.CARD_BORDER);
+        graphics.fill(x, boxY + boxHeight - 1, x + boxWidth, boxY + boxHeight, VerityUiTheme.CARD_BORDER);
+        graphics.fill(x, boxY, x + 1, boxY + boxHeight, VerityUiTheme.CARD_BORDER);
+        graphics.fill(x + boxWidth - 1, boxY, x + boxWidth, boxY + boxHeight, VerityUiTheme.CARD_BORDER);
+
+        int lineY = boxY + padding;
         for (int i = 0; i < lines.size(); i++) {
-            int color = (i == 0 && title != null && !title.isBlank())
-                    ? VerityUiTheme.ACCENT : VerityUiTheme.TEXT;
-            graphics.drawString(font, lines.get(i), x + 7, lineY,
-                    VerityUiDraw.withAlpha(color, hintAlpha));
+            if (i == titleLineCount && titleGap > 0) lineY += titleGap;
+            int color = i < titleLineCount ? VerityUiTheme.ACCENT : VerityUiTheme.TEXT;
+            graphics.drawString(font, lines.get(i), x + padding, lineY, color);
             lineY += lineHeight;
         }
+        // 再 flush 一次，把「底色 → 文字」这个顺序钉死。
+        // 否则两者留在各自批次里等帧末统一提交，批次顺序由渲染类型的哈希决定，
+        // 某些显卡/驱动组合下文字会先于底色提交，浮层直接变成一块空板。
+        graphics.flush();
     }
 
     @Override
@@ -1200,7 +1319,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private void speechSynthesisCategory() {
-        category("语音朗读", "朗读音色、语速与音量", "语音朗读");
+        category("语音朗读", "朗读路线、音色、语速、双语与语言", "语音朗读");
         ttsCategory();
     }
 
@@ -1217,7 +1336,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 ModConfig.VERITY_JELLY_ENABLED::get, false,
                 ModConfig.VERITY_JELLY_ENABLED::set);
         info("Q 弹形变", "打开后 Verity 说话时整个人会明显一弹一弹：纵向拉长时横向收窄，压扁时变胖，比原版夸张很多；"
-                + "关闭则完全恢复原版手感。只在她说话时生效，不影响走路和其它动画");
+                + "关闭则完全恢复原版手感。只在 Verity 说话时生效，不影响走路和其它动画");
         if (ModConfig.VERITY_JELLY_ENABLED.get()) {
             toggle("鬼畜模式",
                     ModConfig.VERITY_JELLY_CHAOS::get, false,
@@ -1272,8 +1391,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         action("重新加载 PMX 模型", "读取当前配置的内置 PMX 模型，失败时自动回退原版",
                 () -> {
                     com.hanchen.veritycustomapi.pmx.BuiltinPmxModelManager.get().reload();
-                    statusMessage = "PMX 模型缓存已重置；下一次渲染时重新加载";
-                    statusMessageTimer = 60;
+                    statusOk("PMX 模型缓存已重置；下一次渲染时重新加载", 60);
                 }, "重新加载");
         info("兼容说明", "这是新增旁路功能，不会修改原有 Geckolib、MMD/VMD 或皮肤渲染路径");
 
@@ -1314,8 +1432,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 () -> {
                     com.hanchen.veritycustomapi.mmd.MmdPlaybackManager.get().scanAndLoad();
                     int n = com.hanchen.veritycustomapi.mmd.MmdPlaybackManager.get().listProjects().size();
-                    statusMessage = "扫描完成，共 " + n + " 个舞蹈项目";
-                    statusMessageTimer = 60;
+                    statusOk("扫描完成，共 " + n + " 个舞蹈项目", 60);
                 }, "重新扫描");
         info("命令用法", "/verity-mmd play <文件夹名> 播放整个项目；散装的 VMD 文件名同样可用");
     }
@@ -1447,13 +1564,24 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         if (authorized) {
             info("授权状态", "已授权 (" + maskKey(currentKey) + ")");
             action("重新授权", "清除当前授权并关闭云端开关，之后可输入新配对码", () -> {
+                // 🔴 顺序不能乱：
+                // 1) 资源回退要拿**旧 key** 去查哪些私有资源是当前账号的，必须在清除凭据之前；
+                // 2) 必须先 CloudConfigManager.stop() 再保存——
+                //    stop() 会清掉内存里的云端配置与覆盖（clearCloudConfig → CloudOverrides.clear），
+                //    让所有 getter 立刻回到本地值。少了这一步，界面显示「未授权」，
+                //    但运行时还在用云端下发的值、本地改了也会被覆盖抢回去，
+                //    玩家看到的就是「授权清掉了，设置却还是云端那套、改不动」。
                 PairingResourceFallback.apply(currentKey);
+                CloudConfigManager.stop();
                 CloudCredentialStore.getInstance().clearAuthorization();
                 ModConfig.CLOUD_API_KEY.set("");
                 ModConfig.CLOUD_ENABLE.set(false);
                 ConfigManager.saveCommonConfig();
                 pairingCode = "";
+                // 停掉线程后要同步各子系统的运行时状态（TTS/STT/代理/皮肤都缓存了云端线路）
+                ClientEventHandler.onConfigSaved();
                 refreshCurrentCategory();
+                statusOk("已清除授权，云端设置已全部退回本地", 240);
             }, "清除授权");
         } else {
             info("获取配对码", "打开 verity.xrstudio.cn，登录后生成配对码");
@@ -1477,8 +1605,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             info("本地接管", "已有 " + pinnedCount + " 项由本地接管，云端下发同值不再覆盖");
             action("交还云端接管", "清掉本地覆盖记录，这些配置项重新跟随云端下发", () -> {
                 int released = CloudOverrides.releasePins();
-                statusMessage = "已交还 " + released + " 项给云端，保存后重新拉取会按云端生效";
-                statusMessageTimer = 80;
+                statusOk("已交还 " + released + " 项给云端，保存后重新拉取会按云端生效", 80);
                 refreshCurrentCategory();
             }, "全部交还");
         }
@@ -1492,12 +1619,20 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 v -> OriginalVerityConfigSync.queueVoiceString("voice", v));
 
         section("互动");
+        toggle("闲置时自己四处走动", ModConfig.VERITY_WANDER_ENABLED::get, true,
+                ModConfig.VERITY_WANDER_ENABLED::set);
+        info("四处走动", "闲着的时候会绕着你慢慢溜达，看起来更像活的。"
+                + "跟随中、打架中、说话中都不会乱跑；想让它老实站着就关掉");
+        toggle("血量过低时主动帮忙", ModConfig.VERITY_HELP_ENABLED::get, true,
+                ModConfig.VERITY_HELP_ENABLED::set);
+        info("护主", "你的血量掉到一半以下、Verity 又在附近时，会给你一个 8 秒的治疗；"
+                + "30 秒最多一次，不消耗物品和额度");
         toggle("允许给 Verity 送礼", ModConfig.ALLOW_VERITY_GIFT::get, true,
                 ModConfig.ALLOW_VERITY_GIFT::set);
         info("送礼方式", "潜行 + 丢弃物品（Q），准星对着 Verity；每次消耗 1 个，30 秒冷却，好感度 +1");
         toggle("允许踢 Verity", ModConfig.ALLOW_VERITY_KICK::get, true,
                 ModConfig.ALLOW_VERITY_KICK::set);
-        info("踢的方式", "潜行 + 左键：不造成伤害，只把她推开并让她回应，10 秒冷却");
+        info("踢的方式", "潜行 + 左键：不造成伤害，只把 Verity 推开并让 Verity 回应，10 秒冷却");
         toggle("跨存档追击（实验性）", ModConfig.CROSS_SAVE_PURSUIT::get, false,
                 ModConfig.CROSS_SAVE_PURSUIT::set);
         info("跨存档追击", "Verity 恶魔化后会记住你：删除存档/新建世界仍会追来。"
@@ -1576,13 +1711,6 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         cloudManagedWarning("对话服务、密钥、模型和超时",
                 ModConfig.TARGET_API_URL.get(), ModConfig.TARGET_API_KEY.get(), ModConfig.TARGET_MODEL.get());
         section("使用方式");
-        toggle("英文朗读与中文字幕", ModConfig.BILINGUAL_SPEECH_SUBTITLES::get, false,
-                ModConfig.BILINGUAL_SPEECH_SUBTITLES::set);
-        info("双语模式", "让 Verity 说英文、照英文配音；中文译文由系统生成，聊天栏以 [译] 显示，头顶不再重复。"
-                + "想换配音语言，用下方「朗读路线与语言」里的「配音语言」");
-        toggle("双语二次翻译兜底", ModConfig.BILINGUAL_SECOND_PASS::get, false,
-                ModConfig.BILINGUAL_SECOND_PASS::set);
-        info("二次翻译", "开启：模型没在同一次回复里给出中文时，系统再调用一次模型补翻译（中文更稳，但每条回复会多等几秒）；关闭：回复最快，模型没给中文时只显示英文");
         toggle("回复仅在头顶显示", ModConfig.OVERHEAD_ONLY_CHAT::get, false,
                 ModConfig.OVERHEAD_ONLY_CHAT::set);
         info("显示位置", "开启后 Verity 的回复只显示在实体上方，不再进入聊天栏（双语模式下头顶字幕显示中文译文）");
@@ -1593,14 +1721,39 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 ModConfig.ENABLE_VERITY_GROWTH::set);
         info("成长说明", "开启后，每次成功喂食都会让 Verity 逐渐变大；关闭后恢复正常大小");
         section("人设");
+        migrateOriginalPreset();
         toggle("启用自定义人设", ModConfig.ENABLE_CUSTOM_PROMPT::get, false, ModConfig.ENABLE_CUSTOM_PROMPT::set);
         if (ModConfig.ENABLE_CUSTOM_PROMPT.get()) {
-            choice("人设预设", getCurrentPreset().name(), ConfigManager.PromptPreset.ORIGINAL_VERITY.name(),
-                    promptNames(), promptValues(), ModConfig.SELECTED_PRESET::set);
+            choice("人设预设", getCurrentPreset().name(),
+                    ConfigDisplay.selectablePresets().get(0).name(),
+                    promptNames(), promptValues(),
+                    v -> {
+                        ModConfig.SELECTED_PRESET.set(v);
+                        // 选到「外部自定义文件」时顺手把示例文件建出来：
+                        // 否则玩家面对的是一个不存在的路径，写什么、什么格式全靠猜。
+                        if (ConfigManager.PromptPreset.CUSTOM_FILE.name().equals(v)) {
+                            ConfigManager.ensureCustomPromptFile();
+                        }
+                    });
             if (ConfigManager.PromptPreset.CUSTOM_FILE.name().equalsIgnoreCase(ModConfig.SELECTED_PRESET.get())) {
+                // 已有文件不动它；没有就按示例模板生成一份
+                ConfigManager.ensureCustomPromptFile();
                 text("人设文件", ModConfig.CUSTOM_PROMPT_FILE.get(), "./config/verity_custom_prompt.txt",
                         ModConfig.CUSTOM_PROMPT_FILE::set);
+                action("生成示例人设文件", "在 config/ 下创建示例文件；已存在则不改动，直接编辑即可",
+                        () -> {
+                            boolean ok = ConfigManager.ensureCustomPromptFile();
+                            java.nio.file.Path path = ConfigManager.resolveCustomPromptPath();
+                            status(ok, ok ? "示例文件已就绪：" + path : "创建失败，请检查 config 目录权限", 240);
+                            refreshCurrentCategory();
+                        }, "生成");
             }
+            // 自定义人设输入框：优先级最高，填了就覆盖预设。
+            // 单行框装不下长人设（换行会被 EditBox 过滤掉），长文本建议走「外部自定义文件」。
+            text("自定义人设（覆盖预设）", ModConfig.CUSTOM_PERSONA.get(), "",
+                    ModConfig.CUSTOM_PERSONA::set);
+            info("填写建议", "这里填一句话描述就会覆盖上面的预设；"
+                    + "人设很长（要分段、带换行）时改用预设里的「外部自定义文件」，单行框存不下换行");
             // 让人设「到底生效了没有」一眼可见：以前只能靠翻日志里的一行注入记录
             info("当前生效人设", describeEffectivePersona());
             if (isRemoteServerSession()) {
@@ -1682,39 +1835,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         toggle("友好模式（友好对话且禁止恶魔变异）",
                 () -> ModConfig.FRIENDLY_MODE.get(), false, ModConfig.FRIENDLY_MODE::set);
         info("生效范围", "开启后使用友好、积极的对话语气，并阻止之后生成恶魔实体；不会移除已经存在的恶魔");
-        if (ModConfig.ENABLE_CUSTOM_PROMPT.get()) {
-            text("自定义人设（覆盖预设）", ModConfig.CUSTOM_PERSONA.get(), "", ModConfig.CUSTOM_PERSONA::set);
-        }
-        section("语音朗读高级");
-        toggle("实时语音播报（MiMo）", () -> ModConfig.TTS_STREAM.get(), true, ModConfig.TTS_STREAM::set);
-        toggle("同时启用原版朗读", () -> !ModConfig.DISABLE_ORIGINAL_TTS.get(), false,
-                enabled -> ModConfig.DISABLE_ORIGINAL_TTS.set(!enabled));
-        section("朗读路线与语言");
-        choice("朗读路线", ModConfig.TTS_ROUTE_KIND.get(), "auto",
-                new String[]{"自动", "原版朗读", "本地离线模型", "网络端点"},
-                new String[]{"auto", "native", "local", "endpoint"},
-                ModConfig.TTS_ROUTE_KIND::set);
-        info("路线", "自动 = 跟随上面的语音模式（老配置不变）；"
-                + "原版 = 完全交给原版朗读，扩展不接管（会顺带把原版 TTS 打开）；"
-                + "本地 = 只用离线模型，不可用时交还原版（不会偷偷改用要花钱的端点）；"
-                + "端点 = 联网合成，不可用时退回本地，再不行交还原版");
-        choice("台词阅读语言", ModConfig.VOICE_DISPLAY_LANGUAGE.get(), "follow",
-                new String[]{"照原文看", "简体中文", "English", "日本語", "한국어"},
-                new String[]{"follow", "zh", "en", "ja", "ko"},
-                ModConfig.VOICE_DISPLAY_LANGUAGE::set);
-        choice("配音语言", ModConfig.VOICE_SPEAK_LANGUAGE.get(), "follow",
-                new String[]{"照原文念", "简体中文", "English", "日本語", "한국어"},
-                new String[]{"follow", "zh", "en", "ja", "ko"},
-                ModConfig.VOICE_SPEAK_LANGUAGE::set);
-        info("配音语言", "看和念可以各选各的。选了与阅读语言不同的配音语言时，"
-                + "配音前先把台词转换过去；转不动就照原文念，不会因此没声音");
-        if (!"follow".equalsIgnoreCase(ModConfig.VOICE_SPEAK_LANGUAGE.get())) {
-            text("配音转换服务", ModConfig.VOICE_TRANSLATE_URL.get(), "", ModConfig.VOICE_TRANSLATE_URL::set);
-            text("配音转换密钥", ModConfig.VOICE_TRANSLATE_API_KEY.get(), "", ModConfig.VOICE_TRANSLATE_API_KEY::set);
-            text("配音转换模型", ModConfig.VOICE_TRANSLATE_MODEL.get(), "", ModConfig.VOICE_TRANSLATE_MODEL::set);
-            info("配音转换线路", "三项都不填就借用下面的自定义对话服务。"
-                    + "想给配音单独配一个便宜、响应快的模型时再填，免得每句台词都去占用主对话模型");
-        }
+        // 「自定义人设」输入框已搬到「对话与记忆 → 人设」：它和「人设预设」是一回事，
+        // 拆在高级与诊断页会让玩家只改预设、根本找不到这个框。
         section("自定义对话服务");
         choice("服务商", ModConfig.LLM_API_PROVIDER.get(), "CUSTOM_OPENAI",
                 names(ApiProviderEnum.values()), values(ApiProviderEnum.values()), ModConfig.LLM_API_PROVIDER::set);
@@ -1746,6 +1868,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         toggle("启用语音识别", ModConfig.ENABLE_VOICE_INPUT::get, true, ModConfig.ENABLE_VOICE_INPUT::set);
         toggle("使用内置识别服务", ModConfig.ENABLE_BUILTIN_STT_APIS::get, false,
                 ModConfig.ENABLE_BUILTIN_STT_APIS::set);
+        info("内置识别", "开启=用云端下发的识别线路，不用自己填地址密钥，消耗账号额度；"
+                + "关闭=用下面自己配的在线服务或本地离线模型");
         boolean localMode = offlineEnabled && "local".equalsIgnoreCase(ModConfig.RECOGNITION_MODE.get());
         if (offlineEnabled) {
             choice("识别模式", ModConfig.RECOGNITION_MODE.get(), "local",
@@ -1779,6 +1903,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         toggle("启用语音朗读", ModConfig.ENABLE_TTS::get, true, ModConfig.ENABLE_TTS::set);
         toggle("使用内置朗读服务", ModConfig.ENABLE_BUILTIN_TTS_APIS::get, false,
                 ModConfig.ENABLE_BUILTIN_TTS_APIS::set);
+        info("内置朗读", "开启=用云端下发的朗读线路和音色（含克隆音色），不用自己填地址密钥，消耗账号额度；"
+                + "关闭=用下面自己配的在线服务或本地离线模型");
         boolean localMode = offlineEnabled && "local".equalsIgnoreCase(ModConfig.TTS_MODE.get());
         if (offlineEnabled) {
             choice("语音模式", ModConfig.TTS_MODE.get(), "online",
@@ -1812,8 +1938,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                     action(label, clone ? "使用账号克隆音色，会消耗对应额度" : "使用 MiMo 内置音色", () -> {
                         ConfigManager.saveMimoVoice(voice.id, clone);
                         ModConfig.ENABLE_BUILTIN_TTS_APIS.set(true);
-                        statusMessage = "已选择音色：" + name;
-                        statusMessageTimer = 120;
+                        statusOk("已选择音色：" + name, 120);
                         refreshCurrentCategory();
                     }, selected ? "当前" : "选择");
                 }
@@ -1833,20 +1958,57 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 v -> ModConfig.TTS_SPEED.set(v / 100.0));
         integer("音量(%)", (int)(ModConfig.TTS_VOLUME.get() * 100), 100, 0, 200,
                 v -> ModConfig.TTS_VOLUME.set(v / 100.0));
+        section("双语朗读");
+        toggle("英文朗读与中文字幕", ModConfig.BILINGUAL_SPEECH_SUBTITLES::get, false,
+                ModConfig.BILINGUAL_SPEECH_SUBTITLES::set);
+        info("双语模式", "让 Verity 说英文、照英文配音；中文译文由系统生成，聊天栏以 [译] 显示，头顶不再重复。"
+                + "想换配音语言，去「语音朗读」页的「朗读路线与语言」里改「配音语言」");
+        toggle("双语二次翻译兜底", ModConfig.BILINGUAL_SECOND_PASS::get, false,
+                ModConfig.BILINGUAL_SECOND_PASS::set);
+        info("二次翻译", "开启：模型没在同一次回复里给出中文时，系统再调用一次模型补翻译（中文更稳，但每条回复会多等几秒）；关闭：回复最快，模型没给中文时只显示英文");
+        section("语音朗读高级");
+        toggle("实时语音播报（MiMo）", () -> ModConfig.TTS_STREAM.get(), true, ModConfig.TTS_STREAM::set);
+        toggle("同时启用原版朗读", () -> !ModConfig.DISABLE_ORIGINAL_TTS.get(), false,
+                enabled -> ModConfig.DISABLE_ORIGINAL_TTS.set(!enabled));
+        section("朗读路线与语言");
+        choice("朗读路线", ModConfig.TTS_ROUTE_KIND.get(), "auto",
+                new String[]{"自动", "原版朗读", "本地离线模型", "网络端点"},
+                new String[]{"auto", "native", "local", "endpoint"},
+                ModConfig.TTS_ROUTE_KIND::set);
+        info("路线", "自动 = 跟随上面的语音模式（老配置不变）；"
+                + "原版 = 完全交给原版朗读，扩展不接管（会顺带把原版 TTS 打开）；"
+                + "本地 = 只用离线模型，不可用时交还原版（不会偷偷改用要花钱的端点）；"
+                + "端点 = 联网合成，不可用时退回本地，再不行交还原版");
+        choice("台词阅读语言", ModConfig.VOICE_DISPLAY_LANGUAGE.get(), "follow",
+                new String[]{"照原文看", "简体中文", "English", "日本語", "한국어"},
+                new String[]{"follow", "zh", "en", "ja", "ko"},
+                ModConfig.VOICE_DISPLAY_LANGUAGE::set);
+        choice("配音语言", ModConfig.VOICE_SPEAK_LANGUAGE.get(), "follow",
+                new String[]{"照原文念", "简体中文", "English", "日本語", "한국어"},
+                new String[]{"follow", "zh", "en", "ja", "ko"},
+                ModConfig.VOICE_SPEAK_LANGUAGE::set);
+        info("配音语言", "看和念可以各选各的。选了与阅读语言不同的配音语言时，"
+                + "配音前先把台词转换过去；转不动就照原文念，不会因此没声音");
+        if (!"follow".equalsIgnoreCase(ModConfig.VOICE_SPEAK_LANGUAGE.get())) {
+            text("配音转换服务", ModConfig.VOICE_TRANSLATE_URL.get(), "", ModConfig.VOICE_TRANSLATE_URL::set);
+            text("配音转换密钥", ModConfig.VOICE_TRANSLATE_API_KEY.get(), "", ModConfig.VOICE_TRANSLATE_API_KEY::set);
+            text("配音转换模型", ModConfig.VOICE_TRANSLATE_MODEL.get(), "", ModConfig.VOICE_TRANSLATE_MODEL::set);
+            info("配音转换线路", "三项都不填就借用对话服务的主线路。"
+                    + "想给配音单独配一个便宜、响应快的模型时再填，免得每句台词都去占用主对话模型");
+        }
     }
 
     private void refreshMimoVoices() {
-        statusMessage = "正在同步云端音色…";
-        statusMessageTimer = 180;
+        statusOk("正在同步云端音色…", 180);
         addWidgets();
         ConfigManager.refreshMimoVoices(() -> {
             Minecraft mc = Minecraft.getInstance();
             if (mc != null) {
                 mc.execute(() -> {
-                    statusMessage = ConfigManager.getMimoVoices().length == 0
-                            ? "未获取到云端音色，请检查账号授权"
-                            : "云端音色已更新";
-                    statusMessageTimer = 180;
+                    boolean voicesArrived = ConfigManager.getMimoVoices().length > 0;
+                    status(voicesArrived,
+                            voicesArrived ? "云端音色已更新" : "未获取到云端音色，请检查账号授权",
+                            180);
                     refreshCurrentCategory();
                 });
             }
@@ -1865,8 +2027,6 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         } else {
             info("保存方式", "云端皮肤按账号保存，可在资源中心统一管理");
             action("打开资源中心", "查看、下载、应用和管理云端皮肤", () -> minecraft.setScreen(new ResourceCenterScreen(this)), "打开");
-            action("插件管理", "用一句话描述想要的功能，系统生成插件；可启用、停用、删除",
-                    () -> minecraft.setScreen(new com.hanchen.veritycustomapi.client.PluginManagerScreen(this)), "打开");
             action("上传与隐私管理", "在网页资源中心完成", com.hanchen.veritycustomapi.resource.ResourceUploadClient::openWebsite, "打开");
         }
 
@@ -1882,8 +2042,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             action(label, "点击应用此皮肤", () -> {
                 boolean ok = skinMgr.setSkin(name);
                 if (ok) ModConfig.VERITY_SKIN_NAME.set(name);
-                statusMessage = ok ? "皮肤已切换: " + name : "皮肤切换失败: " + name;
-                statusMessageTimer = 100;
+                status(ok, ok ? "皮肤已切换: " + name : "皮肤切换失败: " + name, 100);
                 refreshCurrentCategory();
             }, "应用");
         }
@@ -1891,8 +2050,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         action("恢复 Verity 默认皮肤", "清除自定义皮肤，使用原版外观", () -> {
             skinMgr.setSkin("Verity");
             ModConfig.VERITY_SKIN_NAME.set("Verity");
-            statusMessage = "已恢复 Verity 默认皮肤";
-            statusMessageTimer = 100;
+            statusOk("已恢复 Verity 默认皮肤", 100);
             refreshCurrentCategory();
         }, "恢复");
 
@@ -1965,6 +2123,68 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     /** 摄像头视觉。全局可用：快捷键、普通对话、主动事件（需要视觉模型）。 */
+    /**
+     * 「使用的摄像头」选择器。
+     *
+     * <p>为什么必须有这个：WinRT 不给 {@code VideoDeviceId} 时用「系统默认」设备。
+     * 机器上装了手机投屏 / OBS 虚拟摄像头 / 组合摄像头之后，默认很容易落到一个
+     * **永远输出纯黑画面**的设备上——日志显示「采集成功 17919 字节」，
+     * AI 却只能回答「画面里全是黑的」。让玩家自己指定真实摄像头是唯一可靠的解法。
+     *
+     * <p>设备列表由 {@code CameraDeviceService} 后台枚举（起一个 PowerShell 进程，约 1 秒），
+     * 这里只读缓存，不会卡界面。
+     */
+    private void cameraDevicePicker() {
+        section("使用的摄像头");
+        java.util.List<String> devices =
+                com.hanchen.veritycustomapi.client.CameraDeviceService.devices();
+        if (com.hanchen.veritycustomapi.client.CameraDeviceService.isLoading()) {
+            info("检测中", "正在枚举本机摄像头…");
+        } else if (devices.isEmpty()) {
+            // 首次进入这一页时自动枚举一次；失败过就不再重复起进程
+            com.hanchen.veritycustomapi.client.CameraDeviceService.requestOnce(this::refreshCurrentCategory);
+            info("尚未检测", "点下面的「检测摄像头」枚举设备");
+        } else {
+            java.util.List<String> labels = new java.util.ArrayList<>();
+            java.util.List<String> values = new java.util.ArrayList<>();
+            labels.add("自动（跳过虚拟摄像头）");
+            values.add("");
+            for (String device : devices) {
+                labels.add(device);
+                values.add(device);
+            }
+            choice("摄像头设备", ModConfig.CAMERA_DEVICE_NAME.get(), "",
+                    labels.toArray(new String[0]), values.toArray(new String[0]),
+                    ModConfig.CAMERA_DEVICE_NAME::set);
+            info("说明", "有多台设备时，选能出画面的那台");
+        }
+        action("检测摄像头", "重新枚举本机摄像头设备（约 1 秒）", () -> {
+            com.hanchen.veritycustomapi.client.CameraDeviceService
+                    .refreshAsync(this::refreshCurrentCategory);
+            statusOk("正在检测摄像头…", 80);
+            refreshCurrentCategory();
+        }, "检测");
+    }
+
+    /**
+     * 老配置迁移：「原版人设」已从下拉里移除。
+     *
+     * <p>它的语义是「什么都不注入，用原版提示词」，和开关正好互相抵消。
+     * 迁移成「关掉自定义人设开关」——**行为完全不变**（本来就不注入），
+     * 只是界面上不再出现那个自相矛盾的组合。
+     */
+    private static void migrateOriginalPreset() {
+        if (!ConfigManager.PromptPreset.ORIGINAL_VERITY.name()
+                .equalsIgnoreCase(ModConfig.SELECTED_PRESET.get())) {
+            return;
+        }
+        ConfigManager.PromptPreset first = ConfigDisplay.selectablePresets().get(0);
+        ModConfig.SELECTED_PRESET.set(first.name());
+        ModConfig.ENABLE_CUSTOM_PROMPT.set(false);
+        OllamaProxyMod.LOGGER.info(
+                "人设预设「原版人设」已移除，迁移为：关闭自定义人设（行为不变）");
+    }
+
     private void cameraVisionSection() {
         section("总开关");
         toggle("启用视觉能力", ModConfig.CAMERA_ENABLED::get, false, ModConfig.CAMERA_ENABLED::set);
@@ -1985,27 +2205,45 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         boolean useScreen = ConfigManager.isCameraSourceScreen();
 
         if (useCamera) {
-            section("摄像头采集后端");
-            String backend = ModConfig.CAMERA_BACKEND.get();
-            action("切换采集方式（当前：" + backendLabel(backend) + "）",
-                    "自动=依次尝试；Windows 内置=免安装；ffmpeg=需自行下载；HTTP=网络快照地址",
-                    () -> {
-                        String next = switch (backend) {
-                            case "auto" -> "powershell";
-                            case "powershell" -> "ffmpeg";
-                            case "ffmpeg" -> "http";
-                            default -> "auto";
-                        };
-                        ModConfig.CAMERA_BACKEND.set(next);
-                        statusMessage = "摄像头后端已切换为 " + backendLabel(next);
-                        statusMessageTimer = 60;
-                        refreshCurrentCategory();
-                    }, "切换");
-            if ("ffmpeg".equals(backend) || "auto".equals(backend)) {
-                text("ffmpeg 路径（留空用 PATH）", ModConfig.CAMERA_FFMPEG_PATH.get(), "", ModConfig.CAMERA_FFMPEG_PATH::set);
-                text("DirectShow 设备名（留空自动枚举）", ModConfig.CAMERA_DEVICE_NAME.get(), "", ModConfig.CAMERA_DEVICE_NAME::set);
-            }
-            if ("http".equals(backend) || "auto".equals(backend)) {
+            // 手机端（FCL / Pojav / Zalith）没有 PowerShell 与 WinRT，也没有 DirectShow，
+            // 本地只有「HTTP 快照地址」这一条路能真的拿到画面。把 Windows 专用的两个后端
+            // 和「检测摄像头」按钮藏掉：留着只会让人点进去看到一堆永远失败的东西，
+            // 反而以为功能坏了。这里不改配置值，只改显示——切回桌面端仍然保留原设置。
+            boolean desktop = !RuntimePlatform.isAndroidRuntime();
+            if (desktop) {
+                section("摄像头采集后端");
+                String backend = ModConfig.CAMERA_BACKEND.get();
+                action("切换采集方式（当前：" + backendLabel(backend) + "）",
+                        "自动=依次尝试；Windows 内置=免安装；ffmpeg=需自行下载；HTTP=网络快照地址",
+                        () -> {
+                            String next = switch (backend) {
+                                case "auto" -> "powershell";
+                                case "powershell" -> "ffmpeg";
+                                case "ffmpeg" -> "http";
+                                default -> "auto";
+                            };
+                            ModConfig.CAMERA_BACKEND.set(next);
+                            statusOk("摄像头后端已切换为 " + backendLabel(next), 60);
+                            refreshCurrentCategory();
+                        }, "切换");
+                if ("ffmpeg".equals(backend) || "auto".equals(backend)) {
+                    text("ffmpeg 路径（留空用 PATH）", ModConfig.CAMERA_FFMPEG_PATH.get(), "", ModConfig.CAMERA_FFMPEG_PATH::set);
+                }
+                if ("http".equals(backend) || "auto".equals(backend)) {
+                    text("HTTP 快照地址", ModConfig.CAMERA_HTTP_URL.get(), "", ModConfig.CAMERA_HTTP_URL::set);
+                }
+                // WinRT 后端（powershell / auto 优先走它）用系统设备名选摄像头；
+                // ffmpeg 走 DirectShow，设备名体系不同，单独留一个文本框。
+                if (!"ffmpeg".equals(backend) && !"http".equals(backend)) {
+                    cameraDevicePicker();
+                } else if ("ffmpeg".equals(backend)) {
+                    text("DirectShow 设备名（留空自动枚举）", ModConfig.CAMERA_DEVICE_NAME.get(), "",
+                            ModConfig.CAMERA_DEVICE_NAME::set);
+                }
+            } else {
+                // 手机端只用 HTTP 快照，不显示后端与设备枚举
+                section("摄像头快照地址");
+                info("说明", "手机端通过局域网快照地址取画面，填手机端拍照 App 提供的 HTTP 图片地址");
                 text("HTTP 快照地址", ModConfig.CAMERA_HTTP_URL.get(), "", ModConfig.CAMERA_HTTP_URL::set);
             }
         }
@@ -2098,8 +2336,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private void openLogTarget(boolean directory) {
         ExternalFileOpener.OpenResult result = directory
                 ? ExternalFileOpener.openLogsDirectory() : ExternalFileOpener.openLatestLog();
-        statusMessage = result.message();
-        statusMessageTimer = result.success() ? 120 : 240;
+        status(result.success(), result.message(), result.success() ? 120 : 240);
         if (!result.success() && minecraft != null) {
             minecraft.keyboardHandler.setClipboard(result.target().toString());
             statusMessage += "，路径已复制";
@@ -2479,15 +2716,47 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private class InfoRow extends Row {
         protected final String label;
         protected final String value;
+        /** 折行结果缓存：key = 宽度 + '\0' + 文本。每帧都要问行高，不缓存就是 50 行 × 60 字全量测宽。 */
+        private String wrapKey;
+        private List<String> wrapLines = List.of("");
 
         InfoRow(String label, String value) {
             this.label = label;
             this.value = value == null ? "" : value;
         }
 
+        /** value 实际可用的像素宽；返回 0 表示这一行放不下 value（此时不画）。 */
+        private int valueWidth(int rowWidth) {
+            if (isUltraCompactLayout()) return Math.max(0, rowWidth - 16);
+            int width = rowWidth - getLabelWidth(rowWidth) - 28;
+            return width > 36 ? width : 0;
+        }
+
+        protected List<String> valueLines(int maxWidth) {
+            if (maxWidth <= 0) return List.of("");
+            String key = maxWidth + "\u0000" + value;
+            if (!key.equals(wrapKey)) {
+                wrapLines = ConfigDisplay.wrapText(font, value, maxWidth);
+                wrapKey = key;
+            }
+            return wrapLines;
+        }
+
+        /** 折行后的行数；value 不显示时按 1 行算，免得整行被压成一条。 */
+        private int valueLineCount(int rowWidth) {
+            int width = valueWidth(rowWidth);
+            return width <= 0 ? 1 : valueLines(width).size();
+        }
+
         @Override
         int getHeight() {
-            return isUltraCompactLayout() ? 42 : ROW_HEIGHT;
+            int lines = valueLineCount(getContentWidth());
+            if (isUltraCompactLayout()) {
+                // 标签 5..14，value 从 22 起，每行 LINE_HEIGHT，底部留 5
+                return Math.max(42, 27 + lines * LINE_HEIGHT);
+            }
+            // 标签与 value 同起点 7，底部留 5
+            return Math.max(ROW_HEIGHT, 12 + lines * LINE_HEIGHT);
         }
 
         @Override
@@ -2502,15 +2771,20 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         protected void renderInfo(GuiGraphics graphics, int left, int top, int rowWidth, int labelColor, int valueColor) {
             if (isUltraCompactLayout()) {
                 graphics.drawString(font, fitText(font, label, rowWidth - 16), left + 8, top + 5, labelColor);
-                graphics.drawString(font, fitText(font, value, rowWidth - 16), left + 8, top + 22, valueColor);
+                List<String> lines = valueLines(valueWidth(rowWidth));
+                for (int i = 0; i < lines.size(); i++) {
+                    graphics.drawString(font, lines.get(i), left + 8, top + 22 + i * LINE_HEIGHT, valueColor);
+                }
                 return;
             }
             int labelWidth = getLabelWidth(rowWidth);
             graphics.drawString(font, fitText(font, label, labelWidth), left + 8, top + 7, labelColor);
+            int width = valueWidth(rowWidth);
+            if (width <= 0) return;
             int valueLeft = left + labelWidth + 18;
-            int valueWidth = rowWidth - labelWidth - 28;
-            if (valueWidth > 36) {
-                graphics.drawString(font, fitText(font, value, valueWidth), valueLeft, top + 7, valueColor);
+            List<String> lines = valueLines(width);
+            for (int i = 0; i < lines.size(); i++) {
+                graphics.drawString(font, lines.get(i), valueLeft, top + 7 + i * LINE_HEIGHT, valueColor);
             }
         }
     }
@@ -2537,6 +2811,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         private final String description;
         private final Runnable action;
         private final String buttonText;
+        /** 折行结果缓存，理由同 {@link InfoRow}。 */
+        private String wrapKey;
+        private List<String> wrapLines = List.of("");
 
         ActionRow(String label, String description, Runnable action, String buttonText) {
             this.label = label;
@@ -2545,16 +2822,45 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             this.buttonText = buttonText;
         }
 
+        /** 按钮宽：按文字宽度算，下限 48、上限行宽的 1/3。 */
+        private int buttonWidth(int rowWidth) {
+            return Math.max(48, Math.min(font.width(buttonText) + 16, rowWidth / 3));
+        }
+
+        /** 说明文字可用宽；0 表示这一行放不下说明（不画）。 */
+        private int descriptionWidth(int rowWidth) {
+            int width = isUltraCompactLayout()
+                    ? rowWidth - buttonWidth(rowWidth) - 20
+                    : rowWidth - getLabelWidth(rowWidth) - buttonWidth(rowWidth) - 36;
+            return width > 36 ? width : 0;
+        }
+
+        private List<String> descriptionLines(int maxWidth) {
+            if (maxWidth <= 0) return List.of("");
+            String key = maxWidth + "\u0000" + description;
+            if (!key.equals(wrapKey)) {
+                wrapLines = ConfigDisplay.wrapText(font, description, maxWidth);
+                wrapKey = key;
+            }
+            return wrapLines;
+        }
+
         @Override
         int getHeight() {
-            return isUltraCompactLayout() ? 44 : ROW_HEIGHT;
+            int rowWidth = getContentWidth();
+            int width = descriptionWidth(rowWidth);
+            int lines = width <= 0 ? 1 : descriptionLines(width).size();
+            if (isUltraCompactLayout()) {
+                // 标签 5..14，按钮/说明从 22 起（说明 27），底部留 5
+                return Math.max(44, 27 + lines * LINE_HEIGHT);
+            }
+            return Math.max(ROW_HEIGHT, 12 + lines * LINE_HEIGHT);
         }
 
         @Override
         void addWidgets(int left, int top, int rowWidth) {
             if (!isRowVisible(top, getHeight())) return;
-            int buttonWidth = font.width(buttonText) + 16;
-            buttonWidth = Math.max(48, Math.min(buttonWidth, rowWidth / 3));
+            int buttonWidth = buttonWidth(rowWidth);
             addRenderableWidget(roundedButton(left + rowWidth - buttonWidth - 6,
                     top + (isUltraCompactLayout() ? 22 : 2), buttonWidth, 18,
                     Component.literal(buttonText),
@@ -2565,19 +2871,24 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         @Override
         void render(GuiGraphics graphics, int left, int top, int rowWidth) {
             if (!isRowVisible(top, getHeight())) return;
-            int buttonWidth = font.width(buttonText) + 16;
-            buttonWidth = Math.max(48, Math.min(buttonWidth, rowWidth / 3));
+            int width = descriptionWidth(rowWidth);
             if (isUltraCompactLayout()) {
                 graphics.drawString(font, fitText(font, label, rowWidth - 16), left + 8, top + 5, TEXT);
-                graphics.drawString(font, fitText(font, description, rowWidth - buttonWidth - 20), left + 8, top + 27, MUTED);
+                if (width > 0) {
+                    List<String> lines = descriptionLines(width);
+                    for (int i = 0; i < lines.size(); i++) {
+                        graphics.drawString(font, lines.get(i), left + 8, top + 27 + i * LINE_HEIGHT, MUTED);
+                    }
+                }
                 return;
             }
             int labelWidth = getLabelWidth(rowWidth);
             graphics.drawString(font, fitText(font, label, labelWidth), left + 8, top + 7, TEXT);
+            if (width <= 0) return;
             int hintLeft = left + labelWidth + 18;
-            int hintWidth = rowWidth - labelWidth - buttonWidth - 36;
-            if (hintWidth > 36) {
-                graphics.drawString(font, fitText(font, description, hintWidth), hintLeft, top + 7, MUTED);
+            List<String> lines = descriptionLines(width);
+            for (int i = 0; i < lines.size(); i++) {
+                graphics.drawString(font, lines.get(i), hintLeft, top + 7 + i * LINE_HEIGHT, MUTED);
             }
         }
     }
@@ -2586,6 +2897,14 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         private final String label;
         private final Consumer<String> saver;
         private final String defaultValue;
+        /**
+         * 构建界面那一刻的值。
+         *
+         * <p>🔴 {@link #save()} 只在这个值被改过时才写回配置。原来无条件写回，
+         * 等于把「打开界面时」的旧值盖回配置——期间被授权、云端同步或其它模块
+         * 改过的值全被冲掉（{@code cloud.enable} 自己变回 false 就是这么来的）。
+         */
+        protected final String initialValue;
         protected String value;
         protected EditBox box;
 
@@ -2594,6 +2913,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             this.saver = saver;
             this.defaultValue = defaultValue == null ? "" : defaultValue;
             this.value = value == null ? "" : value;
+            this.initialValue = this.value;
         }
 
         @Override
@@ -2633,7 +2953,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             };
             box.setBordered(false);
             box.setMaxLength(4096);
-            box.setValue(value);
+            // 先取草稿再挂 responder：重建后能恢复玩家还没保存的输入（见 textDrafts）
+            box.setValue(textDrafts.getOrDefault(label, value));
+            box.setResponder(text -> textDrafts.put(label, text));
             addRenderableWidget(box);
         }
 
@@ -2651,6 +2973,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         @Override
         public void save() {
             cache();
+            if (value.equals(initialValue)) return;
             saver.accept(value);
         }
 
@@ -2658,6 +2981,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         public void reset() {
             value = defaultValue;
             if (box != null) box.setValue(defaultValue);
+            // 重置必须立刻写回：紧接着 rebuildRows() 会换掉行对象，
+            // 新对象的 initialValue 已经等于默认值，「有改动才写」就再也写不进去了。
+            saver.accept(defaultValue);
         }
     }
 
@@ -2676,6 +3002,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         @Override
         public void save() {
             cache();
+            if (value.trim().equals(initialValue.trim())) return;
             try {
                 int parsed = Integer.parseInt(value.trim());
                 saver.accept(clamp(parsed, min, max));
@@ -2686,6 +3013,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         public void reset() {
             value = String.valueOf(defaultNumber);
             if (box != null) box.setValue(value);
+            saver.accept(clamp(defaultNumber, min, max));
         }
     }
 
@@ -2704,6 +3032,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         @Override
         public void save() {
             cache();
+            if (value.trim().equals(initialValue.trim())) return;
             try {
                 double parsed = Double.parseDouble(value.trim());
                 if (Double.isFinite(parsed)) saver.accept(Math.max(min, Math.min(max, parsed)));
@@ -2714,6 +3043,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         public void reset() {
             value = String.valueOf(defaultNumber);
             if (box != null) box.setValue(value);
+            saver.accept(Math.max(min, Math.min(max, defaultNumber)));
         }
     }
 
@@ -2721,6 +3051,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         private final String label;
         private final Consumer<Boolean> saver;
         private final boolean defaultValue;
+        /** 构建界面那一刻的开关状态，理由见 {@link TextRow#initialValue}。 */
+        private final boolean initialSelected;
         private boolean selected;
         private Checkbox checkbox;
 
@@ -2729,6 +3061,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             this.saver = saver;
             this.defaultValue = defaultValue;
             this.selected = getter.getAsBoolean();
+            this.initialSelected = this.selected;
         }
 
         @Override
@@ -2776,12 +3109,14 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         @Override
         public void save() {
             cache();
+            if (selected == initialSelected) return;
             saver.accept(selected);
         }
 
         @Override
         public void reset() {
             selected = defaultValue;
+            saver.accept(defaultValue);
         }
     }
 
@@ -2791,6 +3126,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         private final String[] storedValues;
         private final Consumer<String> saver;
         private final int defaultIndex;
+        /** 构建界面那一刻的选项下标，理由见 {@link TextRow#initialValue}。 */
+        private final int initialIndex;
         private int selectedIndex;
 
         ChoiceRow(String label, String value, String defaultValue, String[] labels, String[] storedValues, Consumer<String> saver) {
@@ -2803,6 +3140,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             this.saver = saver;
             this.defaultIndex = findIndex(defaultValue, storedValues);
             this.selectedIndex = findIndex(value, storedValues, defaultIndex);
+            this.initialIndex = this.selectedIndex;
         }
 
         @Override
@@ -2841,12 +3179,14 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
         @Override
         public void save() {
+            if (selectedIndex == initialIndex) return;
             saver.accept(storedValues[selectedIndex]);
         }
 
         @Override
         public void reset() {
             selectedIndex = defaultIndex;
+            saver.accept(storedValues[defaultIndex]);
         }
 
         private int findIndex(String value, String[] values) {
@@ -2868,12 +3208,15 @@ public class NativeOllamaProxyConfigScreen extends Screen {
      */
     private class HueSliderRow extends Row implements ValueRow {
         private final String label;
+        /** 构建界面那一刻的色相，理由见 {@link TextRow#initialValue}。 */
+        private final int initialValue;
         private int value;
         private HueSlider slider;
 
         HueSliderRow(String label, int value) {
             this.label = label;
             this.value = clamp(value, 0, 360);
+            this.initialValue = this.value;
         }
 
         @Override
@@ -2904,6 +3247,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         @Override
         public void save() {
             cache();
+            if (value == initialValue) return;
             OriginalVerityPersonalization.setHue(value);
         }
 
@@ -2911,6 +3255,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         public void reset() {
             value = 0;
             if (slider != null) slider.setHue(0);
+            OriginalVerityPersonalization.setHue(0);
         }
     }
 

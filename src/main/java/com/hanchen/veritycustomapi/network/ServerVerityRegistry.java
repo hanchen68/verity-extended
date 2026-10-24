@@ -81,6 +81,8 @@ public final class ServerVerityRegistry {
         com.hanchen.veritycustomapi.compat.VerityWorldStateGuard.reset();
         // 恐怖事件的每玩家冷却/类型历史同样是 static，顺带清掉（防跨存档残留，也防表无限增长）。
         ServerHorrorEventService.clear();
+        // 「清空上下文」是一次性处置，不能带到下个存档（否则玩家会以为 Verity 突然不记事）。
+        com.hanchen.veritycustomapi.proxy.ContextReset.reset();
     }
 
     public static void register(VerityEntity verity) {
@@ -229,7 +231,7 @@ public final class ServerVerityRegistry {
         int demons = 0;
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null) return new int[]{0, 0, 0};
-        ResourceLocation demonId = ResourceLocation.fromNamespaceAndPath("verity", "verity_demon");
+        ResourceLocation demonId = new ResourceLocation("verity", "verity_demon");
         for (ServerLevel level : server.getAllLevels()) {
             for (Entity entity : level.getAllEntities()) {
                 if (entity instanceof VerityEntity verity) {

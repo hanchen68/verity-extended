@@ -100,7 +100,8 @@ public final class ItemRegistryService {
             return "没有找到物品「" + idOrName
                     + "」，先用 list_available_itemids 搜索关键词拿到准确的物品ID再试。";
         }
-        Optional<Item> item = BuiltInRegistries.ITEM.getOptional(ResourceLocation.parse(entry.id()));
+        // 1.20.1 用 new ResourceLocation(...)；ResourceLocation.parse 是 1.21 才有的写法
+        Optional<Item> item = BuiltInRegistries.ITEM.getOptional(new ResourceLocation(entry.id()));
         if (item.isEmpty()) {
             return "物品「" + entry.id() + "」对应的模组没有安装或没启用，暂时拿不到它。";
         }

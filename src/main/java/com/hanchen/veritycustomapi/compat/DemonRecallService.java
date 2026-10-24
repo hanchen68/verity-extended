@@ -21,7 +21,7 @@ import varmite.verity.event.WorldSpawnData;
 
 public final class DemonRecallService {
     private static final float RECALL_KARMA = 15.0F;
-    private static final ResourceLocation DEMON_ID = ResourceLocation.fromNamespaceAndPath("verity", "verity_demon");
+    private static final ResourceLocation DEMON_ID = new ResourceLocation("verity", "verity_demon");
     private static int tickCounter;
 
     private DemonRecallService() {
@@ -88,7 +88,7 @@ public final class DemonRecallService {
     private static VerityEntity findVerity(MinecraftServer server) {
         Object known = OriginalVerityStateAccess.getVerityEntity();
         if (known instanceof VerityEntity verity && verity.isAlive()) return verity;
-        ResourceLocation verityId = ResourceLocation.fromNamespaceAndPath("verity", "verity");
+        ResourceLocation verityId = new ResourceLocation("verity", "verity");
         for (ServerLevel level : server.getAllLevels()) {
             for (Entity entity : level.getAllEntities()) {
                 if (verityId.equals(ForgeRegistries.ENTITY_TYPES.getKey(entity.getType()))

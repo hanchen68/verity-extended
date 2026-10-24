@@ -35,7 +35,7 @@ public final class VerityGrowthState {
     private static final Map<UUID, Integer> PENDING_BLOCK_PLACEMENTS = new ConcurrentHashMap<>();
     private static final Map<UUID, Integer> PENDING_ITEM_PLACEMENTS = new ConcurrentHashMap<>();
     private static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
-            ResourceLocation.fromNamespaceAndPath(OllamaProxyMod.MOD_ID, "growth"),
+            new ResourceLocation(OllamaProxyMod.MOD_ID, "growth"),
             () -> PROTOCOL,
             PROTOCOL::equals,
             PROTOCOL::equals

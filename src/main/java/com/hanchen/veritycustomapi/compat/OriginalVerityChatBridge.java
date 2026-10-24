@@ -39,6 +39,39 @@ public final class OriginalVerityChatBridge {
         }
     }
 
+    /**
+     * 用「游离实体」发起对话：Verity 变成物品（拿在手上 / 收在背包）时世界里没有实体，
+     * 但对话链路对实体的要求极低。
+     *
+     * <p>核对过 6.0.0 字节码，{@code AiManager.queryAI} 只调实体的
+     * {@code level()} / {@code isRemoved()} / {@code getId()}，
+     * {@code AiAPI.ask} 再加上 {@code blockPosition()} / {@code setVariant()} /
+     * {@code VALID_VARIANTS}。**都不要求实体真的在世界里**，
+     * 所以造一个 {@code create(level)} 出来、只摆到玩家坐标上的实例就够用。
+     *
+     * <p>这样「手上拿着 Verity 也能说话」不再需要把物品丢出去变成实体——
+     * 说话不该改变背包内容。
+     */
+    public static boolean queryAiDetached(ServerPlayer player, String message) {
+        if (player == null || message == null || message.isBlank()) return false;
+        try {
+            if (!(player.level() instanceof net.minecraft.server.level.ServerLevel level)) {
+                return false;
+            }
+            varmite.verity.entity.verity.VerityEntity probe =
+                    varmite.verity.entity.ModEntities.VERITY_ENTITY.get().create(level);
+            if (probe == null) return false;
+            // 只摆位置，不 addFreshEntity：加入世界会真的多出一只 Verity
+            probe.moveTo(player.getX(), player.getY(), player.getZ(), player.getYRot(), player.getXRot());
+            if (queryAi(probe, player, message)) return true;
+            // 游离实体这条路失败时，退回原版的全局单例（可能正好还指着一只活实体）
+            return queryAi(player, message);
+        } catch (Throwable t) {
+            OllamaProxyMod.LOGGER.warn("游离实体对话失败: {}", rootMessage(t));
+            return false;
+        }
+    }
+
     public static boolean queryAi(Object verityEntity, ServerPlayer player, String message) {
         if (verityEntity == null || player == null || message == null || message.isBlank()) {
             return false;

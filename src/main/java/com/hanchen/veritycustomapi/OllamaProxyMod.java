@@ -23,7 +23,7 @@ import org.apache.logging.log4j.Logger;
 @SuppressWarnings({"unused", "SpellCheckingInspection"})
 public class OllamaProxyMod {
     public static final String MOD_ID = "verity_extended";
-    private static final String FALLBACK_VERSION = "4.5.3";
+    private static final String FALLBACK_VERSION = "5.0";
     public static final Logger LOGGER = LogManager.getLogger();
 
     /** 实际加载的模组版本；独立测试未启动 Forge 时回退到当前发布版本。 */
@@ -35,6 +35,35 @@ public class OllamaProxyMod {
                     .orElse(FALLBACK_VERSION);
         } catch (Throwable ignored) {
             return FALLBACK_VERSION;
+        }
+    }
+
+    /**
+     * 注册 JVM 关闭钩子：退出前最后验一次两份 TOML，不完整就用快照恢复。
+     *
+     * <p>🔴 为什么不能只挂在 {@code ServerStoppingEvent} 上：那个事件只在
+     * **离开世界**时触发。实测过一次「从主菜单直接退出游戏」——
+     * 日志里连 `代理服务器已关闭` 都没有，说明整个 {@code onServerStopping}
+     * 根本没执行，挂在里面的校验自然也没跑。
+     *
+     * <p>而写坏配置的动作恰好发生在退出瞬间（实测 `Stopping!` 之后 15~31 毫秒）。
+     * 关闭钩子是 JVM 层面唯一能保证「不管从哪条路退出都会执行」的时机，
+     * 所以这里必须用钩子，不能依赖 Forge 的事件。
+     *
+     * <p>钩子里只做文件读写（几 KB），不碰 Minecraft 的任何状态——
+     * 退出阶段游戏对象可能已经处于半销毁状态，碰了会抛。
+     */
+    private static void registerConfigShutdownVerify() {
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    com.hanchen.veritycustomapi.config.ForgeConfigRepair.verifyOnShutdown();
+                } catch (Throwable ignored) {
+                    // 退出路径上任何异常都不能影响进程结束
+                }
+            }, "verity-config-verify"));
+        } catch (Throwable error) {
+            LOGGER.warn("注册配置关闭校验钩子失败（退出时不做配置自检）: {}", error.toString());
         }
     }
 
@@ -51,6 +80,7 @@ public class OllamaProxyMod {
         com.hanchen.veritycustomapi.config.ForgeConfigRepair.repairIfNeeded();
         // 注册配置
         ConfigManager.registerAllConfigs();
+        registerConfigShutdownVerify();
         com.hanchen.veritycustomapi.cloud.BillingService.initialize();
         VerityGrowthState.register();
         VerityFeedingEvents.register();
@@ -64,18 +94,13 @@ public class OllamaProxyMod {
 
         // 注册事件总线，监听服务器启停
         MinecraftForge.EVENT_BUS.register(this);
-        // 空手右键骑乘：原版会把空手右键在 EntityInteract 阶段取消掉，
-        // mobInteract 那条路走不到，必须挂在事件本身上（详见 VerityRideInteraction）
-        MinecraftForge.EVENT_BUS.register(com.hanchen.veritycustomapi.ride.VerityRideInteraction.class);
-        // 插件系统：规则引擎挂在事件总线上，命令在 PluginCommand 里注册
-        MinecraftForge.EVENT_BUS.register(com.hanchen.veritycustomapi.plugin.PluginEngine.class);
+        // 骑乘已改成独立按键（默认 R），不再拦截右键：
+        // 「潜行 + 空手右键」和 PatPat 的抚摸手势完全重合，拦截右键等于让抚摸永远失效。
 
         // MMD 按需生成恶魔 + 永久禁用玩家目标的恶魔友好模式
         com.hanchen.veritycustomapi.network.MmdDemonNetwork.register();
         // 站头/骑乘的网络通道
         com.hanchen.veritycustomapi.network.HeadPerchNetwork.register();
-        // 插件管理界面的网络通道
-        com.hanchen.veritycustomapi.network.PluginNetwork.register();
         // Verity 手持物品（星之遥控器）的同步通道
         com.hanchen.veritycustomapi.network.VerityHoldNetwork.register();
         // 物品索引必须等注册事件全部结束再构建：构造阶段模组物品还没进注册表
@@ -117,10 +142,6 @@ public class OllamaProxyMod {
         GameActionHandler.getInstance().registerEvents();
         // 恢复上次未完成的 AI 建造任务（要求开启 AI_BUILDING_PERSIST）
         AiBuildingManager.getInstance().loadPersistedJobs(event.getServer());
-        int pluginCount = com.hanchen.veritycustomapi.plugin.PluginStore.loadAll();
-        if (pluginCount > 0) {
-            LOGGER.info("插件系统：已加载 {} 个插件", pluginCount);
-        }
         LOGGER.info("代理服务器已启动，端口：{}", port);
         
         // 打印当前人设信息，方便排查配置问题
@@ -143,7 +164,6 @@ public class OllamaProxyMod {
         VerityFeedingEvents.clear();
         DemonRecallService.reset();
         VerityGrowthState.clearServer();
-        com.hanchen.veritycustomapi.plugin.PluginEngine.clear();
         com.hanchen.veritycustomapi.ride.RideGrace.clear();
         com.hanchen.veritycustomapi.ride.HeadPerchState.clear();
         // 下面这几处都是「static 表 + 玩家/实体 id 做 key」，不清会跨存档残留：
@@ -156,6 +176,12 @@ public class OllamaProxyMod {
         com.hanchen.veritycustomapi.memory.MemoryMetaStore.clear();
         // 服务器停止时，关闭代理服务释放端口
         OllamaProxyServer.stop();
+        // 🔴 最后一道闸：关机时可能有别的代码路径（Forge 自己的 ConfigTracker、
+        // 配置界面关屏、其它模组）把 TOML 写坏。2026-10-24 实测到关机瞬间
+        // common.toml 从 122 个键变成 20 个，而那次写盘**没有经过我们的保存入口**，
+        // 所以保存守卫根本没被调用（日志里一次都没有）。
+        // 这里在关机末尾主动验一遍：不完整就用快照恢复，保证下次启动读到的是好文件。
+        com.hanchen.veritycustomapi.config.ForgeConfigRepair.verifyOnShutdown();
         LOGGER.info("代理服务器已关闭");
     }
 }

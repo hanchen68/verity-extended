@@ -43,3 +43,12 @@ src/main/java/com/hanchen/veritycustomapi/PatPat-1.3.1+1.20.1+forge/
 # ---- 本地运行配置 ----
 /config/
 http-client.private.env.json
+
+# ---- 原版参考资源（不参与打包，见 build.gradle 的 processResources exclude）----
+# assets/verity 有 266MB，是原版 Verity 的模型与贴图；其余是原版 MC 资源覆盖。
+# 这些只用于本地 dev 运行，进仓库既超体积又有版权问题。
+/src/main/resources/assets/verity/
+/src/main/resources/assets/minecraft/
+/src/main/resources/assets/journeymap/
+/src/main/resources/data/verity/
+/src/main/resources/data/minecraft/

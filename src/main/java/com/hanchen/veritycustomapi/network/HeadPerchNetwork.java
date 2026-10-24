@@ -22,7 +22,7 @@ import java.util.function.Supplier;
 public final class HeadPerchNetwork {
     private static final String PROTOCOL = "2";
     private static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
-            ResourceLocation.fromNamespaceAndPath(OllamaProxyMod.MOD_ID, "head_perch"),
+            new ResourceLocation(OllamaProxyMod.MOD_ID, "head_perch"),
             () -> PROTOCOL, PROTOCOL::equals, PROTOCOL::equals);
     private static boolean registered;
 

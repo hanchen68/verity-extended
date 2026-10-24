@@ -38,6 +38,7 @@ import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.client.event.InputEvent;
 import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
 import net.minecraftforge.client.event.ScreenEvent;
+import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.ModLoadingContext;
@@ -109,6 +110,22 @@ public class ClientEventHandler {
             bus = Mod.EventBusSubscriber.Bus.FORGE
     )
     public static class ForgeBusEvents {
+        /**
+         * 配置界面的说明浮层画在所有内容之上。
+         *
+         * <p>🔴 这是**唯一**能保证「最后画」的位置：Forge 的
+         * {@code ForgeHooksClient.drawScreenInternal} 顺序是
+         * {@code Render.Pre → renderWithTooltip → Render.Post}，
+         * {@code Post} 在界面自身 {@code render()} 和原生 tooltip 都结束之后才发。
+         * 放在界面 {@code render()} 末尾画，实测仍会被行文字盖住。
+         */
+        @SubscribeEvent
+        public static void onScreenRenderPost(ScreenEvent.Render.Post event) {
+            if (event.getScreen() instanceof com.hanchen.veritycustomapi.config.NativeOllamaProxyConfigScreen screen) {
+                screen.renderHintOverlay(event.getGuiGraphics(), event.getMouseX(), event.getMouseY());
+            }
+        }
+
         @SubscribeEvent
         public static void onClientLogin(ClientPlayerNetworkEvent.LoggingIn event) {
             long sessionGeneration = ++clientSessionGeneration;
@@ -249,6 +266,16 @@ public class ClientEventHandler {
             if (mc.player != null && mc.level != null && mc.screen == null
                     && KeyBindings.HEAD_PERCH_KEY.consumeClick()) {
                 com.hanchen.veritycustomapi.network.HeadPerchNetwork.sendToggle();
+                return;
+            }
+
+            // R 键：骑上 / 从 Verity 身上下来。
+            // 骑乘不能继续用「潜行 + 空手右键」——那是 PatPat 的抚摸手势，
+            // 而且我们必须在 HIGHEST 优先级取消右键才能拦住原版把 Verity 收进物品，
+            // 一取消抚摸就永远收不到。两边抢同一个手势只能有一个生效，所以骑乘独立成键。
+            if (mc.player != null && mc.level != null && mc.screen == null
+                    && KeyBindings.RIDE_KEY.consumeClick()) {
+                com.hanchen.veritycustomapi.ride.RideKeyHandler.onRideKey(mc);
                 return;
             }
 
@@ -415,7 +442,9 @@ public class ClientEventHandler {
             Minecraft mc = titleScreen.getMinecraft();
             if (mc == null) return;
 
-            ConfirmScreen confirmScreen = new ConfirmScreen(
+            net.minecraft.client.gui.screens.Screen confirmScreen =
+                    new com.hanchen.veritycustomapi.config.VerityConfirmScreen(
+                    titleScreen,
                     result -> {
                         if (result) {
                             // 用户点击"是"：打开云端配置网站

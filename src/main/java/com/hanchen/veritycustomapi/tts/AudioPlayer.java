@@ -86,10 +86,6 @@ public class AudioPlayer {
     }
 
     private static void playPcm(float[] pcmData, int entityId) {
-        if (RuntimePlatform.isAndroidRuntime()) {
-            OllamaProxyMod.LOGGER.warn("Android/FCL 环境可能不支持 Java Sound 音频输出，已跳过本地 PCM 播放");
-            return;
-        }
         int sampleRate = ConfigManager.getTtsSampleRate();
         AudioFormat format = new AudioFormat(
                 AudioFormat.Encoding.PCM_SIGNED,
@@ -114,12 +110,21 @@ public class AudioPlayer {
             com.hanchen.veritycustomapi.compat.VerityEntityTalkAnimator.startPcmTimeline(
                     entityId, talkToken, bytes, sampleRate, format.getFrameSize());
 
-            // 优先交给游戏原版音频通道：跟随主音量滑块、与其它声音统一混音、可选 3D 定位
+            // 优先交给游戏原版音频通道：跟随主音量滑块、与其它声音统一混音、可选 3D 定位。
+            // 🔴 这条路走的是 MC 自己的 OpenAL Channel，**不依赖 Java Sound**，
+            // 所以手机端（FCL / Pojav / Zalith）也能出声——不能因为「Android 没有 Java Sound」
+            // 就把整个播放提前 return 掉，那会让手机端 TTS 完全静音。
             if (VanillaAudioSink.play(format, bytes, 0, bytes.length,
                     (float) ConfigManager.getTtsVolume(), entityId)) {
                 return;
             }
 
+            // 原版通道拿不到才回退 Java Sound；Android 上它确实不可用，安静跳过。
+            if (RuntimePlatform.isAndroidRuntime()) {
+                OllamaProxyMod.LOGGER.warn(
+                        "原版音频通道不可用，且 Android/FCL 环境不支持 Java Sound 回退，本次 TTS 未播放");
+                return;
+            }
             writeToJavaSound(format, bytes);
         } catch (Throwable e) {
             OllamaProxyMod.LOGGER.warn("音频播放失败，当前运行环境可能不支持 Java Sound: {}", e.getMessage());

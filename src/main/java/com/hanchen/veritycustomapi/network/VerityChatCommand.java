@@ -5,20 +5,10 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.registries.ForgeRegistries;
-
-import java.util.HashSet;
-import java.util.Set;
-import java.util.UUID;
 
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.config.ModConfig;
@@ -50,6 +40,68 @@ public final class VerityChatCommand {
                         .executes(context -> navigate(context.getSource(), ServerNavigationService.ACTION_STOP)))
                 .then(Commands.literal(ServerNavigationService.ACTION_COME)
                         .executes(context -> navigate(context.getSource(), ServerNavigationService.ACTION_COME))));
+        // 战斗开关：/verity-combat on | off | status（不带参数即查看状态）。
+        // 状态是服务端权威的静态开关，客户端在别人服务器上改不了，所以必须走指令。
+        dispatcher.register(Commands.literal("verity-combat")
+                .then(Commands.literal("on")
+                        .executes(context -> setCombatAssist(context.getSource(), true)))
+                .then(Commands.literal("off")
+                        .executes(context -> setCombatAssist(context.getSource(), false)))
+                .then(Commands.literal("status")
+                        .executes(context -> reportCombatAssist(context.getSource())))
+                .executes(context -> reportCombatAssist(context.getSource())));
+        // 清空上下文：/verity-context clear | restore | status
+        // 用途是兜底「历史被污染导致上游 400」——最典型的就是
+        // 「assistant 声明了 tool_calls 却没有对应的 tool 回复」。
+        // 配对问题已经由 ToolCallNormalizer 自动补齐，这里只留一个人能按的开关。
+        dispatcher.register(Commands.literal("verity-context")
+                .then(Commands.literal("clear")
+                        .executes(context -> clearContext(context.getSource())))
+                .then(Commands.literal("restore")
+                        .executes(context -> restoreContext(context.getSource())))
+                .then(Commands.literal("status")
+                        .executes(context -> reportContext(context.getSource())))
+                .executes(context -> reportContext(context.getSource())));
+    }
+
+    /** /verity-context clear：之后的请求不再携带历史对话。 */
+    private static int clearContext(CommandSourceStack source) {
+        com.hanchen.veritycustomapi.proxy.ContextReset.suppress();
+        source.sendSuccess(() -> Component.literal(
+                "§a【上下文】已清空。之后的对话不再携带历史（人设与长期记忆仍保留），"
+                        + "用 /verity-context restore 恢复"), false);
+        return 1;
+    }
+
+    /** /verity-context restore：恢复正常历史。 */
+    private static int restoreContext(CommandSourceStack source) {
+        com.hanchen.veritycustomapi.proxy.ContextReset.restore();
+        source.sendSuccess(() -> Component.literal("§a【上下文】已恢复正常历史"), false);
+        return 1;
+    }
+
+    /** /verity-context status：查看当前是否处于清空模式。 */
+    private static int reportContext(CommandSourceStack source) {
+        boolean cleared = com.hanchen.veritycustomapi.proxy.ContextReset.isSuppressed();
+        source.sendSuccess(() -> Component.literal(cleared
+                ? "§e【上下文】当前为「已清空」：每次请求只保留人设与最后一句话，已丢弃 "
+                        + com.hanchen.veritycustomapi.proxy.ContextReset.droppedRequests() + " 次"
+                : "§a【上下文】正常携带历史"), false);
+        return 1;
+    }
+
+    /** 处理 /verity-combat on|off。 */
+    private static int setCombatAssist(CommandSourceStack source, boolean enabled) {
+        com.hanchen.veritycustomapi.combat.CombatAuraManager.combatAssistEnabled = enabled;
+        source.sendSuccess(() -> Component.literal("自动护主已" + (enabled ? "开启" : "关闭")), false);
+        return 1;
+    }
+
+    /** 处理 /verity-combat status。 */
+    private static int reportCombatAssist(CommandSourceStack source) {
+        boolean enabled = com.hanchen.veritycustomapi.combat.CombatAuraManager.combatAssistEnabled;
+        source.sendSuccess(() -> Component.literal("自动护主：" + (enabled ? "开启" : "关闭")), false);
+        return 1;
     }
 
     /** 处理 /verity-nav <动作>：动作只作用于执行者自己名下的 Verity。 */
@@ -103,104 +155,20 @@ public final class VerityChatCommand {
             player.sendSystemMessage(Component.literal(publish ? "用法：/v! 你的内容" : "用法：/v 你的内容"));
             return 0;
         }
+        // 不再做「有没有 Verity」的前置检测：那个检测会把「Verity 是物品形态
+        // （拿在手上或收在背包里）」判成「没有 Verity」。
+        // 现在没有实体时用「游离实体」发起对话（见 queryAiDetached），
+        // 既不拦人，也不会动玩家背包。
         VerityEntity verity = ServerVerityRegistry.findForPlayer(player);
-        if (verity == null || !verity.isAlive()) {
-            if (startHeldItemChat(player, text)) {
-                return 1;
-            }
-            player.sendSystemMessage(Component.literal("你目前没有可用的 Verity。"));
-            return 0;
-        }
-        if (!com.hanchen.veritycustomapi.compat.OriginalVerityChatBridge.queryAi(
-                verity, player, text)) {
+        boolean ok = verity != null && verity.isAlive()
+                ? com.hanchen.veritycustomapi.compat.OriginalVerityChatBridge.queryAi(verity, player, text)
+                : com.hanchen.veritycustomapi.compat.OriginalVerityChatBridge.queryAiDetached(player, text);
+        if (!ok) {
             player.sendSystemMessage(Component.literal("原版 Verity 公共 API 暂时不可用。"));
             return 0;
         }
         broadcastChat(player, text);
         return 1;
-    }
-
-    /**
-     * 手持 verity_item 时：把物品放到脚下，等它变回实体后自动发送这句话。
-     * 原版物品需要落地约 20 tick 才会生成 Verity，所以这里等 1.6 秒。
-     */
-    private static boolean startHeldItemChat(ServerPlayer player, String text) {
-        InteractionHand hand = findHeldVerityItem(player);
-        if (hand == null) return false;
-        MinecraftServer server = player.getServer();
-        if (server == null) return false;
-
-        ItemStack held = player.getItemInHand(hand);
-        ItemStack dropped = held.copy();
-        dropped.setCount(1);
-        if (!player.getAbilities().instabuild) {
-            held.shrink(1);
-            if (held.isEmpty()) {
-                player.setItemInHand(hand, ItemStack.EMPTY);
-            }
-        }
-        if (player.drop(dropped, false) == null) {
-            player.sendSystemMessage(Component.literal("§c【Verity】放下物品失败，请确认脚下有空间。"));
-            return false;
-        }
-
-        ServerLevel level = player.serverLevel();
-        Set<UUID> before = new HashSet<>();
-        for (VerityEntity existing : level.getEntitiesOfClass(VerityEntity.class,
-                player.getBoundingBox().inflate(16.0D))) {
-            before.add(existing.getUUID());
-        }
-        player.sendSystemMessage(Component.literal("§7【Verity】已放下物品，等它变回实体后自动发送…"));
-
-        Thread thread = new Thread(() -> {
-            try {
-                Thread.sleep(1600L);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-            server.execute(() -> {
-                if (player.isRemoved()) return;
-                VerityEntity spawned = null;
-                double best = Double.MAX_VALUE;
-                for (VerityEntity candidate : level.getEntitiesOfClass(VerityEntity.class,
-                        player.getBoundingBox().inflate(16.0D))) {
-                    if (!candidate.isAlive() || before.contains(candidate.getUUID())) continue;
-                    double distance = player.distanceToSqr(candidate);
-                    if (distance < best) {
-                        best = distance;
-                        spawned = candidate;
-                    }
-                }
-                if (spawned == null) {
-                    player.sendSystemMessage(Component.literal(
-                            "§c【Verity】物品没有变回 Verity，请确认脚下是安全、可站立的地面。"));
-                    return;
-                }
-                if (!com.hanchen.veritycustomapi.compat.OriginalVerityChatBridge.queryAi(
-                        spawned, player, text)) {
-                    player.sendSystemMessage(Component.literal("原版 Verity 公共 API 暂时不可用。"));
-                    return;
-                }
-                broadcastChat(player, text);
-            });
-        }, "Verity-Item-Chat");
-        thread.setDaemon(true);
-        thread.start();
-        return true;
-    }
-
-    private static InteractionHand findHeldVerityItem(ServerPlayer player) {
-        for (InteractionHand hand : InteractionHand.values()) {
-            ItemStack stack = player.getItemInHand(hand);
-            if (stack.isEmpty()) continue;
-            ResourceLocation id = ForgeRegistries.ITEMS.getKey(stack.getItem());
-            if (id != null && "verity".equals(id.getNamespace())
-                    && "verity_item".equals(id.getPath())) {
-                return hand;
-            }
-        }
-        return null;
     }
 
     private static void broadcastChat(ServerPlayer player, String text) {

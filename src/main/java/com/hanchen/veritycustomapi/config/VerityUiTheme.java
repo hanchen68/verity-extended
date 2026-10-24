@@ -15,11 +15,11 @@ package com.hanchen.veritycustomapi.config;
  */
 public final class VerityUiTheme {
     /** 全屏底色（主菜单等不透明场合用）。 */
-    public static final int BACKGROUND = 0xF20A0C10;
+    public static final int BACKGROUND = 0xFF0A0C10;
     /** 面板 / 卡片底色（不透明版）。 */
-    public static final int SURFACE = 0xF2181C22;
+    public static final int SURFACE = 0xFF181C22;
     /** 侧边栏底色。 */
-    public static final int SIDEBAR = 0xF213161B;
+    public static final int SIDEBAR = 0xFF13161B;
     /** 面板描边。 */
     public static final int BORDER = 0xFF343B46;
     /** 列表分隔线（不透明，画在面板底色之上）。 */
@@ -44,22 +44,23 @@ public final class VerityUiTheme {
     public static final int DANGER = 0xFFF59AA2;
 
     // ------------------------------------------------------------------
-    // 半透明卡片（世界里打开界面时用）
+    // 卡片（世界里打开界面时用）
     //
-    // 背景是世界本身（约 30% 的淡幕），所以面板不能是一块实心板——否则
-    // 半透明等于白做。这里用「较低不透明度的卡片 + 1px 半透明描边」，
-    // 描边是 GuiGraphics 只能画矩形时模拟「浮起」最有效的手段。
+    // 🔴 底色**必须完全不透明**（2026-10-25 用户要求「全部弹窗统一成不透明样式」）。
+    // 这里原来是 0xC4（77%），世界和背后的文字会透上来，看起来就是「窗口是透明的」。
+    // 「世界透出来」这件事由背景那层 30% 淡幕（ScreenBackgrounds.SCRIM）负责，
+    // 卡片本身不需要再半透明——两者叠加的结果就是「又糊又透」，文字可读性明显下降。
     // ------------------------------------------------------------------
 
-    /** 卡片底色（约 77% 不透明）：世界隐约透出，文字仍然清晰。 */
-    public static final int CARD = 0xC4161A21;
-    /** 抬升层：标题栏、分组头、选中项。与 CARD 差 18/21/25，层次清楚。 */
-    public static final int CARD_RAISED = 0xE0282F3A;
+    /** 卡片底色：完全不透明，和背景淡幕分工明确。 */
+    public static final int CARD = 0xFF161A21;
+    /** 抬升层：标题栏、分组头、选中项。比 CARD 亮一档，层次清楚。 */
+    public static final int CARD_RAISED = 0xFF282F3A;
     /** 卡片描边：半透明白，勾出边缘让卡片从背景里浮出来。 */
     public static final int CARD_BORDER = 0x52FFFFFF;
     /** 卡片投影：贴在卡片下沿，强化浮起感。 */
     public static final int CARD_SHADOW = 0x55000000;
-    /** 行悬停底色。 */
+    /** 行悬停底色。叠在不透明卡片之上，半透明是正确的（否则看不见底下的行）。 */
     public static final int ROW_HOVER = 0x1FFFFFFF;
 
     // ------------------------------------------------------------------
@@ -70,8 +71,8 @@ public final class VerityUiTheme {
     /** 控件凹槽底色（开关未选中时的轨道）。 */
     public static final int CONTROL_TRACK = 0x5CFFFFFF;
     /** 输入框底色：比卡片更暗，让文字区沉下去。
-     *  不能太淡——0x40 时框几乎看不见，文字会像「浮在行上、溢出到框外」。 */
-    public static final int CONTROL_FIELD = 0x66000000;
+     *  完全不透明——半透明时框里的文字会和背后的行文字叠在一起，读不清。 */
+    public static final int CONTROL_FIELD = 0xFF0B0E13;
     /** 控件描边。 */
     public static final int CONTROL_BORDER = 0x38FFFFFF;
     /** 开关选中态 / 主按钮底色。 */

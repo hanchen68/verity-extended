@@ -76,6 +76,32 @@ public final class ConfigText {
     }
 
     /**
+     * 规整配对码：去掉空白与零宽字符，再统一大写。
+     *
+     * <p>🔴 和 {@link #cleanApiKey} 同一类问题：从网页/聊天软件复制配对码时经常带进
+     * 零宽空格、全角空格或换行，肉眼完全看不出来，却会让长度从 6 变成 7。
+     * 云端对长度做**硬校验**，多一位就直接 400「配对码格式无效」——
+     * 玩家对着一个 HTTP 400 根本查不出是自己多粘了一个不可见字符。
+     *
+     * <p>只清不可见字符，**不动内容本身**：配对码里可能含 {@code -} 之类的符号，
+     * 按「只留字母数字」清洗会把它清掉，反而变成另一个错误。
+     *
+     * @return 规整后的配对码；入参为 {@code null} 时返回空串
+     */
+    public static String normalizePairingCode(String code) {
+        if (code == null) return "";
+        StringBuilder builder = new StringBuilder(code.length());
+        for (int i = 0; i < code.length(); i++) {
+            char c = code.charAt(i);
+            // 零宽空格/连接符、BOM 都不算「空白」，Character.isWhitespace 判不出来
+            if (c == '\u200B' || c == '\u200C' || c == '\u200D' || c == '\uFEFF') continue;
+            if (Character.isWhitespace(c) || Character.isSpaceChar(c)) continue;
+            builder.append(c);
+        }
+        return builder.toString().toUpperCase(java.util.Locale.ROOT);
+    }
+
+    /**
      * 额度展示文本：整数不带小数点，小数最多保留 4 位并去掉末尾 0。
      *
      * <p>用 {@link RoundingMode#DOWN} 而不是四舍五入：额度宁可少显示一点，

@@ -26,23 +26,13 @@ public final class OriginalVerityVoiceBridge {
     }
 
     public static boolean isAvailable() {
-        try {
-            Class.forName(AI_API_CLASS);
-            Class.forName(CONFIG_CLASS);
-            return true;
-        } catch (Throwable ignored) {
-            return false;
-        }
+        return ReflectiveTarget.canLoad(AI_API_CLASS) && ReflectiveTarget.canLoad(CONFIG_CLASS);
     }
 
     public static boolean isVoiceInputAvailable() {
-        try {
-            Class.forName(MICROPHONE_RECORDER_CLASS);
-            Class.forName(KEYBIND_HANDLER_CLASS);
-            return isAvailable();
-        } catch (Throwable ignored) {
-            return false;
-        }
+        return ReflectiveTarget.canLoad(MICROPHONE_RECORDER_CLASS)
+                && ReflectiveTarget.canLoad(KEYBIND_HANDLER_CLASS)
+                && isAvailable();
     }
 
     public static OriginalVoiceInputSession createVoiceInputSession() {

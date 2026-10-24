@@ -10,6 +10,8 @@ import net.minecraft.client.gui.Font;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 配置界面的「显示层」纯函数：把配置值翻译成给人看的中文、截断长文本、脱敏密钥等。
@@ -108,18 +110,33 @@ public final class ConfigDisplay {
         return ConfigManager.PromptPreset.ORIGINAL_VERITY;
     }
 
+    /**
+     * 下拉里可选的人设预设。
+     *
+     * <p>🔴 刻意**不列出 {@code ORIGINAL_VERITY}**：它的语义是「什么都不注入，用原版提示词」，
+     * 和「启用自定义人设」这个开关正好互相抵消——玩家打开开关、选了「原版人设」，
+     * 结果提示词里一个字都没加，看起来就像「自定义人设不生效」。
+     * 想用原版提示词，直接把开关关掉即可，不需要这个选项。
+     *
+     * <p>枚举里保留这个值只是为了兼容老配置，见 {@code NativeOllamaProxyConfigScreen#migrateOriginalPreset}。
+     */
     public static String[] promptNames() {
-        ConfigManager.PromptPreset[] presets = ConfigManager.PromptPreset.values();
-        String[] result = new String[presets.length];
-        for (int i = 0; i < presets.length; i++) result[i] = presets[i].displayName;
-        return result;
+        return selectablePresets().stream()
+                .map(preset -> preset.displayName)
+                .toArray(String[]::new);
     }
 
     public static String[] promptValues() {
-        ConfigManager.PromptPreset[] presets = ConfigManager.PromptPreset.values();
-        String[] result = new String[presets.length];
-        for (int i = 0; i < presets.length; i++) result[i] = presets[i].name();
-        return result;
+        return selectablePresets().stream()
+                .map(Enum::name)
+                .toArray(String[]::new);
+    }
+
+    /** 除「原版人设」以外的所有预设，顺序与枚举一致。 */
+    public static java.util.List<ConfigManager.PromptPreset> selectablePresets() {
+        return java.util.Arrays.stream(ConfigManager.PromptPreset.values())
+                .filter(preset -> preset != ConfigManager.PromptPreset.ORIGINAL_VERITY)
+                .toList();
     }
 
     /** 一句话说明当前实际会注入什么人设（注入来源 + 实际字符数，0 字符表示不会注入）。 */
@@ -194,6 +211,68 @@ public final class ConfigDisplay {
             builder.append(singleLine.charAt(i));
         }
         return builder + ellipsis;
+    }
+
+    /**
+     * 把文本按像素宽折成多行，**不丢字**。
+     *
+     * <p>{@link #fitText} 是「一行放不下就截断」，只适合标题、按钮这种绝不能溢出的地方。
+     * 状态值和说明文字用截断就变成「显示不全」——玩家看到的是一句带 {@code ...} 的半截话，
+     * 想知道的恰好被省略号吃掉了。这类文字改用本方法折行，行高由调用方按行数撑开。
+     *
+     * <p>折行规则：先按显式 {@code \n} 分段；段内贪心按像素宽度装字，
+     * 遇到空格优先在空格处断（英文单词不被劈开），中文没有空格就逐字断——
+     * 中文本来就可以在任意字间断行，强行找「词边界」既做不到也不必要。
+     * 单个字符就超过整行宽时仍然强制吃掉一个字符，否则会死循环。
+     *
+     * @return 至少一行；入参为 {@code null}/空串时返回只含一个空串的列表
+     */
+    public static List<String> wrapText(Font font, String value, int maxWidth) {
+        List<String> lines = new ArrayList<>();
+        if (value == null || value.isEmpty() || maxWidth <= 0) {
+            lines.add("");
+            return lines;
+        }
+        for (String paragraph : value.replace("\r", "").split("\n", -1)) {
+            wrapParagraph(font, paragraph, maxWidth, lines);
+        }
+        if (lines.isEmpty()) lines.add("");
+        return lines;
+    }
+
+    private static void wrapParagraph(Font font, String text, int maxWidth, List<String> out) {
+        if (text.isEmpty()) {
+            out.add("");
+            return;
+        }
+        int start = 0;
+        int length = text.length();
+        while (start < length) {
+            int width = 0;
+            int end = start;
+            int lastSpace = -1;
+            while (end < length) {
+                char c = text.charAt(end);
+                int charWidth = font.width(String.valueOf(c));
+                // end > start 保证每行至少装一个字，否则超宽的单个字符会卡死循环
+                if (width + charWidth > maxWidth && end > start) break;
+                width += charWidth;
+                end++;
+                if (c == ' ') lastSpace = end;
+            }
+            if (end >= length) {
+                out.add(text.substring(start).stripTrailing());
+                return;
+            }
+            int cut = end;
+            // 只在「断在空格处不会浪费掉半行」时才认这个空格，否则窄列里会一行只剩一个词
+            if (lastSpace > start && font.width(text.substring(start, lastSpace)) * 2 >= maxWidth) {
+                cut = lastSpace;
+            }
+            out.add(text.substring(start, cut).stripTrailing());
+            start = cut;
+            while (start < length && text.charAt(start) == ' ') start++;
+        }
     }
 
     // ==================== 说明文字分流 ====================

@@ -43,6 +43,23 @@ public final class OriginalVeritySttInjector {
     private static volatile Method getFormatMethod;
     private static volatile long sessionGeneration;
 
+    /**
+     * 原版 6.0.0 新增的按键释放缓冲计数（{@code KeybindHandler.releasePaddingTicks}）。
+     *
+     * <p>6.0.0 的录音状态机在松开 PTT 后不立刻停录，而是先数满 5 个 tick 再停
+     * （避免手指抖动截断尾音）。我们截获录音时**必须把它一起清零**：
+     * 只清 {@code isRecording} 而留着这个计数器的话，原版下一轮
+     * 「松开 → 计数 → 停录」的判断会从一个非零值继续，
+     * 表现是下一次说话的开头被吞掉、或者松开后迟迟不停录。
+     *
+     * <p>6.0.0 之前的版本没有这个字段，取不到就是 null——此时跳过清零即可，
+     * 属于正常的新旧版本差异，不该报错。
+     */
+    private static volatile Field releasePaddingField;
+
+    /** 本次按键是否已经掐过朗读：按住不放时不要每帧都调一次打断。 */
+    private static boolean bargeInArmed;
+
     private OriginalVeritySttInjector() {}
 
     /**
@@ -63,6 +80,8 @@ public final class OriginalVeritySttInjector {
             recorderField = keybindHandlerClass.getDeclaredField("RECORDER");
             recorderField.setAccessible(true);
             recorderInstance = recorderField.get(null);
+            // 6.0.0 起才有；老版本取不到是正常的，清零时跳过即可
+            releasePaddingField = resolveReleasePaddingField();
 
             // 缓存所有反射对象
             keyRegClass = Class.forName("varmite.verity.client.KeybindRegistry");
@@ -90,6 +109,73 @@ public final class OriginalVeritySttInjector {
         }
     }
 
+    /**
+     * 取 {@code KeybindHandler.releasePaddingTicks}（6.0.0 新增）。
+     *
+     * @return 字段；版本没有这个字段时返回 {@code null}
+     */
+    private static Field resolveReleasePaddingField() {
+        try {
+            Field found = keybindHandlerClass.getDeclaredField("releasePaddingTicks");
+            found.setAccessible(true);
+            return found;
+        } catch (Throwable missing) {
+            // 6.0.0 之前没有这个字段，属于正常版本差异，静默跳过即可
+            return null;
+        }
+    }
+
+    /**
+     * 结束原版录音状态：清 {@code isRecording} **并清释放缓冲计数**。
+     *
+     * <p>🔴 这两件事必须成对做。6.0.0 的 {@code KeybindHandler.onClientTick} 逻辑是：
+     * <pre>
+     *   按键按住 → releasePaddingTicks = 0, isRecording = true, startRecording()
+     *   按键松开且 isRecording → releasePaddingTicks++；未满 5 次直接 return
+     *   满 5 次 → isRecording = false, releasePaddingTicks = 0, stopRecording()
+     * </pre>
+     * 我们截获录音时抢在它前面把 {@code isRecording} 置成 false 并 stopRecording。
+     * 如果不同时清 {@code releasePaddingTicks}，它停在「已经数到 3」这类中间值上，
+     * 下一次按键松开时会**少数几个 tick 就停录**，表现为尾音被截断；
+     * 更糟的是若残留值已达 5，原版会在我们没按的时候直接走停录分支。
+     *
+     * <p>这就是「功能看起来能用、但偶发吞字」的那类问题——不会报错，只会让人
+     * 觉得识别不准。所以必须显式成对清理，而不是只清 isRecording。
+     */
+    private static void clearRecordingState() {
+        try {
+            if (isRecordingField != null) isRecordingField.set(null, false);
+            if (releasePaddingField != null) releasePaddingField.setInt(null, 0);
+        } catch (Throwable error) {
+            OllamaProxyMod.LOGGER.debug("[SttInjector] 清理录音状态失败: {}", error.toString());
+        }
+    }
+
+    /**
+     * 掐掉正在播放的朗读（抢话 / barge-in）。
+     *
+     * <p>要停三条通道，缺一条都会「按了键但声音还在」：
+     * <ol>
+     *   <li>{@code TtsManager.stopSpeaking()} —— 扩展自己的朗读路线
+     *       （TtsRouter / OnlineTtsService / AudioPlayer，后者内部还会 stopAll 原版声音通道）；</li>
+     *   <li>{@code OriginalVerityVoiceBridge.interruptSpeech()} —— 原版 AI 自己的朗读；</li>
+     * </ol>
+     * 原版 {@code KeybindHandler} 按下 PTT 时只调了第 2 条，所以扩展接管播放之后
+     * 光靠它是不够的——玩家开口了 Verity 还在念。
+     */
+    private static void interruptSpeaking() {
+        try {
+            com.hanchen.veritycustomapi.tts.TtsManager.stopSpeaking();
+        } catch (Throwable error) {
+            OllamaProxyMod.LOGGER.debug("[SttInjector] 停止扩展朗读失败: {}", error.toString());
+        }
+        try {
+            OriginalVerityVoiceBridge.interruptSpeech();
+        } catch (Throwable error) {
+            OllamaProxyMod.LOGGER.debug("[SttInjector] 停止原版朗读失败: {}", error.toString());
+        }
+    }
+
     /** SttInjector 是否已激活（劫持了 Verity 的 PUSH_TO_TALK 按键） */
     public static boolean isActive() {
         return injected;
@@ -111,7 +197,8 @@ public final class OriginalVeritySttInjector {
         try {
             Boolean isRecording = isRecordingField == null ? null : (Boolean) isRecordingField.get(null);
             if (Boolean.TRUE.equals(isRecording)) {
-                isRecordingField.set(null, false);
+                // 必须连 releasePaddingTicks 一起清，理由见 clearRecordingState
+                clearRecordingState();
                 if (stopRecordingMethod != null && recorderInstance != null) {
                     stopRecordingMethod.invoke(recorderInstance);
                 }
@@ -131,18 +218,35 @@ public final class OriginalVeritySttInjector {
         if (!injected) return;
 
         try {
-            Boolean isRecording = (Boolean) isRecordingField.get(null);
-            if (isRecording == null || !isRecording) return;
-
             // 使用缓存的 field/method 检测按键
             Object pushToTalk = ptkField.get(null);
             if (pushToTalk == null) return;
-
+            Boolean isRecording = (Boolean) isRecordingField.get(null);
             Boolean isKeyDown = (Boolean) isDownMethod.invoke(pushToTalk);
+            boolean down = Boolean.TRUE.equals(isKeyDown);
+
+            // 抢话打断：按下语音键的那一刻就把正在念的 TTS 掐掉。
+            // 原版 KeybindHandler 自己会调 TTSHandler.interruptSpeech()，但那只管原版那条播放通道；
+            // 扩展接管后的播放走 TtsRouter / OnlineTtsService / VanillaAudioSink，
+            // 必须另外调 TtsManager.stopSpeaking()，否则玩家开口了 Verity 还在念。
+            // 判据用「按下 且 还没进入录音状态」= 这次按下的第一帧，配合 bargeInArmed 保证一次按键只掐一次。
+            if (down && !Boolean.TRUE.equals(isRecording)) {
+                if (!bargeInArmed) {
+                    bargeInArmed = true;
+                    interruptSpeaking();
+                }
+            } else if (!down) {
+                bargeInArmed = false;
+            }
+
+            if (isRecording == null || !isRecording) return;
+
             if (isKeyDown == null || isKeyDown) return;
 
-            // 按键释放，原版录音已在进行中 -> 截获
-            isRecordingField.set(null, false);
+            // 按键释放，原版录音已在进行中 -> 截获。
+            // 🔴 只清 isRecording 不够：6.0.0 多了 releasePaddingTicks，
+            // 不清会让原版下一次松开时提前停录（吞尾音）。见 clearRecordingState。
+            clearRecordingState();
 
             byte[] pcmData = (byte[]) stopRecordingMethod.invoke(recorderInstance);
             if (pcmData == null || pcmData.length == 0) return;

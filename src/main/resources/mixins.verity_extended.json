@@ -14,12 +14,16 @@
     "AiApiMemoryIsolationMixin",
     "VerityWorldStateRestoreMixin",
     "EntityPerchRideMixin",
+    "MobRideControlMixin",
     "PlayerRideGraceMixin",
     "LivingEntityPerchRideMixin",
+    "LivingEntityRiddenControlMixin",
     "MobVerityInteractMixin",
     "EntityRideAccessor",
     "LivingEntityRideAccessor",
     "VerityToolsMixin",
+    "VerityGiveItemByNameMixin",
+    "VerityFeatureToolMixin",
     "VerityKarmaCapMixin"
   ],
   "client": [

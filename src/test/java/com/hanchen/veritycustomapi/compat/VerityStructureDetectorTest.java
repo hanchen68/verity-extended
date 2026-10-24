@@ -133,28 +133,20 @@ public final class VerityStructureDetectorTest {
         // 只看编译能否通过不够 —— 移动/改名后的方法会在运行期让 Mixin 注入失败。
         verifyBeta9MixinTargets();
 
-        // 5. 右键骑乘的触发点必须挂在 Forge 事件上。
-        // 原版会在 PlayerInteractEvent.EntityInteract 阶段取消空手右键（把实体收进物品），
-        // 而该事件在 Entity.interact 之前触发，取消后 mobInteract 根本不会执行。
-        // 触发点一旦退回 mobInteract，骑乘就会静默失效 —— 这条断言把这个结论钉住。
-        byte[] rideTrigger = readOwnClass("com/hanchen/veritycustomapi/ride/VerityRideInteraction.class");
-        require(rideTrigger != null, "应能读到 VerityRideInteraction.class");
-        require(VerityStructureDetector.hasMethod(rideTrigger, "EntityInteract"),
-                "骑乘触发点必须挂在 PlayerInteractEvent.EntityInteract 上（mobInteract 会被原版取消挡死）");
-        // 原版的收进物品+discard 写在它自己的 NORMAL 处理器里，且从不检查 isCanceled ——
-        // LOWEST 的服务端拦截排在它后面，实体早已被丢弃（实测就是「蹲下右键她还是被收走」）。
-        // 唯一可靠拦截点是客户端 HIGHEST 先取消、再走自己的骑乘请求包，这条断言把方案钉住。
-        require(VerityStructureDetector.hasMethod(rideTrigger, "sendRideRequest"),
-                "骑乘触发点必须在客户端拦下右键并发送骑乘请求包（服务端拦截拦不住原版的内联收进物品）");
-        // 手势必须要求潜行：普通右键要留给原版的「把她收进物品」。
-        // 该方法名是 MC 成员，生产包里会被 reobf 成 m_6047_，所以两种写法都接受。
-        byte[] rideManager = readOwnClass("com/hanchen/veritycustomapi/ride/RideManager.class");
-        require(rideManager != null, "应能读到 RideManager.class");
-        require(VerityStructureDetector.hasMethod(rideManager, "isShiftKeyDown")
-                        || VerityStructureDetector.hasMethod(rideManager, "m_6047_"),
-                "骑乘必须是「潜行 + 空手右键」触发 —— 普通右键要留给原版收进物品");
+        // 5. 骑乘改成独立按键，不再拦截右键。
+        // 「潜行 + 空手右键」是 PatPat 的抚摸手势；为了拦原版「空手右键把 Verity 收进物品」，
+        // 必须在 HIGHEST 优先级取消该事件——一取消，抚摸就永远收不到。
+        // 两个功能抢同一个手势只能有一个生效，所以骑乘独立成键（默认 R）。
+        byte[] rideKey = readOwnClass("com/hanchen/veritycustomapi/ride/RideKeyHandler.class");
+        require(rideKey != null, "应能读到 RideKeyHandler.class（骑乘按键处理）");
+        require(VerityStructureDetector.hasMethod(rideKey, "sendRideRequest"),
+                "骑乘按键必须发送骑乘请求包");
+        require(readOwnClass("com/hanchen/veritycustomapi/ride/VerityRideInteraction.class") == null,
+                "右键骑乘拦截类又回来了：它会在 HIGHEST 取消右键，PatPat 的抚摸永远收不到");
         // 骑乘手势用潜行，而原版的下车判定恰恰就是「按着潜行」（Player.rideTick -> wantsToStopRiding），
         // 所以上骑后必须有免疫窗口，否则骑上去下一 tick 就被原版踢下来（已实测）。
+        byte[] rideManager = readOwnClass("com/hanchen/veritycustomapi/ride/RideManager.class");
+        require(rideManager != null, "应能读到 RideManager.class");
         byte[] grace = readOwnClass("com/hanchen/veritycustomapi/mixin/PlayerRideGraceMixin.class");
         require(grace != null, "应能读到 PlayerRideGraceMixin.class");
         require(VerityStructureDetector.hasMethod(grace, "wantsToStopRiding"),
@@ -209,8 +201,8 @@ public final class VerityStructureDetectorTest {
         }
         // 半透明界面必须走统一助手：它负责「世界里透出世界 / 主菜单按普通菜单背景」的分流，
         // 任何界面自己 fill 一个不透明底色都会把效果吃掉。
-        for (String screen : new String[]{"NativeOllamaProxyConfigScreen", "PluginManagerScreen",
-                "PluginCreateScreen", "QuickCommandScreen", "MmdPlaybackScreen"}) {
+        for (String screen : new String[]{"NativeOllamaProxyConfigScreen",
+                "QuickCommandScreen", "MmdPlaybackScreen"}) {
             byte[] bytes = readOwnClass("com/hanchen/veritycustomapi/client/" + screen + ".class");
             if (bytes == null) {
                 bytes = readOwnClass("com/hanchen/veritycustomapi/config/" + screen + ".class");

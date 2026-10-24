@@ -55,33 +55,33 @@ import java.util.concurrent.ConcurrentHashMap;
 @Mod.EventBusSubscriber(modid = OllamaProxyMod.MOD_ID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class VerityHorrorDirector {
     private static final ResourceLocation NOFACE_TEXTURE =
-            ResourceLocation.fromNamespaceAndPath("verity", "textures/entity/noface.png");
+            new ResourceLocation("verity", "textures/entity/noface.png");
     private static final ResourceLocation SMILING_EVIL_TEXTURE =
-            ResourceLocation.fromNamespaceAndPath("verity", "textures/entity/smiling_evil.png");
+            new ResourceLocation("verity", "textures/entity/smiling_evil.png");
     private static final ResourceLocation SERIOUS_TEXTURE =
-            ResourceLocation.fromNamespaceAndPath("verity", "textures/entity/serious_3.png");
+            new ResourceLocation("verity", "textures/entity/serious_3.png");
     private static final ResourceLocation VERITY_DEMON_TEXTURE =
-            ResourceLocation.fromNamespaceAndPath("verity", "textures/entity/verity_demon.png");
+            new ResourceLocation("verity", "textures/entity/verity_demon.png");
     private static final ResourceLocation WARDEN_HEARTBEAT =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "entity.warden.heartbeat");
+            new ResourceLocation("minecraft", "entity.warden.heartbeat");
     private static final ResourceLocation WARDEN_NEARBY =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "entity.warden.nearby_closer");
+            new ResourceLocation("minecraft", "entity.warden.nearby_closer");
     private static final ResourceLocation CAVE_AMBIENCE =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "ambient.cave");
+            new ResourceLocation("minecraft", "ambient.cave");
     private static final ResourceLocation SOUL_ESCAPE =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "particle.soul_escape");
+            new ResourceLocation("minecraft", "particle.soul_escape");
     private static final ResourceLocation SKELETON_STEP =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "entity.skeleton.step");
+            new ResourceLocation("minecraft", "entity.skeleton.step");
     private static final ResourceLocation WOODEN_DOOR =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "block.wooden_door.close");
+            new ResourceLocation("minecraft", "block.wooden_door.close");
     private static final ResourceLocation SCULK_SHRIEK =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "block.sculk_shrieker.shriek");
+            new ResourceLocation("minecraft", "block.sculk_shrieker.shriek");
     private static final ResourceLocation BONE_SNAP =
-            ResourceLocation.fromNamespaceAndPath("verity", "bone_snap");
+            new ResourceLocation("verity", "bone_snap");
     private static final ResourceLocation BONE_BREAK =
-            ResourceLocation.fromNamespaceAndPath("verity", "bone_break");
+            new ResourceLocation("verity", "bone_break");
     private static final ResourceLocation JUMPSCARE =
-            ResourceLocation.fromNamespaceAndPath("verity", "jumpscare");
+            new ResourceLocation("verity", "jumpscare");
 
     /** 追击阶段叠在屏幕上的红字，故意不按行排，模拟视频里的满屏压迫感。 */
     private static final String[] RED_TEXT_WALL = {
@@ -595,23 +595,12 @@ public final class VerityHorrorDirector {
 
     static float pressureFor(double distance, int state, int hunt, boolean targeted,
                              boolean looking, float healthRatio) {
-        float proximity = Mth.clamp((float) ((96.0D - distance) / 88.0D), 0.0F, 1.0F);
-        float result = 0.06F + proximity * 0.56F;
-        if (hunt > 0) result += 0.13F;
-        if (state == 1) result += 0.24F;
-        if (targeted) result += 0.13F;
-        if (looking && hunt > 0) result += 0.08F;
-        if ((state == 1 || targeted) && healthRatio < 0.4F) result += (0.4F - healthRatio) * 0.45F;
-        return Mth.clamp(result, 0.0F, 1.0F);
+        return HorrorRules.pressureFor(distance, state, hunt, targeted, looking, healthRatio);
     }
 
     static int stageFor(double distance, int state, int hunt, boolean targeted,
                         boolean looking, float healthRatio) {
-        if ((targeted && distance < 12.0D) || (state == 1 && distance < 7.0D)
-                || ((state == 1 || targeted) && healthRatio < 0.25F)) return 4;
-        if (state == 1 || targeted) return 3;
-        if (hunt > 0 || looking || distance < 28.0D) return 2;
-        return 1;
+        return HorrorRules.stageFor(distance, state, hunt, targeted, looking, healthRatio);
     }
 
     private static boolean isActiveDemon(Entity entity) {

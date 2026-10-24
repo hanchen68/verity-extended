@@ -27,7 +27,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 客户端：施法时在 Verity 身边画出她"举着"的星之遥控器。
+ * 客户端：施法时在 Verity 身边画出 Verity"举着"的星之遥控器。
  *
  * Verity 本体是一张会看人的 billboard 贴图（SphereEntityRenderer），没有骨骼和手，
  * 所以这里用相机朝向来算锚点：贴图右侧偏上、稍微靠前，抬手阶段从下往上抬起。

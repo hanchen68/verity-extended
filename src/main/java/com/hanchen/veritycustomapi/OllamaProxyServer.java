@@ -171,70 +171,30 @@ public class OllamaProxyServer {
         }
     }
 
+    /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.HttpPipeline#isAuthorized}。 */
     private static boolean isAuthorized(HttpExchange exchange) {
-        String authorization = exchange.getRequestHeaders().getFirst("Authorization");
-        if (authorization == null || !authorization.startsWith("Bearer ")) {
-            return false;
-        }
-        byte[] supplied = authorization.substring(7).getBytes(StandardCharsets.UTF_8);
-        byte[] expected = LOCAL_PROXY_TOKEN.getBytes(StandardCharsets.UTF_8);
-        return java.security.MessageDigest.isEqual(supplied, expected);
+        return com.hanchen.veritycustomapi.proxy.HttpPipeline.isAuthorized(exchange, LOCAL_PROXY_TOKEN);
     }
 
+    /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.HttpPipeline#applyCors}。 */
     private static boolean applyCors(HttpExchange exchange) {
-        String origin = exchange.getRequestHeaders().getFirst("Origin");
-        if (origin == null || origin.isBlank()) {
-            return true;
-        }
-        try {
-            URI uri = URI.create(origin);
-            String scheme = uri.getScheme();
-            String host = uri.getHost();
-            if (("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
-                    && NetworkSecurity.isLoopbackHost(host)
-                    && uri.getRawUserInfo() == null
-                    && uri.getRawPath() != null && uri.getRawPath().isEmpty()
-                    && uri.getRawQuery() == null && uri.getRawFragment() == null) {
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", origin);
-                exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "POST, OPTIONS");
-                exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Authorization, Content-Type");
-                exchange.getResponseHeaders().set("Access-Control-Max-Age", "600");
-                exchange.getResponseHeaders().set("Vary", "Origin");
-                return true;
-            }
-        } catch (RuntimeException ignored) {
-        }
-        return false;
+        return com.hanchen.veritycustomapi.proxy.HttpPipeline.applyCors(exchange);
     }
 
+    /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.HttpPipeline#readLimited}。 */
     private static byte[] readLimited(InputStream input, int limit, String name, int statusCode) throws IOException {
-        ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(limit, 8192));
-        byte[] buffer = new byte[8192];
-        int total = 0;
-        int read;
-        while ((read = input.read(buffer)) != -1) {
-            total += read;
-            if (total > limit) {
-                throw new PayloadTooLargeException(name + "超过大小限制", statusCode);
-            }
-            output.write(buffer, 0, read);
-        }
-        return output.toByteArray();
+        return com.hanchen.veritycustomapi.proxy.HttpPipeline.readLimited(input, limit, name, statusCode);
     }
 
     private static void sendEmptyResponse(HttpExchange exchange, int statusCode) throws IOException {
-        exchange.sendResponseHeaders(statusCode, -1);
+        com.hanchen.veritycustomapi.proxy.HttpPipeline.sendEmpty(exchange, statusCode);
     }
 
     private static void sendTextResponse(HttpExchange exchange, int statusCode, String message) throws IOException {
-        byte[] body = message.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
-        exchange.sendResponseHeaders(statusCode, body.length);
-        try (OutputStream output = exchange.getResponseBody()) {
-            output.write(body);
-        }
+        com.hanchen.veritycustomapi.proxy.HttpPipeline.sendText(exchange, statusCode, message);
     }
 
+    /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.HttpPipeline.PayloadTooLargeException}。 */
     private static final class PayloadTooLargeException extends IOException {
         private final int statusCode;
 
@@ -416,6 +376,10 @@ public class OllamaProxyServer {
                     if (internalPromptCall) {
                         LOGGER.info("识别到原版内部提示词调用（记忆/日记），本次不做注入与加工，原样透传");
                     } else {
+                        // 「清空上下文」模式：整段丢掉历史，只留 system + 最后一条 user。
+                        // 放在最前面——后面所有裁剪/工具筛选都建立在「历史还在」的前提上，
+                        // 历史都丢掉了再裁一遍纯属白烧 CPU。
+                        com.hanchen.veritycustomapi.proxy.ContextReset.applyInPlace(requestJson);
                         // 机械裁剪：旧工具结果 / 超长旧回复 / 旧截图瘦身；最近两轮完整保留
                         if (com.hanchen.veritycustomapi.ai.ContextTrimmer.trimInPlace(requestJson)) {
                             // 只有裁剪真的改了内容才需要再兜一次配对修复：
@@ -423,6 +387,11 @@ public class OllamaProxyServer {
                             //（Messages with role 'tool' must be a response to a preceding message with 'tool_calls'）。
                             com.hanchen.veritycustomapi.proxy.ToolCallNormalizer.sanitizeInPlace(requestJson);
                         }
+                        // 🔴 先摘掉「前置条件不满足」的工具，再按意图裁剪。
+                        // 顺序不能反：Trimmer 会把「命中意图」的工具保留下来，
+                        // 若先裁剪，一个本该摘掉的工具可能因为命中关键词被留下。
+                        // 误报的代价很高——模型会把「工具可用」读成「玩家有这个东西」。
+                        com.hanchen.veritycustomapi.ai.ToolAvailabilityFilter.applyInPlace(requestJson);
                         // 两阶段工具清单：核心常驻 + 意图装载，工具多时砍掉无关的
                         com.hanchen.veritycustomapi.ai.ToolListTrimmer.applyInPlace(requestJson);
                     }
@@ -893,39 +862,14 @@ public class OllamaProxyServer {
             return route != null && "builtin".equals(route.source()) && "paid".equalsIgnoreCase(route.tier());
         }
 
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.ResponseShape#validPaidResponseText}。 */
         static String validPaidResponseText(String response) {
-            try {
-                JsonObject root = GSON.fromJson(response, JsonObject.class);
-                if (root == null) return null;
-                String text = extractResponseText(response);
-                if (text != null && !text.isBlank()) return text;
-                return hasValidAssistantOperation(response) ? GSON.toJson(root) : null;
-            } catch (Exception ignored) {
-                return null;
-            }
+            return com.hanchen.veritycustomapi.proxy.ResponseShape.validPaidResponseText(response);
         }
 
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.ResponseShape#hasValidAssistantOperation}。 */
         static boolean hasValidAssistantOperation(String response) {
-            if (response == null || response.isBlank()) return false;
-            try {
-                JsonObject root = GSON.fromJson(response, JsonObject.class);
-                if (root == null) return false;
-                if (root.has("choices") && root.get("choices").isJsonArray()
-                        && !root.getAsJsonArray("choices").isEmpty()) {
-                    JsonObject choice = root.getAsJsonArray("choices").get(0).getAsJsonObject();
-                    if (choice.has("message") && choice.get("message").isJsonObject()) {
-                        JsonObject message = choice.getAsJsonObject("message");
-                        return hasValidToolCalls(message.get("tool_calls"))
-                                || hasValidFunctionCall(message.get("function_call"));
-                    }
-                }
-                if (root.has("message") && root.get("message").isJsonObject()) {
-                    JsonObject message = root.getAsJsonObject("message");
-                    return hasValidToolCalls(message.get("tool_calls"))
-                            || hasValidFunctionCall(message.get("function_call"));
-                }
-            } catch (Exception ignored) { Silent.ignore("OllamaProxyServer", ignored); }
-            return false;
+            return com.hanchen.veritycustomapi.proxy.ResponseShape.hasValidAssistantOperation(response);
         }
 
         private void logEmptyResponseShape(ConfigManager.ChatRoute route, String response) {
@@ -1079,13 +1023,9 @@ public class OllamaProxyServer {
                     + hint + "请查看 latest.log 文件中的详细错误信息，或联系支持。";
         }
 
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.HttpPipeline#sendJson}。 */
         private void sendJsonResponse(HttpExchange exchange, String response) throws IOException {
-            byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, responseBytes.length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(responseBytes);
-            }
+            com.hanchen.veritycustomapi.proxy.HttpPipeline.sendJson(exchange, 200, response);
         }
 
         /**
@@ -1757,49 +1697,8 @@ public class OllamaProxyServer {
          * 每次搜索都是一次真实请求，有延迟也有费用。
          */
         private boolean shouldSearch(String query) {
-            if (!ConfigManager.isWebSearchEnabled() || query == null || query.isBlank()) return false;
-            // 强制模式：开了联网搜索就一定搜。关键词判据再怎么写都会漏
-            //（「现在几点了」「这游戏最新版多少」都可能不含预设词），
-            // 想稳定生效的用户直接开这个。
-            if (ConfigManager.isWebSearchAlways()) return true;
-            String q = query.toLowerCase();
-
-            // 1) 显式要求搜索
-            for (String w : EXPLICIT_SEARCH_HINTS) {
-                if (q.contains(w)) return true;
-            }
-
-            // 2) 时效性问题：必须同时出现「疑问」与「时效」两类信号，避免误触
-            boolean asking = false;
-            for (String w : QUESTION_HINTS) {
-                if (q.contains(w)) { asking = true; break; }
-            }
-            if (!asking) return false;
-            for (String w : RECENCY_HINTS) {
-                if (q.contains(w)) return true;
-            }
-            return false;
+            return com.hanchen.veritycustomapi.proxy.WebSearchTrigger.shouldSearch(query);
         }
-
-        /** 话里直接要求联网的词。 */
-        private static final String[] EXPLICIT_SEARCH_HINTS = {
-                "搜索", "搜一下", "搜下", "联网", "上网查", "网上查", "查一下", "帮我查", "查查",
-                "最新消息", "实时", "search the web", "search online", "look up online", "google"
-        };
-
-        /** 疑问句式信号。 */
-        private static final String[] QUESTION_HINTS = {
-                "?", "？", "吗", "呢", "什么", "多少", "怎么", "如何", "为什么", "哪", "谁",
-                "when", "what", "how", "why", "which", "who"
-        };
-
-        /** 时效性信号：这些词一出现，答案就依赖「现在」。 */
-        private static final String[] RECENCY_HINTS = {
-                "最新", "今天", "今日", "现在", "目前", "最近", "近期", "今年", "昨天", "明天",
-                "新闻", "发布", "上线", "版本", "价格", "多少钱", "股价", "汇率", "天气",
-                "比分", "赛程", "发售", "更新日志",
-                "latest", "today", "now", "current", "recent", "news", "release", "price", "weather"
-        };
 
         private void appendSystemContext(JsonObject bodyJson, String context) {
             com.hanchen.veritycustomapi.proxy.PromptInjections.appendSystemContext(bodyJson, context);
@@ -2363,72 +2262,35 @@ public class OllamaProxyServer {
             }
         }
 
-        /** 把一段文本包成 OpenAI 的 choices[].message.content 响应。 */
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.ResponseShape#buildTextResponse}。 */
         private static String buildOpenAIResponse(String content) {
-            JsonObject message = new JsonObject();
-            message.addProperty("role", "assistant");
-            message.addProperty("content", content);
-
-            JsonObject choice = new JsonObject();
-            choice.add("message", message);
-            choice.addProperty("finish_reason", "stop");
-            choice.addProperty("index", 0);
-
-            JsonArray choices = new JsonArray();
-            choices.add(choice);
-
-            JsonObject result = new JsonObject();
-            result.addProperty("id", "chatcmpl-verity-proxy");
-            result.addProperty("object", "chat.completion");
-            result.addProperty("created", System.currentTimeMillis() / 1000L);
-            result.addProperty("model", "custom");
-            result.add("choices", choices);
-
-            JsonObject usage = new JsonObject();
-            usage.addProperty("prompt_tokens", 0);
-            usage.addProperty("completion_tokens", 0);
-            usage.addProperty("total_tokens", 0);
-            result.add("usage", usage);
-            return GSON.toJson(result);
+            return com.hanchen.veritycustomapi.proxy.ResponseShape.buildTextResponse(content);
         }
 
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.ResponseShape#toBufferedSse}。 */
         static String toBufferedSse(String responseJson) {
             try {
-                JsonObject response = JsonParser.parseString(responseJson).getAsJsonObject();
-                JsonObject originalChoice = response.getAsJsonArray("choices").get(0).getAsJsonObject();
-                JsonObject message = originalChoice.getAsJsonObject("message");
-                JsonObject delta = new JsonObject();
-                delta.addProperty("role", message.has("role") ? message.get("role").getAsString() : "assistant");
-                if (message.has("content")) delta.add("content", message.get("content"));
-                if (message.has("tool_calls")) delta.add("tool_calls", message.get("tool_calls"));
-                if (message.has("function_call")) delta.add("function_call", message.get("function_call"));
-                if (message.has("tool_calls")) {
-                    LOGGER.info("缓冲转流式，工具调用原样下发: {}", describeToolCalls(message.get("tool_calls")));
+                String sse = com.hanchen.veritycustomapi.proxy.ResponseShape.toBufferedSse(responseJson);
+                try {
+                    JsonObject parsed = JsonParser.parseString(responseJson).getAsJsonObject();
+                    JsonObject message = parsed.getAsJsonArray("choices").get(0)
+                            .getAsJsonObject().getAsJsonObject("message");
+                    if (message != null && message.has("tool_calls")) {
+                        LOGGER.info("缓冲转流式，工具调用原样下发: {}",
+                                describeToolCalls(message.get("tool_calls")));
+                    }
+                } catch (Exception ignored) {
+                    // 只影响日志，不影响响应
                 }
-
-                JsonObject choice = new JsonObject();
-                choice.add("delta", delta);
-                choice.add("finish_reason", originalChoice.has("finish_reason")
-                        ? originalChoice.get("finish_reason") : JsonNull.INSTANCE);
-                choice.addProperty("index", 0);
-
-                JsonObject chunk = new JsonObject();
-                if (response.has("id")) chunk.add("id", response.get("id"));
-                if (response.has("created")) chunk.add("created", response.get("created"));
-                if (response.has("model")) chunk.add("model", response.get("model"));
-                chunk.addProperty("object", "chat.completion.chunk");
-                JsonArray choices = new JsonArray();
-                choices.add(choice);
-                chunk.add("choices", choices);
-                return "data: " + GSON.toJson(chunk) + "\n\ndata: [DONE]\n\n";
+                return sse;
             } catch (Exception error) {
                 throw new IllegalArgumentException("无法将 Chat 响应转换为 SSE", error);
             }
         }
 
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.ResponseShape#emptyReplyFallback}。 */
         static String buildEmptyReplyFallback() {
-            // 同样必须是纯文本：Verity 会把 content 原样打印到聊天栏
-            return buildOpenAIResponse("上游模型本次没有返回有效内容，请重新发送消息。");
+            return com.hanchen.veritycustomapi.proxy.ResponseShape.emptyReplyFallback();
         }
         
         private void queueBuildingAction(String actionStr) {
@@ -2457,68 +2319,14 @@ public class OllamaProxyServer {
             LOGGER.info("【AI建造调试】已入队build_plan payloadLength={}", encoded.length());
         }
         
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.ResponseShape#extractResponseText}。 */
         static String extractResponseText(String processedResponse) {
-            if (processedResponse == null || processedResponse.isBlank()) return "";
-            try {
-                JsonObject respJson = GSON.fromJson(processedResponse, JsonObject.class);
-                if (respJson == null) return "";
-
-                if (respJson.has("choices") && respJson.get("choices").isJsonArray()
-                        && !respJson.getAsJsonArray("choices").isEmpty()) {
-                    JsonObject choice = respJson.getAsJsonArray("choices").get(0).getAsJsonObject();
-                    if (choice.has("message") && choice.get("message").isJsonObject()) {
-                        JsonObject message = choice.getAsJsonObject("message");
-                        String content = extractContentText(message.get("content"));
-                        String structured = extractStructuredReply(content);
-                        if (!structured.isBlank()) return structured;
-                        if (content.isBlank()) {
-                            // 推理模型偶尔把正文整段放进 reasoning_content，content 为空。
-                            // 这里兜底取用，避免整轮被判成空回复。
-                            String salvaged = stripThinkingTags(extractContentText(message.get("reasoning_content")));
-                            if (salvaged.isBlank()) {
-                                salvaged = stripThinkingTags(extractContentText(message.get("reasoning")));
-                            }
-                            if (!salvaged.isBlank()) return salvaged;
-                        }
-                    }
-                    String choiceText = extractContentText(choice.get("text"));
-                    if (!choiceText.isBlank()) return choiceText;
-                }
-
-                if (respJson.has("message")) {
-                    JsonElement message = respJson.get("message");
-                    String text = message.isJsonObject()
-                            ? extractContentText(message.getAsJsonObject().get("content"))
-                            : extractContentText(message);
-                    if (!text.isBlank()) return text;
-                }
-
-                String response = extractContentText(respJson.get("response"));
-                return response.isBlank() ? "" : response;
-            } catch (Exception e) {
-                return "";
-            }
+            return com.hanchen.veritycustomapi.proxy.ResponseShape.extractResponseText(processedResponse);
         }
 
-        private static String extractStructuredReply(String content) {
-            if (content == null || content.isBlank()) return "";
-            try {
-                JsonElement parsed = com.google.gson.JsonParser.parseString(content);
-                if (!parsed.isJsonObject()) return content;
-                JsonObject inner = parsed.getAsJsonObject();
-                String message = extractContentText(inner.get("message"));
-                if (!message.isBlank()) return message;
-                String response = extractContentText(inner.get("response"));
-                if (!response.isBlank()) return response;
-                return "";
-            } catch (Exception ignored) {
-                return content;
-            }
-        }
 
         static String extractContentText(JsonElement content) {
-            return com.hanchen.veritycustomapi.proxy.ToolCallNormalizer
-                    .extractContentText(content);
+            return com.hanchen.veritycustomapi.proxy.ResponseShape.extractContentText(content);
         }
         
         /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.BillingGuard}。 */
@@ -2726,9 +2534,8 @@ public class OllamaProxyServer {
         }
 
         /** 聚合结果里是否有可用内容（正文或工具调用）。 */
-        private static boolean hasUsableAggregate(String aggregated) {
-            return aggregated != null
-                    && (!extractResponseText(aggregated).isBlank() || hasValidAssistantOperation(aggregated));
+        static boolean hasUsableAggregate(String aggregated) {
+            return com.hanchen.veritycustomapi.proxy.SseAggregator.hasUsableContent(aggregated);
         }
 
         /**
@@ -2801,151 +2608,36 @@ public class OllamaProxyServer {
         }
 
         /**
-         * 把上游 SSE 文本（data: {...}\n\n）解析为一次性 OpenAI Chat 响应 JSON。
-         * 如果上游直接给 JSON（不是 SSE），也透传。
-         * 如果两者都不识别，返回 null。
+         * 已迁到 {@link com.hanchen.veritycustomapi.proxy.SseAggregator#aggregate}。
+         *
+         * <p>这里保留一层薄包装只为一件事：金附魔书限流原本在聚合末尾做，
+         * 而聚合类不依赖 compat 层，所以搬到包装里——**行为完全一致**。
          */
         static String aggregateSseResponse(String raw) {
-            if (raw == null) return null;
-            String trimmed = raw.trim();
-            if (trimmed.isEmpty()) return null;
-            // 上游直接返回一次性 JSON（无 data: 前缀）：原样透传
-            if (!trimmed.startsWith("data:") && !trimmed.contains("\ndata:") && trimmed.startsWith("{")) {
-                return trimmed;
-            }
-            // OpenAI SSE 协议：每行 "data: {json}"，以 "data: [DONE]" 结束
-            StringBuilder content = new StringBuilder();
-            StringBuilder reasoning = new StringBuilder();
-            // tool_calls 在流式协议里按 index 分片下发：id/name 只在首片出现，arguments 逐片累加。
-            // 之前这里完全没有聚合 tool_calls，于是「模型只请求工具调用、没有正文」的响应
-            // 会被判定成空回复，玩家看到的就是「上游模型本次没有返回有效内容」。
-            java.util.LinkedHashMap<Integer, JsonObject> toolCallsByIndex = new java.util.LinkedHashMap<>();
-            String model = null;
-            String finishReason = null;
-            String responseId = null;
-            long created = 0L;
-            int totalChunks = 0;
-            boolean seenAny = false;
-
-            for (String line : trimmed.split("\\r?\\n")) {
-                if (!line.startsWith("data:")) continue;
-                String payload = line.substring(5).trim();
-                if (payload.isEmpty()) continue;
-                if ("[DONE]".equals(payload)) break;
-                seenAny = true;
-                try {
-                    JsonObject obj = GSON.fromJson(payload, JsonObject.class);
-                    if (responseId == null && obj.has("id") && obj.get("id").isJsonPrimitive()) {
-                        responseId = obj.get("id").getAsString();
-                    }
-                    if (created == 0L && obj.has("created") && obj.get("created").isJsonPrimitive()) {
-                        created = obj.get("created").getAsLong();
-                    }
-                    if (model == null && obj.has("model") && obj.get("model").isJsonPrimitive()) {
-                        model = obj.get("model").getAsString();
-                    }
-                    if (!obj.has("choices")) continue;
-                    JsonArray choices = obj.getAsJsonArray("choices");
-                    if (choices.isEmpty()) continue;
-                    JsonObject choice = choices.get(0).getAsJsonObject();
-                    if (finishReason == null && choice.has("finish_reason")
-                            && !choice.get("finish_reason").isJsonNull()) {
-                        finishReason = choice.get("finish_reason").getAsString();
-                    }
-                    if (choice.has("delta")) {
-                        JsonObject delta = choice.getAsJsonObject("delta");
-                        if (delta.has("content") && !delta.get("content").isJsonNull()) {
-                            content.append(delta.get("content").getAsString());
-                            totalChunks++;
-                        }
-                        // 推理模型（DeepSeek / GLM 等）把思考内容放在 reasoning_content / reasoning 里，
-                        // 不能丢：content 为空时它就是唯一可用的兜底文本。
-                        appendDeltaText(reasoning, delta, "reasoning_content");
-                        appendDeltaText(reasoning, delta, "reasoning");
-                        mergeToolCallDeltas(toolCallsByIndex, delta.get("tool_calls"));
-                    } else if (choice.has("message")) {
-                        // 兼容个别服务返回的 message 字段
+            String aggregated = com.hanchen.veritycustomapi.proxy.SseAggregator.aggregate(raw);
+            if (aggregated == null) return null;
+            try {
+                JsonObject root = GSON.fromJson(aggregated, JsonObject.class);
+                if (root != null && root.has("choices") && root.get("choices").isJsonArray()
+                        && !root.getAsJsonArray("choices").isEmpty()) {
+                    JsonObject choice = root.getAsJsonArray("choices").get(0).getAsJsonObject();
+                    if (choice.has("message") && choice.get("message").isJsonObject()) {
                         JsonObject message = choice.getAsJsonObject("message");
-                        if (message.has("content") && !message.get("content").isJsonNull()) {
-                            content.append(message.get("content").getAsString());
-                            totalChunks++;
+                        JsonElement toolCalls = message.get("tool_calls");
+                        if (toolCalls != null && toolCalls.isJsonArray()
+                                && !toolCalls.getAsJsonArray().isEmpty()
+                                && clampGoldenBookToolCalls(toolCalls.getAsJsonArray())) {
+                            return GSON.toJson(root);
                         }
-                        appendDeltaText(reasoning, message, "reasoning_content");
-                        appendDeltaText(reasoning, message, "reasoning");
-                        mergeToolCallDeltas(toolCallsByIndex, message.get("tool_calls"));
                     }
-                } catch (Exception ignore) {
-                    // 单个 chunk 解析失败不影响整体
                 }
+            } catch (Exception ignored) {
+                // 限流是附加行为，出错时保持聚合结果原样
             }
-
-            if (!seenAny) return null;
-
-            String text = content.toString();
-            if (text.isBlank() && !reasoning.isEmpty()) {
-                // 极少数情况下推理模型把正文整段放进 reasoning_content，content 一直是空串。
-                // 用它兜底总好过直接告诉玩家「没有有效内容」，同时去掉思考标签避免把内心独白念出来。
-                String salvaged = stripThinkingTags(reasoning.toString()).trim();
-                if (!salvaged.isBlank()) {
-                    text = salvaged;
-                    LOGGER.warn("上游 content 为空，已改用 reasoning 内容兜底（{} 字符）", salvaged.length());
-                }
-            }
-
-            JsonObject message = new JsonObject();
-            message.addProperty("role", "assistant");
-            message.addProperty("content", text);
-            if (!toolCallsByIndex.isEmpty()) {
-                JsonArray toolCalls = new JsonArray();
-                for (java.util.Map.Entry<Integer, JsonObject> entry : toolCallsByIndex.entrySet()) {
-                    JsonObject merged = entry.getValue();
-                    JsonObject call = new JsonObject();
-                    // index 只是流式分片的产物，非流式 schema 里没有，去掉避免下游解析器困惑
-                    call.addProperty("type", merged.has("type") ? merged.get("type").getAsString() : "function");
-                    if (merged.has("id") && !merged.get("id").getAsString().isBlank()) {
-                        call.addProperty("id", merged.get("id").getAsString());
-                    } else {
-                        // 少数中转站会把 id 丢掉。没有 id 时 Verity 无法把工具结果配回去，
-                        // 会被判成空回复；这里补一个稳定 id，只要请求历史里的配对一致，上游就接受。
-                        String synthesized = "call_verity_" + entry.getKey();
-                        call.addProperty("id", synthesized);
-                        LOGGER.warn("上游 tool_calls 分片缺少 id，已补合成 id={}", synthesized);
-                    }
-                    call.add("function", merged.has("function") ? merged.get("function") : new JsonObject());
-                    toolCalls.add(call);
-                }
-                // 与透传路径同一套「金附魔书」限流，保证流式/非流式行为一致
-                clampGoldenBookToolCalls(toolCalls);
-                message.add("tool_calls", toolCalls);
-                LOGGER.info("流式聚合得到工具调用: {}", describeToolCalls(toolCalls));
-            }
-
-            JsonObject choice = new JsonObject();
-            choice.add("message", message);
-            choice.addProperty("finish_reason", finishReason != null ? finishReason : "stop");
-            choice.addProperty("index", 0);
-
-            JsonArray choices = new JsonArray();
-            choices.add(choice);
-
-            JsonObject result = new JsonObject();
-            if (responseId != null) result.addProperty("id", responseId);
-            if (model != null) result.addProperty("model", model);
-            if (created > 0L) result.addProperty("created", created);
-            result.add("choices", choices);
-            result.addProperty("object", "chat.completion");
-            LOGGER.info("SSE 聚合 chunks={}, contentLength={}, reasoningLength={}, toolCalls={}",
-                    totalChunks, text.length(), reasoning.length(), toolCallsByIndex.size());
-            return GSON.toJson(result);
+            return aggregated;
         }
 
-        /** 累加 delta/message 里的文本字段（reasoning_content / reasoning）。 */
-        private static void appendDeltaText(StringBuilder target, JsonObject source, String field) {
-            if (source == null || !source.has(field)) return;
-            JsonElement value = source.get(field);
-            if (value == null || value.isJsonNull() || !value.isJsonPrimitive()) return;
-            target.append(value.getAsString());
-        }
+
 
         /**
          * 把流式 tool_calls 分片按 index 合并成完整的工具调用。
@@ -2997,82 +2689,16 @@ public class OllamaProxyServer {
             return changed;
         }
 
-        /**
-         * 把工具调用列表压成一行日志，用于排查「一次回复里到底请求了几个工具」。
-         *
-         * 踩过的现象：Verity 一次给玩家好几本附魔书，只有一本是对的。
-         * 到底是「模型一次就请求了多个工具调用」，还是「同一份请求被重复执行」，
-         * 光看现象分不出来 —— 这行日志把数量、工具名和参数一起打出来（参数截断），
-         * 后几个如果是半截参数，就说明是流式分片被当成了独立调用。
-         */
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.ToolCallNormalizer#describe}。 */
         static String describeToolCalls(JsonElement toolCalls) {
-            if (toolCalls == null || !toolCalls.isJsonArray()) return "tool_calls=0";
-            JsonArray array = toolCalls.getAsJsonArray();
-            StringBuilder summary = new StringBuilder("tool_calls=").append(array.size());
-            for (int i = 0; i < array.size(); i++) {
-                JsonElement element = array.get(i);
-                if (!element.isJsonObject()) continue;
-                JsonObject call = element.getAsJsonObject();
-                String name = "";
-                String args = "";
-                if (call.has("function") && call.get("function").isJsonObject()) {
-                    JsonObject function = call.getAsJsonObject("function");
-                    if (function.has("name") && !function.get("name").isJsonNull()) {
-                        name = function.get("name").getAsString();
-                    }
-                    if (function.has("arguments") && !function.get("arguments").isJsonNull()) {
-                        args = function.get("arguments").getAsString();
-                    }
-                }
-                if (args.length() > 300) {
-                    args = args.substring(0, 300) + "…(共 " + args.length() + " 字符)";
-                }
-                summary.append(" | #").append(i).append(' ').append(name).append(" args=").append(args);
-            }
-            return summary.toString();
+            return com.hanchen.veritycustomapi.proxy.ToolCallNormalizer.describe(toolCalls);
         }
 
-        private static void mergeToolCallDeltas(java.util.LinkedHashMap<Integer, JsonObject> target,
-                                                JsonElement toolCalls) {
-            if (toolCalls == null || !toolCalls.isJsonArray()) return;
-            for (JsonElement element : toolCalls.getAsJsonArray()) {
-                if (!element.isJsonObject()) continue;
-                JsonObject call = element.getAsJsonObject();
-                int index = call.has("index") && call.get("index").isJsonPrimitive() ? call.get("index").getAsInt() : 0;
-                JsonObject merged = target.computeIfAbsent(index, key -> {
-                    JsonObject created = new JsonObject();
-                    created.addProperty("index", key);
-                    return created;
-                });
-                if (call.has("id") && !call.get("id").isJsonNull()) {
-                    merged.addProperty("id", call.get("id").getAsString());
-                }
-                if (call.has("type") && !call.get("type").isJsonNull()) {
-                    merged.addProperty("type", call.get("type").getAsString());
-                }
-                if (call.has("function") && call.get("function").isJsonObject()) {
-                    JsonObject incoming = call.getAsJsonObject("function");
-                    JsonObject function = merged.has("function") && merged.get("function").isJsonObject()
-                            ? merged.getAsJsonObject("function") : new JsonObject();
-                    if (incoming.has("name") && !incoming.get("name").isJsonNull()) {
-                        function.addProperty("name", incoming.get("name").getAsString());
-                    }
-                    if (incoming.has("arguments") && !incoming.get("arguments").isJsonNull()) {
-                        String existing = function.has("arguments") ? function.get("arguments").getAsString() : "";
-                        function.addProperty("arguments", existing + incoming.get("arguments").getAsString());
-                    }
-                    merged.add("function", function);
-                }
-            }
-        }
 
-        /** 去掉 &lt;think&gt;…&lt;/think&gt; 之类的思考标签，避免把模型内心独白当成台词。 */
+
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.ThinkingTags#strip}。 */
         private static String stripThinkingTags(String value) {
-            if (value == null || value.isBlank()) return "";
-            return value.replaceAll("(?s)<think>.*?</think>", "")
-                    .replaceAll("(?s)<thinking>.*?</thinking>", "")
-                    .replaceAll("(?s)<reasoning>.*?</reasoning>", "")
-                    .trim();
+            return com.hanchen.veritycustomapi.proxy.ThinkingTags.strip(value);
         }
     }
 

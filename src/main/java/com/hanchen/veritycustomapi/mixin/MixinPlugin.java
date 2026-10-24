@@ -35,9 +35,29 @@ public class MixinPlugin implements IMixinConfigPlugin {
     /** 原版回复发送逻辑是否为新版结构（6.2 起）。6.0.x/6.1.x 写在 lambda$queryAI$4，6.2 起抽成 sendReplyPart 且参数顺序变了，两个 Mixin 靠此标记二选一。 */
     private boolean verityNewReplyStructure;
 
+    /**
+     * 原版是否还有 {@code Tools.list_available_itemids} 工具（6.0.0 起已删除）。
+     *
+     * <p>🔴 这个标志是 2026-10-24 一次真实崩溃换来的：{@link VerityToolsMixin} 用
+     * {@code @Inject(method = "list_available_itemids", ...)} 接管原版物品搜索，
+     * 而 6.0.0 把这个工具整个删掉了（只留下 {@code give_item}）。
+     * 目标方法找不到时 Mixin 会抛 {@code InvalidInjectionException}，
+     * **整个 {@code Tools} 类加载失败**——而 {@code Tools} 是在第一次对话时才被加载的，
+     * 所以启动阶段完全正常，玩家一开口就收到
+     * {@code MixinTransformerError: An unexpected critical error was encountered}。
+     *
+     * <p>教训：{@code @Inject} 的目标方法必须先用字节扫描确认存在，
+     * 再决定要不要应用这个 mixin。指望 {@code require = 0} 兜底是不行的——
+     * 这里的失败是「找不到目标」而不是「参数不匹配」，整类加载直接崩。
+     */
+    private boolean verityItemSearchToolAvailable;
+
     /** 判断依据：AiManager 里是否存在 sendReplyPart 方法（6.2 起才有）。 */
     private static final String AI_MANAGER_CLASS =
             com.hanchen.veritycustomapi.compat.VerityStructureDetector.AI_MANAGER_RESOURCE;
+
+    /** 原版物品搜索工具的方法名（6.0.0 起已不存在）。 */
+    private static final String ITEM_SEARCH_METHOD = "list_available_itemids";
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -64,6 +84,12 @@ public class MixinPlugin implements IMixinConfigPlugin {
             VerityLocalization.load();
             localizationActive = VerityLocalization.isEnabled();
             OllamaProxyMod.LOGGER.info("[MixinPlugin] 原版界面汉化{}", localizationActive ? "已启用" : "已关闭");
+            verityItemSearchToolAvailable = detectItemSearchTool(loader);
+            if (!verityItemSearchToolAvailable) {
+                OllamaProxyMod.LOGGER.info("[MixinPlugin] 原版没有 {} 工具（6.0.0 起已删除），"
+                        + "双语物品搜索兼容层已跳过；给物品功能改由 give_item_by_name 提供",
+                        ITEM_SEARCH_METHOD);
+            }
         } else {
             OllamaProxyMod.LOGGER.info("[MixinPlugin] 未检测到原版 Verity 模组，皮肤 Mixin 已禁用");
         }
@@ -88,6 +114,19 @@ public class MixinPlugin implements IMixinConfigPlugin {
             return com.hanchen.veritycustomapi.compat.VerityStructureDetector
                     .hasLegacyReplyMethod(in.readAllBytes());
         } catch (Throwable error) {
+            return false;
+        }
+    }
+
+    /** 读 Tools 的 class 字节，确认物品搜索工具还在；读不到按「不存在」处理（宁可少一个兼容层，也不能让整类崩掉）。 */
+    private static boolean detectItemSearchTool(ClassLoader loader) {
+        try (java.io.InputStream in = loader.getResourceAsStream(
+                com.hanchen.veritycustomapi.compat.VerityStructureDetector.TOOLS_RESOURCE)) {
+            if (in == null) return false;
+            return com.hanchen.veritycustomapi.compat.VerityStructureDetector
+                    .hasMethod(in.readAllBytes(), ITEM_SEARCH_METHOD);
+        } catch (Throwable error) {
+            OllamaProxyMod.LOGGER.warn("[MixinPlugin] 检测原版物品搜索工具失败，按不存在处理: {}", error.toString());
             return false;
         }
     }
@@ -136,6 +175,13 @@ public class MixinPlugin implements IMixinConfigPlugin {
         if (mixinClassName.contains("PatPatClientRendererMixin")) {
             return verityAvailable && patPatAvailable;
         }
+        // 🔴 物品搜索兼容层：6.0.0 删掉了 list_available_itemids，@Inject 找不到目标会让
+        // 整个 Tools 类加载失败（第一次对话才触发，表现为开局正常、一说话就炸）。
+        // 目标方法不存在时必须整个跳过——注意这会让同一 mixin 里的 @Unique give_item_by_name
+        // 一起失效，所以下面 VerityGiveItemByNameMixin 单独承担「按名字给物品」。
+        if (mixinClassName.contains("VerityToolsMixin")) {
+            return verityAvailable && verityItemSearchToolAvailable;
+        }
         // 汉化占位 Mixin 同样需要原版 Verity 存在
         if (mixinClassName.contains("VerityLocalizationMixin")) {
             return verityAvailable;
@@ -157,11 +203,15 @@ public class MixinPlugin implements IMixinConfigPlugin {
                 || mixinClassName.contains("VerityEntityBuiltinPmxMixin")
                 || mixinClassName.contains("VerityDemonRenderRotationMixin")
                 || mixinClassName.contains("EntityPerchRideMixin")
+                || mixinClassName.contains("MobRideControlMixin")
                 || mixinClassName.contains("LivingEntityPerchRideMixin")
+                || mixinClassName.contains("LivingEntityRiddenControlMixin")
                 || mixinClassName.contains("MobVerityInteractMixin")
                 || mixinClassName.contains("EntityRideAccessor")
                 || mixinClassName.contains("LivingEntityRideAccessor")
                 || mixinClassName.contains("VerityToolsMixin")
+                || mixinClassName.contains("VerityGiveItemByNameMixin")
+                || mixinClassName.contains("VerityFeatureToolMixin")
                 || mixinClassName.contains("VerityKarmaCapMixin")
                 || mixinClassName.contains("AiApiMemoryIsolationMixin")) {
             return verityAvailable;

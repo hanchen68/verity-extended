@@ -24,8 +24,12 @@ import net.minecraftforge.common.ForgeConfigSpec;
  * 云端配置的通用下发通道。
  *
  * 原来的云端字段是「一个配置项一个字段」，每加一个能远程配置的功能，云端和 Mod 都得同时发一版。
- * 这里换成一个 {@code overrides} 映射（键 = TOML 点分路径），170 项配置都能直接下发，
- * 以后新增配置项也不用再改云端协议。
+ * 这里换成一个 {@code overrides} 映射（键 = TOML 点分路径）。
+ *
+ * <p>🔴 <b>2026-10-24 起只接受 API 连接配置</b>（见 {@link #ALLOWED_KEYS}）。
+ * 之前是「190 项全量可下发」，结果凡是云端下发过的**功能开关**，玩家在本地都改不回来——
+ * 下一轮拉取又盖回去，表现就是「设置自己变回去了」。现在只放行 endpoint / 密钥 /
+ * 模型名 / 协议格式这类「怎么连上去」的键，功能开关与行为参数全部由本机管理。
  *
  * 值是直接写进 ForgeConfigSpec 的，不是套一层 getter。项目里有 500 多处直接读
  * {@code ModConfig.XXX.get()}（配置界面 276 处、恐怖事件、AI 建造、管理员指令……），
@@ -51,11 +55,66 @@ public final class CloudOverrides {
     private static final String FORBIDDEN_ROOT = "cloud";
 
     /**
+     * **允许**云端下发的配置项白名单（点分路径，全名精确匹配）。
+     *
+     * <p>🔴 2026-10-24 改为白名单制：只放行「API 连接配置」，其余全部交给本机管理。
+     *
+     * <p>为什么从「全量允许」退到白名单：云端下发的是**功能开关和行为参数**时，
+     * 玩家在本地怎么也改不回来——云端下一轮又盖回去，表现为「设置自己变回去了」
+     * （{@code cloud.enable} 反复自动关闭就是这么被误诊了很久）。
+     * 而且云端一旦下发某个键，这个键就会进入「覆盖中」状态，本地保存要把值来回倒手，
+     * 是配置被写坏的主要来源。相比之下，**真正需要云端统一管理的只有连接信息**：
+     * 换上游地址、换密钥、换模型——这些玩家自己配容易配错，也确实是运营方该管的。
+     *
+     * <p>白名单的设计原则：
+     * <ul>
+     *   <li>只收 <b>endpoint / 密钥 / 模型名 / 协议格式</b> 这类「怎么连上去」的键；</li>
+     *   <li>不收任何 <b>功能开关</b>（{@code enabled} / {@code allow*} / {@code enable*} 一律不进）；</li>
+     *   <li>不收任何 <b>行为参数</b>（冷却、上限、速度、音量、概率都不进）。</li>
+     * </ul>
+     *
+     * <p>以后要加，先问一句：这一项如果玩家在本地改不动、每轮都被云端盖回去，他能接受吗？
+     * 答不上来就不要加。
+     */
+    private static final Set<String> ALLOWED_KEYS = Set.of(
+            // 对话模型连接
+            "llm.apiProvider",
+            "llm.apiUrl",
+            "llm.apiKey",
+            "llm.model",
+            "llm.requestTimeout",
+            // 语音识别连接
+            "speech_recognition.apiProvider",
+            "speech_recognition.apiUrl",
+            "speech_recognition.apiKey",
+            "speech_recognition.model",
+            "speech_recognition.requestFormat",
+            "speech_recognition.authType",
+            "speech_recognition.responseField",
+            // 语音合成连接
+            "text_to_speech.apiProvider",
+            "text_to_speech.apiUrl",
+            "text_to_speech.apiKey",
+            "text_to_speech.apiModel",
+            "text_to_speech.apiVoice",
+            // 线路选择（只决定「走哪条」、「用哪个音色」，不含任何行为参数）
+            "tts_route.kind",
+            // 台词翻译连接
+            "voice_language.translateModel",
+            "voice_language.translateUrl",
+            "voice_language.translateApiKey"
+    );
+
+    /**
      * 联网搜索整组（开关 / 服务商 / 密钥 / 自定义接口）由本机管理，**无条件**不受云端覆盖。
      *
      * <p>服务商与密钥只存在本地，云端下发一个不匹配的服务商（本地 DeepSeek 密钥 +
      * 云端把 provider 改成 TAVILY）会让搜索直接失效；云端下发 false 还会让开关看起来开着、
      * 运行时却是关的。因此这组键与 {@code cloud.*} 一样，不参与云端下发。
+     *
+     * <p>白名单制之后这组键本来就不在里面，这里保留判据是为了给出**准确的原因**：
+     * 日志里会明确写「联网搜索由本机管理」，而不是笼统的「不在白名单」——
+     * 排查时这两句话指向的方向完全不同。
      */
     private static final String WEB_SEARCH_SECTION = "ai_extensions";
     private static final String WEB_SEARCH_PREFIX = "webSearch";
@@ -154,6 +213,19 @@ public final class CloudOverrides {
         return Collections.unmodifiableList(keys);
     }
 
+    /**
+     * 云端**实际允许**下发的键（白名单）。自检用。
+     *
+     * <p>注意与 {@link #allOverridableKeys()} 的区别：那个是「配置规格里存在的键」，
+     * 这个是「云端有权限改的键」。两者数量差很多是**正常的**——
+     * 功能开关都在规格里，但不在白名单里。
+     */
+    public static List<String> cloudAllowedKeys() {
+        List<String> keys = new ArrayList<>(ALLOWED_KEYS);
+        Collections.sort(keys);
+        return Collections.unmodifiableList(keys);
+    }
+
     /** 硬禁止下发的段名。自检用。 */
     public static String forbiddenRoot() {
         return FORBIDDEN_ROOT;
@@ -189,6 +261,7 @@ public final class CloudOverrides {
         List<String> unloaded = new ArrayList<>();
         List<String> badType = new ArrayList<>();
         List<String> localPinned = new ArrayList<>();
+        List<String> notAllowed = new ArrayList<>();
         Map<Slot, Object> coerced = new LinkedHashMap<>();
 
         for (Map.Entry<List<String>, JsonElement> entry : flat.entrySet()) {
@@ -200,6 +273,12 @@ public final class CloudOverrides {
             // 联网搜索整组由本机管理：服务商、密钥、开关都在本地，云端一律不参与。
             if (isWebSearchPath(path)) {
                 localPinned.add(dotted(path));
+                continue;
+            }
+            // 白名单之外的一律丢弃。这一条挡掉的是「功能开关与行为参数」——
+            // 它们被云端覆盖后玩家在本地改不动，表现为「设置自己变回去了」。
+            if (!ALLOWED_KEYS.contains(dotted(path))) {
+                notAllowed.add(dotted(path));
                 continue;
             }
             Slot slot = index().get(path);
@@ -251,7 +330,14 @@ public final class CloudOverrides {
             // 首次接管这一项（本地没钉住过）时，如果本地文件里本来就不是默认值
             // （说明玩家早就自己调过），且和云端给的不一样，就以本地为准，
             // 否则启动那一次下发会把玩家原来的设置冲掉。
-            if (!active.containsKey(slot.path) && !pinned.containsKey(slot.path)) {
+            //
+            // 🔴 白名单制之后这条规则**对 API 连接配置不适用**：
+            // 它的本意是「别把玩家精心调过的功能参数冲掉」，而 API 连接配置本来就是
+            // 交给云端统一管理的——保留本地旧地址等于云端永远改不动上游，
+            // 运营方换 endpoint 时玩家全都收不到。所以白名单内的键直接接管，
+            // 但仍然记下 localValue，云端撤掉后照样能还原。
+            if (!ALLOWED_KEYS.contains(dotted(slot.path))
+                    && !active.containsKey(slot.path) && !pinned.containsKey(slot.path)) {
                 Object local = readCurrent(slot);
                 Object defaultValue = slot.value.getDefault();
                 if (local != null
@@ -297,7 +383,8 @@ public final class CloudOverrides {
             lastLocalPinned = pinnedSummary;
             OllamaProxyMod.LOGGER.info("联网搜索设置由本机管理，忽略云端覆盖: {}", localPinned);
         }
-        report(flat.size(), accepted.size(), forbidden, unknown, unloaded, badType, outOfRange, keptLocal);
+        report(flat.size(), accepted.size(), forbidden, unknown, unloaded, badType, outOfRange,
+                keptLocal, notAllowed);
         return accepted.size();
     }
 
@@ -485,6 +572,46 @@ public final class CloudOverrides {
         saveSpec(ModConfig.COMMON_SPEC);
     }
 
+    /** 上一次保存时 {@code cloud.enable} 的值，用来识别「true → false」这种翻转。 */
+    private static Boolean lastSavedCloudEnable;
+
+    /**
+     * 审计 {@code cloud.enable}：它只允许由「配置界面的开关」或「清除授权」改成 false。
+     *
+     * <p>历史上反复出现「云端配置自己关」，但每次都没有线索——因为值是在某次保存时
+     * 静默写进去的，日志里什么都没有。这里在**每次保存**时看一眼：
+     * 有凭据却写成 false 就把调用链记下来，下次再犯日志会直接点名是谁。
+     */
+    private static void auditCloudEnable() {
+        try {
+            boolean enabled = ModConfig.CLOUD_ENABLE.get();
+            Boolean previous = lastSavedCloudEnable;
+            lastSavedCloudEnable = enabled;
+            if (previous == null || previous == enabled || enabled) return;
+            String key = com.hanchen.veritycustomapi.cloud.CloudCredentialStore.getInstance().apiKey();
+            if (key == null || key.isBlank()) return;
+            OllamaProxyMod.LOGGER.warn("cloud.enable 在本次保存中被写成 false（凭据仍在），调用链: {}",
+                    callerHint());
+        } catch (Throwable ignored) {
+            Silent.ignore("CloudOverrides", ignored);
+        }
+    }
+
+    /** 取调用栈里本模组的前几层，用来定位是谁触发的保存。 */
+    private static String callerHint() {
+        StringBuilder builder = new StringBuilder();
+        for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
+            String name = frame.getClassName();
+            if (!name.startsWith("com.hanchen.veritycustomapi")) continue;
+            if (name.endsWith("CloudOverrides")) continue;
+            if (builder.length() > 0) builder.append(" <- ");
+            builder.append(name, name.lastIndexOf('.') + 1, name.length())
+                    .append('.').append(frame.getMethodName());
+            if (builder.length() > 160) break;
+        }
+        return builder.length() == 0 ? "(未知)" : builder.toString();
+    }
+
     public static void saveClient() {
         saveSpec(ModConfig.CLIENT_SPEC);
     }
@@ -498,12 +625,11 @@ public final class CloudOverrides {
      */
     public static synchronized void saveSpec(ForgeConfigSpec spec) {
         if (spec == null) return;
+        auditCloudEnable();
         if (active.isEmpty() || !spec.isLoaded()) {
-            // 没覆盖就保持原样；没加载时也照旧让它抛，别把真实错误吞掉
-            spec.save();
-            try {
-                ForgeConfigRepair.snapshotAfterSave(spec);
-            } catch (Throwable ignored) { Silent.ignore("CloudOverrides", ignored); }
+            // 没覆盖就保持原样；没加载时也照旧让它抛，别把真实错误吞掉。
+            // 走守卫保存：保存前后各数一次键数，骤降就换回保存前的版本。
+            ForgeConfigRepair.saveWithGuard(spec);
             return;
         }
 
@@ -542,13 +668,14 @@ public final class CloudOverrides {
         if (!adopt.isEmpty()) persistPins();
 
         try {
-            spec.save();
+            // 走守卫保存：保存前后各数一次键数，骤降就换回保存前的版本。
+            // 🔴 这一步不能用裸 spec.save()：2026-10-24 实测过保存把 122 个键写成 20 个，
+            // 写出来的恰好是「被 set 过的那批云端键」，说明当时内存树里只有这些节点。
+            // 具体为什么树会不全还没查清（怀疑与 setConfig 被重复调用有关），
+            // 但守卫不依赖原因——不管怎么坏的，文件都不会比保存前更差。
+            ForgeConfigRepair.saveWithGuard(spec);
         } finally {
-            // 保存成功后留一份完整快照：Forge 写 TOML 不是原子的，
-            // 半截文件会让 cloud.enable 之类读回默认值（表现为「云端自己关了」）
-            try {
-                ForgeConfigRepair.snapshotAfterSave(spec);
-            } catch (Throwable ignored) { Silent.ignore("CloudOverrides", ignored); }
+            // 恢复云端覆盖值：让运行期继续看到覆盖后的值（此时文件里已经是本地值了）
             for (Slot slot : reapply) {
                 try {
                     write(slot.value, slot.cloudValue);
@@ -733,13 +860,19 @@ public final class CloudOverrides {
     /** 摘要只在变化时打，否则每次轮询都会刷一遍同样的行。 */
     private static void report(int offered, int applied, List<String> forbidden, List<String> unknown,
                                List<String> unloaded, List<String> badType, List<String> outOfRange,
-                               List<String> keptLocal) {
+                               List<String> keptLocal, List<String> notAllowed) {
         String summary = applied + "|" + forbidden + "|" + unknown + "|" + unloaded + "|" + badType + "|"
-                + outOfRange + "|" + keptLocal;
+                + outOfRange + "|" + keptLocal + "|" + notAllowed;
         if (summary.equals(lastSummary)) return;
         lastSummary = summary;
 
-        OllamaProxyMod.LOGGER.info("云端配置覆盖: 下发 {} 项，生效 {} 项", offered, applied);
+        OllamaProxyMod.LOGGER.info("云端配置覆盖: 下发 {} 项，生效 {} 项（只接受 API 连接配置）", offered, applied);
+        if (!notAllowed.isEmpty()) {
+            // 这条用 INFO 而不是 WARN：云端面板可能还在下发旧的功能开关，
+            // 每次轮询都 WARN 会刷屏；但它确实是「没生效」的原因，必须能看见。
+            OllamaProxyMod.LOGGER.info("云端下发了 {} 项非 API 连接配置，已忽略（功能开关由本机管理）: {}",
+                    notAllowed.size(), notAllowed);
+        }
         if (!forbidden.isEmpty()) {
             OllamaProxyMod.LOGGER.warn("云端覆盖包含禁止下发的 {} 段，已忽略: {}", FORBIDDEN_ROOT, forbidden);
         }

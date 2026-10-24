@@ -26,7 +26,7 @@ public final class MmdSpawnDemonPayload {
     public int entityId() { return entityId; }
     public Vec3 position() { return position; }
     public ResourceLocation entityKey() {
-        return entityKey == null ? ResourceLocation.fromNamespaceAndPath("verity", "verity_demon") : entityKey;
+        return entityKey == null ? new ResourceLocation("verity", "verity_demon") : entityKey;
     }
 
     public static void write(MmdSpawnDemonPayload payload, FriendlyByteBuf buf) {

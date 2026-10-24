@@ -37,7 +37,7 @@ import java.util.UUID;
  */
 public final class StellarRemoteCompat {
     private static final ResourceLocation REMOTE_ID =
-            ResourceLocation.fromNamespaceAndPath("shooting_star_demo", "stellar_remote");
+            new ResourceLocation("shooting_star_demo", "stellar_remote");
     private static final String SKILL_PACKAGE = "cyou.rimuru.shootingstardemo.mc1201.magic.";
     private static final String CASTER_NAME = "Verity";
     /** 复算落点时射线的最小长度，避免近距离目标被截断成“没打中”。 */
@@ -128,7 +128,7 @@ public final class StellarRemoteCompat {
         }
 
         VerityEntity verity = VerityEntityLookup.find(owner);
-        if (verity == null) return "现在没找到你的 Verity，没办法让她出手。";
+        if (verity == null) return "现在没找到你的 Verity，没办法让 Verity 出手。";
         if (!(verity.level() instanceof ServerLevel level)) return "现在不在服务端世界里，用不了。";
 
         Object skill = findSkill(keyword);
@@ -160,7 +160,7 @@ public final class StellarRemoteCompat {
                     displayOf(skill), fmt(aim), fmt(landing));
             double offset = landing.distanceTo(aim);
             String tail = offset > 1.5D
-                    ? "，你指的是 " + fmt(aim) + "，她这条视线先撞上了东西，实际落在 " + fmt(landing)
+                    ? "，你指的是 " + fmt(aim) + "，Verity 这条视线先撞上了东西，实际落在 " + fmt(landing)
                     : "，落点 " + fmt(landing);
             return "Verity 抬起星之遥控器，" + displayOf(skill) + " 朝目标落了下去" + tail + "。";
         } catch (Throwable error) {
@@ -169,7 +169,7 @@ public final class StellarRemoteCompat {
         }
     }
 
-    /** 让她“举着”遥控器若干 tick；纯客户端渲染，不影响判定。 */
+    /** 让 Verity“举着”遥控器若干 tick；纯客户端渲染，不影响判定。 */
     public static void showHold(VerityEntity verity, int ticks) {
         if (verity == null || !showInHand()) return;
         Item item = remoteItem();
@@ -325,7 +325,14 @@ public final class StellarRemoteCompat {
         return false;
     }
 
-    private static boolean enabled() {
+    /**
+     * 适配开关是否开启（配置项 {@code stellar_remote.enabled}）。
+     *
+     * <p>public 是给 {@code ai.ToolAvailabilityFilter} 用的：那个类要在请求转发前
+     * 判断这个工具该不该出现在清单里。配置读不到时按「开着」处理——
+     * 与 {@link #cast} 的兜底一致，避免配置未加载时把功能误关掉。
+     */
+    public static boolean enabled() {
         try {
             return ModConfig.STELLAR_REMOTE_ENABLED.get();
         } catch (Throwable ignored) {

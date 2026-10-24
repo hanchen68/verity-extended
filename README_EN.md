@@ -3,13 +3,13 @@
 [中文](README.md) | **English**
 
 An add-on for [Verity JE](https://modrinth.com/mod/verity-je-official) that layers gameplay
-and quality-of-life features on top of it: riding and head-perching, AI building, a plugin
+and quality-of-life features on top of it: riding and head-perching, AI building, proactive
 system, persona and memory, voice input/output, MMD skeletal animation, and more.
 
 > This is an **add-on** for Verity. It cannot run without the original Verity installed.
 
 - Minecraft **1.20.1**
-- Forge **47.4.21** (47.4.20 and above)
+- Forge **47.3+** (47.3.x and 47.4.x both work)
 - Java **17+**
 
 ---
@@ -29,8 +29,8 @@ system, persona and memory, voice input/output, MMD skeletal animation, and more
   then the mod generates the full structure and builds it safely in batches.
   Includes a pre-build ghost preview, progress display, cancel and undo, a local blueprint
   library, and resuming across restarts
-- **Plugin system** — generate rules in natural language, for example
-  `/verity-plugin create remind me when I mine a diamond and count how many I have mined`
+- **Proactive behaviour** — wanders nearby when idle, offers a heal when your health drops below half,
+  and fights back when you are attacked
 - **Proactive awareness** — events such as entering a world, low health, death and sleeping can
   start a conversation on their own
 - **Web search** — optionally connect a search service so the model can look up current information
@@ -64,7 +64,7 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full version history (in Chinese).
 
 ## Installation
 
-1. Install Minecraft Java Edition **1.20.1** and **Forge 47.4.21** (or a later 47.4.x).
+1. Install Minecraft Java Edition **1.20.1** and **Forge 47.3+** (47.3.x or 47.4.x).
 2. Install **the original Verity** ([Modrinth](https://modrinth.com/mod/verity-je-official)) plus
    whatever dependencies that Verity version requires (GeckoLib, Cloth Config, and so on).
 3. Download this mod's jar from [Releases](https://github.com/hanchen68/verity-extended/releases)
@@ -102,7 +102,7 @@ which step went wrong.
 | | |
 |---|---|
 | Minecraft | 1.20.1 |
-| Forge | 47.4.20 and above |
+| Forge | 47.3 and above (compiled against 47.3.0) |
 | Environment | Can be installed on both client and server |
 | Required | The original Verity |
 | Optional | Cloth Config, PatPat (the affected features are skipped when absent) |

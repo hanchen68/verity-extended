@@ -36,10 +36,16 @@ public final class ForgeConfigRepair {
      * 每个文件必须存在的「哨兵键」。Forge 写 TOML 不是原子操作：Android 上进程被杀会留下半截文件，
      * 缺的键在下次加载时按默认值处理——{@code cloud.enable} 的默认值就是 false，
      * 于是「云端配置自己关掉了」。这里用哨兵判断文件是否完整，不完整就拿上一次的快照恢复。
+     *
+     * <p>client 的哨兵从 {@code localization.enableVerityLocalization} 换成了
+     * {@code mmd.cameraHeight}：后者在文件里更靠后，截断检测更准（哨兵在文件前部时，
+     * 截断点落在哨兵之后仍会被误判为完整，这正是 common 那边踩过的坑）。
+     * 换哨兵时务必挑一个**长期稳定**的键，否则哨兵永远匹配不上，
+     * 每次启动都会误判「文件被写坏」并从快照恢复，反而悄悄回滚玩家的客户端设置。
      */
     private static final Map<String, String[][]> SENTINELS = Map.of(
             "verity_extended-common.toml", new String[][]{{"cloud", "enable"}, {"server", "port"}},
-            "verity_extended-client.toml", new String[][]{{"localization", "enableVerityLocalization"}}
+            "verity_extended-client.toml", new String[][]{{"mmd", "cameraHeight"}}
     );
 
     /** 上一次完整文件的快照后缀。 */
@@ -80,18 +86,190 @@ public final class ForgeConfigRepair {
     }
 
     /**
+     * 关机时的最终校验：两份 TOML 各查一遍，不完整就用快照恢复。
+     *
+     * <p>🔴 为什么必须在关机时再查一次：{@link #repairIfNeeded()} 只在**启动**时跑，
+     * 而实测到的故障恰恰发生在**关机**——22:20:36.230 打出 `Stopping!`，
+     * 31 毫秒后 common.toml 从 122 个键变成 20 个。那次写盘没有经过
+     * {@link #saveWithGuard}（日志里保存守卫一次都没执行），
+     * 说明是 Forge 自己的 ConfigTracker 或别的路径在退出时写了一次。
+     *
+     * <p>所以启动时的自愈只能「事后补救」，而这里能在**同一个进程内**就把坏文件换掉：
+     * 此时快照还没被污染（{@link #snapshot} 有 10% 门槛保护），恢复是可靠的。
+     *
+     * <p>关机会多花两次文件读取（各几 KB），代价可以忽略。
+     */
+    public static void verifyOnShutdown() {
+        for (String fileName : FILE_NAMES) {
+            try {
+                Path path = FMLPaths.CONFIGDIR.get().resolve(fileName);
+                if (!Files.isRegularFile(path)) continue;
+                int before = countKeys(path);
+                restoreIfTruncated(path, fileName);
+                int after = countKeys(path);
+                if (after != before) {
+                    OllamaProxyMod.LOGGER.warn("{} 关机校验发现文件不完整（{} → {} 个配置键），已用快照恢复",
+                            fileName, before, after);
+                } else {
+                    // 每次退出都记一行：正常情况下这几行就是「配置完好」的证据；
+                    // 万一哪天又少了键，能立刻看出是哪一份、少了多少。
+                    OllamaProxyMod.LOGGER.info("{} 关机校验：{} 个配置键", fileName, after);
+                }
+            } catch (Throwable error) {
+                // 关机路径上任何异常都不能拦住退出流程
+                OllamaProxyMod.LOGGER.debug("{} 关机校验失败: {}", fileName, error.toString());
+            }
+        }
+    }
+
+    /**
      * 保存成功后留一份完整快照，下一次启动发现文件被写坏就拿它恢复。
-     * 由 {@link CloudOverrides#saveSpec} 在所有保存路径上调用。
+     * 由 {@link #saveWithGuard} 在所有保存路径上调用。
+     *
+     * <p>🔴 调用顺序必须是「校验 → 本方法」。
+     * 反过来的话，坏文件会先把好快照覆盖掉，校验时就没有参照物了。
      */
     public static void snapshotAfterSave(net.minecraftforge.common.ForgeConfigSpec spec) {
         if (spec == null) return;
-        String fileName = spec == ModConfig.CLIENT_SPEC
-                ? "verity_extended-client.toml" : "verity_extended-common.toml";
+        String fileName = fileNameOf(spec);
         try {
             Path path = FMLPaths.CONFIGDIR.get().resolve(fileName);
             if (Files.isRegularFile(path)) snapshot(path, fileName);
         } catch (Throwable error) {
             OllamaProxyMod.LOGGER.debug("保存配置快照失败: {}", error.toString());
+        }
+    }
+
+    /** 这个 spec 对应的 TOML 文件名。 */
+    public static String fileNameOf(net.minecraftforge.common.ForgeConfigSpec spec) {
+        return spec == ModConfig.CLIENT_SPEC
+                ? "verity_extended-client.toml" : "verity_extended-common.toml";
+    }
+
+    /**
+     * **带守卫的保存**：先备份当前文件 → 保存 → 发现键数骤降就换回来 → 更新快照。
+     *
+     * <p>🔴 这是 2026-10-24 那次「关机后整份配置只剩 20 个键」的最终修法。
+     *
+     * <p>故障复盘：`verity_extended-common.toml` 从 122 个键变成 20 个，
+     * 而<b>被写出来的那 20 个键恰好就是云端覆盖过的那批 common 键</b>，
+     * 顺序也是写入顺序而非文件原顺序。这说明保存那一刻，内存配置树里**只有被 set 过的节点**，
+     * 其余节点不在树里——`FileConfig.save()` 写的是整棵树，树不全，文件自然就只剩这些。
+     *
+     * <p>为什么不能只靠「保存后和快照比」：快照也是文件，而树不完整这件事
+     * 可能发生在**任何一次**保存上（包括快照自身那次）。而且快照有 10% 门槛保护，
+     * 一旦某次写坏的东西刚好过门槛，快照就被污染，之后再没参照物。
+     *
+     * <p>所以这里改成「**和保存前的自己比**」：
+     * 保存前先数一遍现有文件的键数并留一份副本，保存后数一遍；
+     * 掉超过 10% 就判定这次保存把文件写坏了，直接用保存前的副本换回来。
+     * 这个判据不依赖任何外部参照，也不依赖「树为什么不全」——
+     * **不管什么原因导致写坏，文件都不会比保存前更差**。
+     *
+     * <p>为什么阈值是 10%：留出「版本升级确实删掉几个配置项」的余量。
+     * 超过 10% 的键一次性消失，不可能是一次正常改配置。
+     */
+    public static void saveWithGuard(net.minecraftforge.common.ForgeConfigSpec spec) {
+        if (spec == null) return;
+        String fileName = fileNameOf(spec);
+        Path file = null;
+        Path backup = null;
+        int keysBefore = 0;
+        try {
+            file = FMLPaths.CONFIGDIR.get().resolve(fileName);
+            if (Files.isRegularFile(file)) {
+                keysBefore = countKeys(file);
+                if (keysBefore > 0) {
+                    backup = file.resolveSibling(file.getFileName() + ".pre-save");
+                    Files.copy(file, backup, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        } catch (Throwable error) {
+            OllamaProxyMod.LOGGER.debug("{} 保存前备份失败，本次不做完整性比对: {}",
+                    fileName, error.toString());
+        }
+
+        try {
+            spec.save();
+        } finally {
+            try {
+                restoreIfShrunk(file, backup, keysBefore, fileName);
+            } finally {
+                if (backup != null) {
+                    try {
+                        Files.deleteIfExists(backup);
+                    } catch (Throwable ignored) {
+                        // 删不掉就留着，下次保存会覆盖
+                    }
+                }
+            }
+            // 只有在文件确认完好之后才更新快照，避免把坏文件当成新基准
+            snapshotAfterSave(spec);
+        }
+    }
+
+    /**
+     * 保存后键数骤降就换回保存前的副本。
+     *
+     * @return 是否发生了回滚
+     */
+    static boolean restoreIfShrunk(Path file, Path backup, int keysBefore, String fileName) {
+        if (file == null || backup == null || keysBefore <= 0) return false;
+        if (!Files.isRegularFile(backup) || !Files.isRegularFile(file)) return false;
+        int keysAfter = countKeys(file);
+        if (keysAfter >= keysBefore * COMPLETENESS_RATIO) return false;
+        try {
+            Files.copy(backup, file, StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception copyError) {
+            OllamaProxyMod.LOGGER.error("{} 保存后只剩 {} 个配置键（保存前 {} 个），"
+                            + "判定写入异常但回滚失败，请手动用 .snapshot 恢复: {}",
+                    fileName, keysAfter, keysBefore, copyError.toString());
+            return false;
+        }
+        OllamaProxyMod.LOGGER.warn("{} 保存后只剩 {} 个配置键（保存前 {} 个），"
+                        + "已判定写入异常并换回保存前的版本",
+                fileName, keysAfter, keysBefore);
+        return true;
+    }
+
+    /**
+     * 保存**之后**和快照比对，坏了就用快照回滚。
+     *
+     * <p>现在主路径走 {@link #saveWithGuard}（和保存前的自己比，更可靠）。
+     * 这个方法保留给「没有走守卫、但事后想查一下」的调用方，判据与阈值保持一致。
+     *
+     * @return 是否发生过回滚
+     */
+    public static boolean verifyAfterSave(net.minecraftforge.common.ForgeConfigSpec spec) {
+        if (spec == null) return false;
+        String fileName = fileNameOf(spec);
+        try {
+            Path path = FMLPaths.CONFIGDIR.get().resolve(fileName);
+            if (!Files.isRegularFile(path)) return false;
+            Path snapshot = snapshotPath(path);
+            if (!Files.isRegularFile(snapshot)) return false;
+
+            int current = countKeys(path);
+            int expected = countKeys(snapshot);
+            if (expected <= 0) return false;
+            if (current >= expected * COMPLETENESS_RATIO) return false;
+
+            Path broken = path.resolveSibling(path.getFileName() + ".broken-" + System.currentTimeMillis());
+            try {
+                Files.copy(path, broken, StandardCopyOption.REPLACE_EXISTING);
+                Files.copy(snapshot, path, StandardCopyOption.REPLACE_EXISTING);
+            } catch (Exception copyError) {
+                OllamaProxyMod.LOGGER.warn("{} 保存后校验发现异常（{} 键，应有 {}）但回滚失败: {}",
+                        fileName, current, expected, copyError.toString());
+                return false;
+            }
+            OllamaProxyMod.LOGGER.warn("{} 保存后只剩 {} 个配置键（快照有 {} 个），"
+                            + "已判定写入异常并用快照回滚；坏文件留在 {}",
+                    fileName, current, expected, broken.getFileName());
+            return true;
+        } catch (Throwable error) {
+            OllamaProxyMod.LOGGER.debug("保存后配置校验失败: {}", error.toString());
+            return false;
         }
     }
 

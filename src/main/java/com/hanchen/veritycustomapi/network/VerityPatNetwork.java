@@ -15,7 +15,7 @@ import java.util.function.Supplier;
 public final class VerityPatNetwork {
     private static final String PROTOCOL = "1";
     private static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
-            ResourceLocation.fromNamespaceAndPath(OllamaProxyMod.MOD_ID, "verity_pat"),
+            new ResourceLocation(OllamaProxyMod.MOD_ID, "verity_pat"),
             () -> PROTOCOL,
             PROTOCOL::equals,
             PROTOCOL::equals

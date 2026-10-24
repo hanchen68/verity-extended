@@ -1178,7 +1178,12 @@ public class OnlineTtsService {
         byte[] audioData = ais.readAllBytes();
         ais.close();
 
-        // 优先交给游戏原版音频通道：跟随主音量滑块、与其它声音统一混音，音量走通道增益而不是改样本
+        // 桌面端优先交给游戏原版音频通道：跟随主音量滑块、与其它声音统一混音，
+        // 音量走通道增益而不是改样本。
+        // 🔴 手机端**保持走下面的 Android 专用路径**（MediaPlayer / playMinecraftOpenAl），
+        // 不要改成走 VanillaAudioSink：那条路依赖原版 Channel 的流式播放，
+        // 在 FCL / Pojav 上的兼容性没有实测过。手机端本来就能出声，
+        // 贸然换路径只会把「音量不跟主音量」换成「可能完全没声音」，不划算。
         if (!RuntimePlatform.isAndroidRuntime()) {
             VerityEntityTalkAnimator.startPcmTimeline(
                     entityId,
@@ -1554,57 +1559,9 @@ public class OnlineTtsService {
         return com.hanchen.veritycustomapi.tts.AudioBytes.isWavHeader(data);
     }
     
+    /** 已迁到 {@link com.hanchen.veritycustomapi.tts.AudioValidator#isValid}。 */
     private static boolean isValidAudioData(byte[] data, String format) {
-        if (data == null || data.length < 10) {
-            return false;
-        }
-        
-        String first100 = new String(data, 0, Math.min(100, data.length), StandardCharsets.UTF_8);
-        
-        if (first100.contains("{") && (first100.contains("error") || first100.contains("code"))) {
-            OllamaProxyMod.LOGGER.warn("TTS响应包含错误JSON: {}", first100.length() > 200 ? first100.substring(0, 200) : first100);
-            return false;
-        }
-        
-        if (first100.contains("<!doctype") || first100.contains("<!DOCTYPE") || first100.contains("<html") || first100.contains("<HTML")) {
-            OllamaProxyMod.LOGGER.warn("TTS响应包含HTML错误页面: {}", first100.length() > 200 ? first100.substring(0, 200) : first100);
-            return false;
-        }
-        
-        if (format.equalsIgnoreCase("wav") && isWavHeader(data)) {
-            return true;
-        }
-        
-        if (format.equalsIgnoreCase("mp3")) {
-            if (isMp3Header(data)) {
-                return true;
-            }
-            if (data.length > 10000) {
-                OllamaProxyMod.LOGGER.warn("MP3数据长度>10000但无标准头，尝试播放");
-                return true;
-            }
-            return false;
-        }
-        
-        if (format.equalsIgnoreCase("pcm") && data.length > 100) {
-            return true;
-        }
-        
-        int nullCount = 0;
-        for (int i = 0; i < Math.min(100, data.length); i++) {
-            if (data[i] == 0) nullCount++;
-        }
-        if (nullCount > 80) {
-            return false;
-        }
-        
-        if (data.length > 10000) {
-            OllamaProxyMod.LOGGER.warn("TTS数据长度>10000字节但无法识别格式，尝试播放");
-            return true;
-        }
-        
-        OllamaProxyMod.LOGGER.warn("TTS数据格式无法识别，长度: {} 字节，前20字节: {}", data.length, hexDump(data, 20));
-        return false;
+        return com.hanchen.veritycustomapi.tts.AudioValidator.isValid(data, format);
     }
     
     private static boolean isMp3Header(byte[] data) {

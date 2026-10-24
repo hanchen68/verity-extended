@@ -35,6 +35,11 @@ public final class ToolListTrimmer {
             {"建造|建筑|盖|房子|搭|图纸", new String[]{"build", "blueprint", "house", "structure", "schematic"}},
             {"记住|忘记|回忆|约定|承诺|日记|记事", new String[]{"recall", "remember", "promise", "diary", "journal", "note"}},
             {"种|收|耕|农|浇|养殖|喂", new String[]{"farm", "plant", "crop", "harvest", "water", "breed", "feed", "tame"}},
+            // 摄像头观察：玩家说「看看我」「摄像头」这类话时才装载 look_through_camera。
+            // 不补这一组的话，工具总数超过 PASS_THROUGH_LIMIT 时它会被当成无关工具裁掉，
+            // 表现就是「AI 明明有这个能力却从来不调用」。
+            {"看|看看|看到|摄像头|镜头|画面|照片|屏幕|观察|样子|长什么样",
+                    new String[]{"camera", "look", "vision", "screenshot"}},
     };
 
     private static final List<Pattern> INTENT_PATTERNS = new ArrayList<>();

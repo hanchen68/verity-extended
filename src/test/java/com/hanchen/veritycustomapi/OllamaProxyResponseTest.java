@@ -26,9 +26,13 @@ public final class OllamaProxyResponseTest {
 
         verifyAssistantHistorySanitizing();
         verifyOrphanToolMessagesRemoved();
+        verifyMissingToolResultFilled();
+        verifyContextReset();
         verifySemanticEmptyResponses();
         verifyUpstreamResponseValidity();
         verifySseAggregation();
+        verifyStreamingToolCallAggregation();
+        verifyReasoningFallback();
         verifyContextTrimming();
         verifySlidingWindow();
         verifyToolListTrimming();
@@ -48,10 +52,15 @@ public final class OllamaProxyResponseTest {
         JsonObject sanitized = JsonParser.parseString(
                 OllamaProxyServer.ChatProxyHandler.sanitizeAssistantHistory(request)).getAsJsonObject();
         JsonArray messages = sanitized.getAsJsonArray("messages");
-        assertEquals(3, messages.size());
+        // user + assistant(tool_calls) + 补齐的 tool + assistant(function_call)
+        // 🔴 补齐这一条是必须的：上游对「声明了 tool_calls 却没有对应 tool 回复」直接 400
+        // （An assistant message with 'tool_calls' must be followed by tool messages ...）。
+        assertEquals(4, messages.size());
         assertEquals("user", messages.get(0).getAsJsonObject().get("role").getAsString());
         assertTrue(messages.get(1).getAsJsonObject().has("tool_calls"));
-        assertTrue(messages.get(2).getAsJsonObject().has("function_call"));
+        assertEquals("tool", messages.get(2).getAsJsonObject().get("role").getAsString());
+        assertEquals("call-1", messages.get(2).getAsJsonObject().get("tool_call_id").getAsString());
+        assertTrue(messages.get(3).getAsJsonObject().has("function_call"));
     }
 
     /**
@@ -83,8 +92,12 @@ public final class OllamaProxyResponseTest {
         JsonArray cleaned2 = JsonParser.parseString(
                 OllamaProxyServer.ChatProxyHandler.sanitizeAssistantHistory(mismatched))
                 .getAsJsonObject().getAsJsonArray("messages");
-        assertEquals(2, cleaned2.size());
+        // call-OTHER 是孤儿被丢掉；但 call-1 不能就这么悬着——补一条占位 tool 消息。
+        // 只丢孤儿不补齐的话，上游照样 400（insufficient tool messages following tool_calls）。
+        assertEquals(3, cleaned2.size());
         assertTrue(cleaned2.get(1).getAsJsonObject().has("tool_calls"));
+        assertEquals("tool", cleaned2.get(2).getAsJsonObject().get("role").getAsString());
+        assertEquals("call-1", cleaned2.get(2).getAsJsonObject().get("tool_call_id").getAsString());
 
         // 正常配对：一条都不能少
         String paired = "{\"model\":\"test\",\"messages\":["
@@ -96,6 +109,91 @@ public final class OllamaProxyResponseTest {
                 OllamaProxyServer.ChatProxyHandler.sanitizeAssistantHistory(paired))
                 .getAsJsonObject().getAsJsonArray("messages");
         assertEquals(4, cleaned3.size());
+    }
+
+    /**
+     * 「声明了 N 个 tool_calls，只回了 M 个」必须补齐剩下 N-M 个。
+     *
+     * <p>2026-10-25 用户实测的 400 就是这个形态（DeepSeek 严格校验）：
+     * {@code An assistant message with 'tool_calls' must be followed by tool messages
+     * responding to each 'tool_calls' ... (insufficient tool messages following tool_calls message)}。
+     *
+     * <p>只修「孤儿 tool」是半个修复——只丢不补，上游照样拒。
+     */
+    private static void verifyMissingToolResultFilled() {
+        String twoCallsOneResult = "{\"model\":\"test\",\"messages\":["
+                + "{\"role\":\"user\",\"content\":\"hi\"},"
+                + "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":["
+                + "{\"id\":\"call-a\",\"type\":\"function\",\"function\":{\"name\":\"memory\",\"arguments\":\"{}\"}},"
+                + "{\"id\":\"call-b\",\"type\":\"function\",\"function\":{\"name\":\"give_item\",\"arguments\":\"{}\"}}]},"
+                + "{\"role\":\"tool\",\"tool_call_id\":\"call-a\",\"content\":\"ok\"}]}";
+        JsonArray messages = JsonParser.parseString(
+                OllamaProxyServer.ChatProxyHandler.sanitizeAssistantHistory(twoCallsOneResult))
+                .getAsJsonObject().getAsJsonArray("messages");
+        assertEquals(4, messages.size());
+        assertEquals("tool", messages.get(2).getAsJsonObject().get("role").getAsString());
+        assertEquals("call-a", messages.get(2).getAsJsonObject().get("tool_call_id").getAsString());
+        // 缺的那个按声明顺序补在后面，正文是明确的「结果缺失」标记
+        assertEquals("call-b", messages.get(3).getAsJsonObject().get("tool_call_id").getAsString());
+        assertTrue(messages.get(3).getAsJsonObject().get("content").getAsString()
+                .contains("missing_tool_result"));
+
+        // 一个都没回：也要补齐，否则这条历史永远是 400 源头
+        String noneReturned = "{\"model\":\"test\",\"messages\":["
+                + "{\"role\":\"user\",\"content\":\"hi\"},"
+                + "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":["
+                + "{\"id\":\"call-z\",\"type\":\"function\",\"function\":{\"name\":\"memory\",\"arguments\":\"{}\"}}]}]}";
+        JsonArray noneMessages = JsonParser.parseString(
+                OllamaProxyServer.ChatProxyHandler.sanitizeAssistantHistory(noneReturned))
+                .getAsJsonObject().getAsJsonArray("messages");
+        assertEquals(3, noneMessages.size());
+        assertEquals("call-z", noneMessages.get(2).getAsJsonObject().get("tool_call_id").getAsString());
+    }
+
+    /**
+     * 清空上下文：只保留前导 system + 最后一条 user 起的消息。
+     *
+     * <p>人设、工具声明、长期记忆摘要都在前导 system 里，丢了就等于换了个失忆的陌生人；
+     * 所以「清空」清的是**对话历史**，不是 system。
+     */
+    private static void verifyContextReset() {
+        String body = "{\"model\":\"test\",\"messages\":["
+                + "{\"role\":\"system\",\"content\":\"人设\"},"
+                + "{\"role\":\"system\",\"content\":\"工具\"},"
+                + "{\"role\":\"user\",\"content\":\"旧1\"},"
+                + "{\"role\":\"assistant\",\"content\":\"旧答1\"},"
+                + "{\"role\":\"user\",\"content\":\"旧2\"},"
+                + "{\"role\":\"assistant\",\"content\":\"旧答2\"},"
+                + "{\"role\":\"user\",\"content\":\"本轮\"}]}";
+
+        // 没开启时不能动
+        JsonObject untouched = JsonParser.parseString(body).getAsJsonObject();
+        assertTrue(!com.hanchen.veritycustomapi.proxy.ContextReset.applyInPlace(untouched));
+
+        com.hanchen.veritycustomapi.proxy.ContextReset.suppress();
+        try {
+            JsonObject cleared = JsonParser.parseString(body).getAsJsonObject();
+            assertTrue(com.hanchen.veritycustomapi.proxy.ContextReset.applyInPlace(cleared));
+            JsonArray messages = cleared.getAsJsonArray("messages");
+            assertEquals(3, messages.size());
+            assertEquals("人设", messages.get(0).getAsJsonObject().get("content").getAsString());
+            assertEquals("工具", messages.get(1).getAsJsonObject().get("content").getAsString());
+            assertEquals("本轮", messages.get(2).getAsJsonObject().get("content").getAsString());
+
+            // 内部提示词调用（记忆/日记）没有 user 消息，必须原样放过
+            JsonObject internal = JsonParser.parseString(
+                    "{\"messages\":[{\"role\":\"system\",\"content\":\"提炼记忆\"}]}").getAsJsonObject();
+            assertTrue(!com.hanchen.veritycustomapi.proxy.ContextReset.applyInPlace(internal));
+
+            // 本来就没历史时不重复改动（否则每次请求都会报一次「已丢弃」）
+            JsonObject already = JsonParser.parseString(
+                    "{\"messages\":[{\"role\":\"system\",\"content\":\"s\"},"
+                            + "{\"role\":\"user\",\"content\":\"u\"}]}").getAsJsonObject();
+            assertTrue(!com.hanchen.veritycustomapi.proxy.ContextReset.applyInPlace(already));
+        } finally {
+            com.hanchen.veritycustomapi.proxy.ContextReset.restore();
+        }
+        assertTrue(!com.hanchen.veritycustomapi.proxy.ContextReset.isSuppressed());
     }
 
     private static void verifySemanticEmptyResponses() {
@@ -135,6 +233,75 @@ public final class OllamaProxyResponseTest {
         assertTrue(buffered.contains("chat.completion.chunk") && buffered.endsWith("data: [DONE]\n\n"));
         assertEquals("buffered reply", OllamaProxyServer.ChatProxyHandler.extractResponseText(
                 OllamaProxyServer.ChatProxyHandler.aggregateSseResponse(buffered)));
+    }
+
+    /**
+     * 流式 tool_calls 分片聚合。
+     *
+     * <p>这条以前没有任何用例守着，而它是最容易静默坏掉的地方：
+     * 协议里 id/name 只在首片出现、arguments 逐片累加，
+     * 漏了聚合就会把「只请求工具、没有正文」的回复判成空补全，
+     * 玩家看到的是一句「上游模型本次没有返回有效内容」。
+     */
+    private static void verifyStreamingToolCallAggregation() {
+        String toolSse = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\","
+                + "\"tool_calls\":[{\"index\":0,\"id\":\"call_abc\",\"type\":\"function\","
+                + "\"function\":{\"name\":\"give_item\",\"arguments\":\"\"}}]}}]}\n\n"
+                + "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"function\":{\"arguments\":\"{\\\"itemId\\\":\\\"apple\\\"\"}}]}}]}\n\n"
+                + "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"function\":{\"arguments\":\",\\\"count\\\":2}\"}}]}}]}\n\n"
+                + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                + "data: [DONE]\n";
+        String aggregated = OllamaProxyServer.ChatProxyHandler.aggregateSseResponse(toolSse);
+        com.google.gson.JsonObject root =
+                com.google.gson.JsonParser.parseString(aggregated).getAsJsonObject();
+        com.google.gson.JsonObject message = root.getAsJsonArray("choices").get(0)
+                .getAsJsonObject().getAsJsonObject("message");
+        com.google.gson.JsonArray toolCalls = message.getAsJsonArray("tool_calls");
+        assertEquals(1, toolCalls.size());
+        com.google.gson.JsonObject call = toolCalls.get(0).getAsJsonObject();
+        assertEquals("call_abc", call.get("id").getAsString());
+        assertEquals("function", call.get("type").getAsString());
+        assertEquals("give_item", call.getAsJsonObject("function").get("name").getAsString());
+        // 分片必须拼成完整合法 JSON，否则原版拿到半截参数会直接执行失败
+        com.google.gson.JsonObject args = com.google.gson.JsonParser
+                .parseString(call.getAsJsonObject("function").get("arguments").getAsString())
+                .getAsJsonObject();
+        assertEquals("apple", args.get("itemId").getAsString());
+        assertEquals(2, args.get("count").getAsInt());
+        // 「只有工具调用、没有正文」也必须算有效内容，否则会被当成空补全重试
+        assertTrue(OllamaProxyServer.ChatProxyHandler.hasUsableAggregate(aggregated));
+
+        // 缺 id 的分片要补一个稳定 id，否则 Verity 无法把工具结果配回去
+        String noIdSse = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"function\":{\"name\":\"memory\",\"arguments\":\"{}\"}}]}}]}\n\n"
+                + "data: [DONE]\n";
+        String noIdAggregated = OllamaProxyServer.ChatProxyHandler.aggregateSseResponse(noIdSse);
+        if (!noIdAggregated.contains("call_verity_")) {
+            throw new AssertionError("缺少 id 的 tool_call 应补合成 id，实际=" + noIdAggregated);
+        }
+    }
+
+    /**
+     * 推理模型的 reasoning 兜底。
+     *
+     * <p>DeepSeek / GLM 这类模型可能把正文整段放进 reasoning_content，content 一直是空串。
+     * 不看 reasoning 就会把一整轮正常回复判成空；直接透传又会把内心独白念出来，
+     * 所以要「取用但去掉 think 标签」。
+     */
+    private static void verifyReasoningFallback() {
+        String reasoningOnlySse = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":"
+                + "\"<think>secret</think>visible answer\"}}]}\n\n"
+                + "data: [DONE]\n";
+        String aggregated = OllamaProxyServer.ChatProxyHandler.aggregateSseResponse(reasoningOnlySse);
+        String text = OllamaProxyServer.ChatProxyHandler.extractResponseText(aggregated);
+        if (!text.contains("visible answer")) {
+            throw new AssertionError("reasoning 内容应作为正文兜底，实际=" + text);
+        }
+        if (text.contains("secret")) {
+            throw new AssertionError("think 标签内的内容不应被当成台词，实际=" + text);
+        }
     }
 
     /** 只裁旧轮：旧工具结果、超长旧回复、旧截图、思维链都会被动，最近两轮完整保留。 */

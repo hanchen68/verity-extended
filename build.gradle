@@ -6,7 +6,7 @@ plugins {
     id 'org.spongepowered.mixin' version '0.7.+'
 }
 
-version = '4.5.3'
+version = '5.0'
 group = 'com.hanchen.veritycustomapi'
 archivesBaseName = 'Verity\u6269\u5c55\u589e\u5f3a'
 
@@ -96,7 +96,9 @@ configurations {
 }
 
 dependencies {
-    minecraft 'net.minecraftforge:forge:1.20.1-47.4.20'
+    // 🔴 编译基准压到 47.3.0（该系列最低版），整个 47.3.x + 47.4.x 才都保证能跑。
+    // 用更高版本编译会让低版本玩家 NoSuchMethodError。
+    minecraft 'net.minecraftforge:forge:1.20.1-47.3.0'
 
     // Mixin 注解处理器
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
@@ -411,17 +413,101 @@ tasks.register('cloudOverridesTest', JavaExec) {
     mainClass = 'com.hanchen.veritycustomapi.config.CloudOverridesTest'
 }
 
-tasks.register('pluginTest', JavaExec) {
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'com.hanchen.veritycustomapi.plugin.PluginTest'
-}
-
 // 联网搜索服务商适配：字段名/阈值/摘要优先级写错都会让搜索静默失效，这里钉住
 tasks.register('webSearchProviderTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'com.hanchen.veritycustomapi.ai.WebSearchProviderTest'
+}
+
+tasks.register('audioValidatorTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.tts.AudioValidatorTest'
+}
+
+tasks.register('configLayoutTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.config.ConfigLayoutTest'
+}
+
+tasks.register('blueprintStoreTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.action.BlueprintStoreTest'
+}
+
+tasks.register('mmdProjectScannerTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.mmd.MmdProjectScannerTest'
+}
+
+tasks.register('reflectiveTargetTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.compat.ReflectiveTargetTest'
+}
+
+tasks.register('toolAvailabilityFilterTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.ai.ToolAvailabilityFilterTest'
+}
+
+tasks.register('forgeConfigRepairTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.config.ForgeConfigRepairTest'
+}
+
+tasks.register('combatAssistTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.combat.CombatAssistTest'
+}
+
+tasks.register('cameraDeviceTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.client.CameraDeviceTest'
+}
+
+tasks.register('featureToolTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.mixin.FeatureToolTest'
+}
+
+tasks.register('bargeInTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.compat.BargeInTest'
+}
+
+tasks.register('wanderTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.behavior.WanderTest'
+}
+
+tasks.register('veritySupportTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.behavior.VeritySupportTest'
+}
+
+tasks.register('rideKeyTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.ride.RideKeyTest'
+}
+
+tasks.register('mixinTargetProbeTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.mixin.MixinTargetProbeTest'
 }
 
 publishing {

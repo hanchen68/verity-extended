@@ -22,7 +22,7 @@ public final class ServerHorrorEventService {
     private static final long SCAN_INTERVAL = 100L;
     private static final double MAX_DISTANCE_SQ = 1024.0D;
     private static final long TYPE_COOLDOWN = 30000L;
-    private static final ResourceLocation VERITY_ID = ResourceLocation.fromNamespaceAndPath("verity", "verity");
+    private static final ResourceLocation VERITY_ID = new ResourceLocation("verity", "verity");
     // 用并发容器：这两张表虽然主要在服务端线程读写，但 clear() 由 ServerStopping 事件触发，
     // 事件线程与服务端 tick 未必是同一个，普通 HashMap 在清空时并发读会 CME。
     private static final Map<UUID, Long> NEXT_EVENT = new ConcurrentHashMap<>();

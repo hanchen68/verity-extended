@@ -3,12 +3,12 @@
 **中文** | [English](README_EN.md)
 
 为 [Verity JE](https://modrinth.com/mod/verity-je-official) 增加玩法与体验层的 Forge 扩展模组：
-骑乘与站头互动、AI 建造、插件系统、人设与记忆、语音输入输出、MMD 骨骼动画等。
+骑乘与站头互动、AI 建造、主动行为、人设与记忆、语音输入输出、MMD 骨骼动画等。
 
 > 这是 Verity 的**扩展模组**，不能脱离原版 Verity 单独运行。
 
 - Minecraft **1.20.1**
-- Forge **47.4.21**（47.4.20 及以上）
+- Forge **47.3+**（47.3.x / 47.4.x 均可）
 - Java **17+**
 
 ---
@@ -26,8 +26,7 @@
 
 - **AI 建造**：用一句话描述，由模型设计轮廓、楼层与房间，再生成完整结构并分批安全施工。
   支持施工前预览、进度显示、取消与撤销、本地蓝图库、跨重启续建
-- **插件系统**：用自然语言生成规则，例如
-  `/verity-plugin create 挖到钻石的时候提醒我，并统计一共挖了多少`
+- **主动行为**：闲着时自己在附近溜达、血量过半时主动给治疗、主人被打时冲上去还手
 - **主动感知**：进入世界、低生命值、死亡、睡眠等事件可主动触发对话
 - **联网搜索**：可选接入搜索服务，让模型查到实时信息
 - **摄像头视觉**：可把摄像头画面送入对话（手机端可用于「看看我面前是什么」）
@@ -56,7 +55,7 @@
 
 ## 安装
 
-1. 安装 Minecraft Java Edition **1.20.1** 与 **Forge 47.4.21**（或更高的 47.4.x）。
+1. 安装 Minecraft Java Edition **1.20.1** 与 **Forge 47.3+**（47.3.x / 47.4.x 均可）。
 2. 安装**原版 Verity**（[Modrinth](https://modrinth.com/mod/verity-je-official)），
    以及该 Verity 版本要求的依赖（如 GeckoLib、Cloth Config）。
 3. 从 [Releases](https://github.com/hanchen68/verity-extended/releases) 下载本模组的 jar，
@@ -92,7 +91,7 @@
 | 项目 | 说明 |
 |---|---|
 | Minecraft | 1.20.1 |
-| Forge | 47.4.20 及以上 |
+| Forge | 47.3 及以上（编译基准 47.3.0） |
 | 运行环境 | 客户端与服务端均可安装 |
 | 必需 | 原版 Verity |
 | 可选 | Cloth Config、PatPat（缺失时相关功能自动跳过） |

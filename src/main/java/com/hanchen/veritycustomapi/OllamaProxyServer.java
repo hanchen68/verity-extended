@@ -400,6 +400,11 @@ public class OllamaProxyServer {
                 if (!internalPromptCall) {
                     // 机械裁剪：旧工具结果 / 超长旧回复 / 旧截图瘦身；最近两轮完整保留
                     sanitizedRequestBody = com.hanchen.veritycustomapi.ai.ContextTrimmer.trim(sanitizedRequestBody);
+                    // 裁剪后再兜一次配对修复：滑动窗口按「轮」切分，理论上不会拆开
+                    // tool_calls 与 tool，但一旦拆开上游就整轮 400
+                    //（Messages with role 'tool' must be a response to a preceding message with 'tool_calls'）。
+                    // 该方法是幂等的：没有孤儿时原样返回，代价只有一次 JSON 解析。
+                    sanitizedRequestBody = sanitizeAssistantHistory(sanitizedRequestBody);
                     // 两阶段工具清单：核心常驻 + 意图装载，工具多时砍掉无关的
                     sanitizedRequestBody = com.hanchen.veritycustomapi.ai.ToolListTrimmer.apply(sanitizedRequestBody);
                 }

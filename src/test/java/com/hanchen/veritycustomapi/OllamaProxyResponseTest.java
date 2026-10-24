@@ -25,6 +25,7 @@ public final class OllamaProxyResponseTest {
                 JsonParser.parseString("[{\"type\":\"output_text\",\"output_text\":\"vision reply\"}]")));
 
         verifyAssistantHistorySanitizing();
+        verifyOrphanToolMessagesRemoved();
         verifySemanticEmptyResponses();
         verifyUpstreamResponseValidity();
         verifySseAggregation();
@@ -51,6 +52,50 @@ public final class OllamaProxyResponseTest {
         assertEquals("user", messages.get(0).getAsJsonObject().get("role").getAsString());
         assertTrue(messages.get(1).getAsJsonObject().has("tool_calls"));
         assertTrue(messages.get(2).getAsJsonObject().has("function_call"));
+    }
+
+    /**
+     * 孤儿 tool 消息必须被清掉。
+     *
+     * <p>上游对这种历史直接 400：
+     * {@code Messages with role 'tool' must be a response to a preceding message with 'tool_calls'}。
+     * 场景一：assistant 被当成「空回复」删掉，它的 tool 结果就成了孤儿；
+     * 场景二：tool_call_id 压根对不上。
+     * 同时要保证**正常配对不能被误删**。
+     */
+    private static void verifyOrphanToolMessagesRemoved() {
+        // 场景一：空 assistant（无 tool_calls）+ 它的 tool 结果
+        String orphaned = "{\"model\":\"test\",\"messages\":["
+                + "{\"role\":\"user\",\"content\":\"hi\"},"
+                + "{\"role\":\"assistant\",\"content\":\"\"},"
+                + "{\"role\":\"tool\",\"tool_call_id\":\"call-x\",\"content\":\"result\"}]}";
+        JsonArray cleaned = JsonParser.parseString(
+                OllamaProxyServer.ChatProxyHandler.sanitizeAssistantHistory(orphaned))
+                .getAsJsonObject().getAsJsonArray("messages");
+        assertEquals(1, cleaned.size());
+        assertEquals("user", cleaned.get(0).getAsJsonObject().get("role").getAsString());
+
+        // 场景二：tool_call_id 对不上任何前置调用
+        String mismatched = "{\"model\":\"test\",\"messages\":["
+                + "{\"role\":\"user\",\"content\":\"hi\"},"
+                + "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"memory\",\"arguments\":\"{}\"}}]},"
+                + "{\"role\":\"tool\",\"tool_call_id\":\"call-OTHER\",\"content\":\"result\"}]}";
+        JsonArray cleaned2 = JsonParser.parseString(
+                OllamaProxyServer.ChatProxyHandler.sanitizeAssistantHistory(mismatched))
+                .getAsJsonObject().getAsJsonArray("messages");
+        assertEquals(2, cleaned2.size());
+        assertTrue(cleaned2.get(1).getAsJsonObject().has("tool_calls"));
+
+        // 正常配对：一条都不能少
+        String paired = "{\"model\":\"test\",\"messages\":["
+                + "{\"role\":\"user\",\"content\":\"hi\"},"
+                + "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"memory\",\"arguments\":\"{}\"}}]},"
+                + "{\"role\":\"tool\",\"tool_call_id\":\"call-1\",\"content\":\"result\"},"
+                + "{\"role\":\"assistant\",\"content\":\"done\"}]}";
+        JsonArray cleaned3 = JsonParser.parseString(
+                OllamaProxyServer.ChatProxyHandler.sanitizeAssistantHistory(paired))
+                .getAsJsonObject().getAsJsonArray("messages");
+        assertEquals(4, cleaned3.size());
     }
 
     private static void verifySemanticEmptyResponses() {

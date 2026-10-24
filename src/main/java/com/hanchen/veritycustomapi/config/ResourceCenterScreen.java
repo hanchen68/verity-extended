@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.config;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import net.minecraft.client.gui.components.Button;
 import com.hanchen.veritycustomapi.config.VerityUiWidgets;
 import com.hanchen.veritycustomapi.config.VerityUiDraw;
@@ -191,7 +193,7 @@ public final class ResourceCenterScreen extends Screen {
             if (items.isEmpty()) items.addAll(fromCache(index.entries()));
             cacheBytes = index.sizeBytes();
             init(minecraft, width, height);
-        } catch (Exception ignored) { }
+        } catch (Exception ignored) { Silent.ignore("ResourceCenterScreen", ignored); }
     }
 
     private void rebuildItems() {

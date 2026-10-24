@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.skin;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.platform.TextureUtil;
 import net.minecraft.client.Minecraft;
@@ -69,7 +71,7 @@ public class VeritySkinTexture {
         // 延迟一帧关闭旧纹理，确保 GPU 不再引用
         if (oldTex != null && oldTex != newTex) {
             com.mojang.blaze3d.systems.RenderSystem.recordRenderCall(() -> {
-                try { oldTex.close(); } catch (Exception ignored) {}
+                try { oldTex.close(); } catch (Exception ignored) { Silent.ignore("VeritySkinTexture", ignored); }
             });
         }
     }

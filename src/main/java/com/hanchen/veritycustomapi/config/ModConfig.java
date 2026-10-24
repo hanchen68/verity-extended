@@ -183,6 +183,12 @@ public class ModConfig {
     public static final ForgeConfigSpec.BooleanValue SERVER_VERITY_ITEM_TOOLS;
     public static final ForgeConfigSpec.IntValue SERVER_VERITY_ITEM_QUERY_LIMIT;
 
+    // ========== 星之遥控器（The Shooting Star 适配） ==========
+    public static final ForgeConfigSpec.BooleanValue STELLAR_REMOTE_ENABLED;
+    public static final ForgeConfigSpec.BooleanValue STELLAR_REMOTE_REQUIRE_ITEM;
+    public static final ForgeConfigSpec.ConfigValue<String> STELLAR_REMOTE_ALLOWED_SKILLS;
+    public static final ForgeConfigSpec.BooleanValue STELLAR_REMOTE_SHOW_IN_HAND;
+
     // ========== 服务端恐怖规则 ==========
     public static final ForgeConfigSpec.BooleanValue HORROR_SERVER_ENABLED;
     public static final ForgeConfigSpec.BooleanValue HORROR_SERVER_AMBIENT_EVENTS;
@@ -217,6 +223,13 @@ public class ModConfig {
 
     // ========== 原版界面汉化 ==========
     public static final ForgeConfigSpec.BooleanValue ENABLE_VERITY_LOCALIZATION;
+
+    // ========== Verity 说话时的 Q 弹形变 ==========
+    public static final ForgeConfigSpec.BooleanValue VERITY_JELLY_ENABLED;
+    public static final ForgeConfigSpec.BooleanValue VERITY_JELLY_CHAOS;
+    public static final ForgeConfigSpec.DoubleValue VERITY_JELLY_AMPLITUDE;
+    public static final ForgeConfigSpec.DoubleValue VERITY_JELLY_SPEED;
+    public static final ForgeConfigSpec.DoubleValue VERITY_JELLY_SQUASH;
 
     // ========== 调试与诊断 ==========
     public static final ForgeConfigSpec.BooleanValue DEV_MODE;
@@ -717,6 +730,21 @@ public class ModConfig {
                 .defineInRange("itemQueryLimit", 40, 5, 200);
         builder.pop();
 
+        builder.push("stellar_remote");
+        STELLAR_REMOTE_ENABLED = builder
+                .comment("允许 Verity 借用《The Shooting Star》的星之遥控器施放技能（需要安装该模组）")
+                .define("enabled", true);
+        STELLAR_REMOTE_REQUIRE_ITEM = builder
+                .comment("施放前要求玩家背包里至少有 1 个星之遥控器（shooting_star_demo:stellar_remote）")
+                .define("requireItem", true);
+        STELLAR_REMOTE_ALLOWED_SKILLS = builder
+                .comment("允许 Verity 使用的技能 id 白名单，逗号分隔；留空表示不限制")
+                .define("allowedSkills", "");
+        STELLAR_REMOTE_SHOW_IN_HAND = builder
+                .comment("施法时在 Verity 旁边显示她举着的星之遥控器（纯客户端渲染，不影响判定）")
+                .define("showInHand", true);
+        builder.pop();
+
         builder.push("horror_server");
         HORROR_SERVER_ENABLED = builder
                 .comment("服务端恐怖导演总开关；关闭后服务器不发送恐怖事件")
@@ -841,6 +869,24 @@ public class ModConfig {
         ENABLE_VERITY_LOCALIZATION = clientBuilder
                 .comment("把原版 Verity 配置界面和命令提示里硬编码的英文文本汉化，需要重启游戏生效")
                 .define("enableVerityLocalization", true);
+        clientBuilder.pop();
+
+        clientBuilder.push("verity_jelly");
+        VERITY_JELLY_ENABLED = clientBuilder
+                .comment("Verity 说话时的「Q弹」形变开关：打开后她说话会明显一弹一弹，比原版夸张很多")
+                .define("enabled", false);
+        VERITY_JELLY_CHAOS = clientBuilder
+                .comment("鬼畜模式：在 Q 弹的基础上幅度 ×1.6、速度 ×2.6，再叠加高频抽搐、左右甩头和原地弹跳")
+                .define("chaos", false);
+        VERITY_JELLY_AMPLITUDE = clientBuilder
+                .comment("Q弹幅度：纵向拉伸/压扁的最大比例（0 = 几乎不动，1 = 非常夸张）")
+                .defineInRange("amplitude", 0.45D, 0.05D, 1.0D);
+        VERITY_JELLY_SPEED = clientBuilder
+                .comment("Q弹速度：数值越大弹得越快")
+                .defineInRange("speed", 0.75D, 0.1D, 3.0D);
+        VERITY_JELLY_SQUASH = clientBuilder
+                .comment("横向挤压：纵向拉长时横向收窄的强度，1 左右最像果冻")
+                .defineInRange("squash", 0.85D, 0.0D, 1.5D);
         clientBuilder.pop();
 
         builder.push("debug");

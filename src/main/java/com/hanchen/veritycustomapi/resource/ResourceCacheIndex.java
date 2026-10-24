@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.resource;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.hanchen.veritycustomapi.compat.ForgePaths;
@@ -78,7 +80,7 @@ public final class ResourceCacheIndex {
                 IndexData loaded = GSON.fromJson(Files.readString(indexFile, StandardCharsets.UTF_8), IndexData.class);
                 if (loaded != null && loaded.entries != null) return loaded;
             }
-        } catch (Exception ignored) { }
+        } catch (Exception ignored) { Silent.ignore("ResourceCacheIndex", ignored); }
         return new IndexData();
     }
 

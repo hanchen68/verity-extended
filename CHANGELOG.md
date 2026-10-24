@@ -2,9 +2,73 @@
 
 本文件记录 Verity 扩展增强的全部版本变更，最新版本在最前。
 
-- 当前版本：**4.5.1**
+- 当前版本：**4.5.3**
 - 适用环境：Minecraft 1.20.1、Forge 47.4.x、Java 17+
-- **4.5.1、4.5、4.4 与 4.3 均为完整变更记录**；4.2 及更早版本为面向玩家的摘要，仅列出主要变化。
+- **4.5.3、4.5.2、4.5.1、4.5、4.4 与 4.3 均为完整变更记录**；4.2 及更早版本为面向玩家的摘要，仅列出主要变化。
+
+---
+
+## 4.5.3 — 2026-10-24
+
+> **P2a 进展（本轮）**：`OllamaProxyServer` 3441 → 3371 行。
+> 工具调用规范化抽成 `proxy/ToolCallNormalizer`（`extractContentText` /
+> `sanitizeAssistantHistory` / `hasValidToolCalls` / `hasValidFunctionCall` /
+> `hasNamedFunction` / `hasNonBlankPrimitive` / `toolNameOf`），
+> 原类保留同名委托，调用点零改动。全量自检 30 项通过。
+> 同时把配置项总数文档从 181 同步到 **190**（布尔 100 / 整数 32 / 小数 9 / 字符串 49）。
+
+> 内部重构版本，**不改变任何游戏行为**：清理遗留死代码、补齐异常可见性、修复一处测试环境 NPE，并建立重构安全网。
+
+- 删除遗留的旧配置界面 `OllamaProxyConfigScreen`（671 行，已无任何引用，实际界面一直是 `NativeOllamaProxyConfigScreen`）。
+- 全项目 109 处空 `catch` 统一改为 `util/Silent.ignore(...)`：降级行为不变，但按 DEBUG 记录位置标签，
+  线上排查时能区分「没走到」与「走到了但抛了」；关闭 DEBUG 时不产生额外开销。
+- 新增 `tools/selfcheck.ps1`：一条命令跑 编译 + 4 个必跑自检（配置键 ↔ 云端、mixin 清单、Verity 结构探测、插件），
+  `-Full` 追加协议/资源/汉化/TTS 路由/恐怖导演 5 项。
+- 修复 `CloudOverrides` 在无 Forge 环境（自检、工具进程）下读取 `FMLPaths.CONFIGDIR` 的 NPE，兜底到工作目录 `config/`。
+- 更新 `cloudOverridesTest` 的配置项总数哨兵 181 → 190（4.5.2 新增 `stellar_remote` 4 项 + `verity_jelly` 5 项），
+  并补充注释说明该数字的用途。
+- 版本号、构建产物统一为 `4.5.3`。
+
+构建产物：`build/libs/Verity扩展增强-4.5.3.jar`
+
+SHA-256：
+
+```text
+d5021b7e3edf2bdea4e5a58aa372ae59f1c7fdb19a9c8c73d80e3d093450009f
+```
+
+---
+
+## 4.5.2 — 2026-10-23
+
+> 功能性更新：新增《The Shooting Star》星之遥控器适配与说话「Q 弹」形变，
+> 并修复配置文件被写坏导致的启动崩溃 / 云端开关被读回默认关闭，以及云端下发反复覆盖本地设置。
+
+- 新增星之遥控器适配（需《The Shooting Star》）：反射接入原模组施法入口，冷却与弹道由原模组负责，
+  未安装时静默熔断；对话调用或 `/verity-stellar list|cast|hold`。
+- 施法后回报实际落点（被遮挡时说明偏差原因）；修正瞄准眼高与施法者射线不一致导致的整体偏移。
+- 新增 S2C 通道 `verity_hold`（可缺失注册），施法时在 Verity 身边渲染她举着的遥控器，带抬手/收起动画。
+- 新增说话「Q 弹」形变：纵向拉伸压扁 + 横向反向挤压 + 二次抖动回弹；另有**鬼畜模式**
+  （幅度 ×1.6、速度 ×2.6，叠加甩头与原地弹跳）。默认关闭，配置界面「外观与资源」可调。
+- 修复 TOML 重复键导致 ModLoading 阶段崩溃：启动前自动去重（重复表头合并、重复键保留首个），
+  改前留 `.bak`，异常时原样不动。
+- 修复 `cloud.enable` 被读回默认 `false`：新增哨兵键校验、保存后 `.snapshot` 快照，
+  启动发现缺键时自动恢复并保留 `.broken` 原件。
+- 云端下发不再覆盖本地设置：本地改动持久化钉住（`config/verity_extended/cloud_pins.json`），
+  云端同值不再抢回、改值才重新接管；下发时即时识别本地编辑；云配置页显示接管项数并提供「全部交还」。
+- 同一 `config_id + version` 在 60 秒内的重复拉取只应用一次。
+- 适配 Verity 6.0.0-beta.9 移除的 `VerityState.isMonstrous`，改为读写实体同步数据；
+  回复结构判定改为三态（`sendReplyPart` / `lambda$queryAI$4` / 均缺失）并在缺失时告警。
+- 逐项核对 24 个 mixin 注入点与反射成员，与 `verity-6.0.0-beta.9` 一致。
+- 版本号、构建产物统一为 `4.5.2`。
+
+构建产物：`build/libs/Verity扩展增强-4.5.2.jar`
+
+SHA-256：
+
+```text
+0436420d4d2961da940663ce592ee066f2c2dfd5827a94ab214dea5027b3b26
+```
 
 ---
 

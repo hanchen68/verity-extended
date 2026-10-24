@@ -1,10 +1,13 @@
 package com.hanchen.veritycustomapi.config;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -81,12 +84,18 @@ public final class CloudOverrides {
     private static final Map<List<String>, Slot> active = new LinkedHashMap<>();
 
     /**
-     * 玩家自己改过、因而放弃云端覆盖的键 -> 放弃时云端给的值。
+     * 本地钉住的键 -> 钉住时云端给的值。
      *
-     * 不记下来的话，下一次拉取会把云端值再写一遍，玩家刚改好的设置几秒后就自己变回去。
-     * 云端把这个键的值改掉时（值不再相等）会重新接管，等于「云端改主意了就再管起来」。
+     * 玩家自己改过某一项后，把「本地值」钉住：后续下发如果还是同一个值就不再抢回去；
+     * 云端把这个键改成别的值时才重新接管（等于云端的修改意图仍然生效）。
+     *
+     * 这份表会持久化到 config/verity_extended/cloud_pins.json：以前它只在内存里，
+     * 重启一次或云端短暂返回空覆盖就全忘了，玩家刚调好的设置下一次拉取又被盖回去。
      */
-    private static final Map<List<String>, Object> adopted = new LinkedHashMap<>();
+    private static final Map<List<String>, JsonElement> pinned = new LinkedHashMap<>();
+
+    /** 钉住记录是否已从磁盘读过。 */
+    private static boolean pinsLoaded;
 
     /** 上一次下发的摘要，用来「只在变化时打日志」，否则每次轮询都会刷一遍。 */
     private static String lastSummary = "";
@@ -159,6 +168,7 @@ public final class CloudOverrides {
      * @return 实际生效的键数
      */
     public static synchronized int apply(JsonObject raw) {
+        loadPins();
         if (raw == null || raw.size() == 0) {
             clearLocked();
             return 0;
@@ -222,6 +232,7 @@ public final class CloudOverrides {
         Set<Slot> accepted = new LinkedHashSet<>();
         List<String> outOfRange = new ArrayList<>();
         List<String> keptLocal = new ArrayList<>();
+        boolean pinsDirty = false;
         for (Map.Entry<Slot, Object> entry : coerced.entrySet()) {
             Slot slot = entry.getKey();
             if (rejected.contains(slot)) {
@@ -232,12 +243,39 @@ public final class CloudOverrides {
                 // 只有第一次覆盖时才记本地值：之后再记拿到的就是上一次的覆盖值了
                 slot.localValue = slot.value.get();
             }
-            if (adopted.containsKey(slot.path) && Objects.equals(adopted.get(slot.path), entry.getValue())) {
+            if (matchesPin(slot, entry.getValue())) {
                 // 玩家改过这个键，而云端给的还是同一个值：以玩家的为准，别再改回去
                 keptLocal.add(dotted(slot.path));
                 continue;
             }
-            adopted.remove(slot.path);
+            // 首次接管这一项（本地没钉住过）时，如果本地文件里本来就不是默认值
+            // （说明玩家早就自己调过），且和云端给的不一样，就以本地为准，
+            // 否则启动那一次下发会把玩家原来的设置冲掉。
+            if (!active.containsKey(slot.path) && !pinned.containsKey(slot.path)) {
+                Object local = readCurrent(slot);
+                Object defaultValue = slot.value.getDefault();
+                if (local != null
+                        && !Objects.equals(local, defaultValue)
+                        && !Objects.equals(local, entry.getValue())) {
+                    slot.localValue = local;
+                    pin(slot.path, entry.getValue());
+                    pinsDirty = true;
+                    keptLocal.add(dotted(slot.path));
+                    continue;
+                }
+            }
+            if (active.containsKey(slot.path) && editedSincePush(slot)) {
+                // 两次拉取之间玩家自己改过（管理员指令、其它模块、直接编辑 TOML 后重载都算），
+                // 不等到保存就先采纳，否则这一次下发就把他刚改的值冲掉了
+                slot.localValue = readCurrent(slot);
+                pin(slot.path, entry.getValue());
+                active.remove(slot.path);
+                keptLocal.add(dotted(slot.path));
+                pinsDirty = true;
+                continue;
+            }
+            // 云端把这个键改成了新值：重新接管，顺带作废旧的钉住记录
+            if (pinned.remove(slot.path) != null) pinsDirty = true;
             slot.cloudValue = entry.getValue();
             try {
                 write(slot.value, entry.getValue());
@@ -250,6 +288,7 @@ public final class CloudOverrides {
         }
 
         restoreMissing(accepted);
+        if (pinsDirty) persistPins();
 
         String pinnedSummary = localPinned.toString();
         if (localPinned.isEmpty()) {
@@ -283,7 +322,8 @@ public final class CloudOverrides {
             }
         }
         active.clear();
-        adopted.clear();
+        // 注意：不清理 pinned。云端关闭 / 授权失效 / 本次没下发覆盖都不代表玩家想让云端重新接管，
+        // 把钉住记录留到玩家显式点「交还云端」为止，否则每次云端抖一下本地设置就被夺回去。
         lastSummary = "";
     }
 
@@ -315,9 +355,127 @@ public final class CloudOverrides {
                 }
             }
             active.remove(slot.path);
-            // 云端不再管这个键了，玩家的「已采纳」记录也随之作废；
-            // 云端下次重新下发时算一次新的接管
-            adopted.remove(slot.path);
+            // 钉住记录刻意保留：云端这次不推这个键，不代表玩家想让云端下次再抢回去
+        }
+    }
+
+    // ==================== 本地钉住 ====================
+
+    /** 读当前值；配置没加载时 get() 会抛，这里当「读不到」处理。 */
+    private static Object readCurrent(Slot slot) {
+        try {
+            return slot.value.get();
+        } catch (RuntimeException error) {
+            return null;
+        }
+    }
+
+    /** 上一次是我们写进去的，但现在的值已经不同：玩家在两次下发之间自己改过。 */
+    private static boolean editedSincePush(Slot slot) {
+        Object current = readCurrent(slot);
+        return current != null && !Objects.equals(current, slot.cloudValue);
+    }
+
+    /** 这个键被本地钉住，且云端这次给的仍是钉住时的那个值。 */
+    private static boolean matchesPin(Slot slot, Object cloudValue) {
+        loadPins();
+        JsonElement pinnedValue = pinned.get(slot.path);
+        if (pinnedValue == null) return false;
+        return Objects.equals(coerce(pinnedValue, slot.value.getDefault()), cloudValue);
+    }
+
+    private static void pin(List<String> path, Object cloudValue) {
+        loadPins();
+        if (cloudValue == null) {
+            pinned.remove(path);
+            return;
+        }
+        pinned.put(List.copyOf(path), toJson(cloudValue));
+    }
+
+    private static JsonElement toJson(Object value) {
+        if (value instanceof Boolean bool) return new JsonPrimitive(bool);
+        if (value instanceof Number number) return new JsonPrimitive(number);
+        return new JsonPrimitive(String.valueOf(value));
+    }
+
+    public static synchronized int pinnedCount() {
+        loadPins();
+        return pinned.size();
+    }
+
+    /**
+     * 把所有键交还云端：清空钉住记录并落盘，下一次下发开始重新接管。
+     *
+     * @return 被清掉的键数
+     */
+    public static synchronized int releasePins() {
+        loadPins();
+        int count = pinned.size();
+        if (count == 0) return 0;
+        pinned.clear();
+        persistPins();
+        OllamaProxyMod.LOGGER.info("已交还 {} 项本地设置给云端接管", count);
+        return count;
+    }
+
+    /**
+     * 钉住表路径。
+     *
+     * 测试与部分工具进程里没有初始化 Forge，{@code FMLPaths.CONFIGDIR.get()} 会返回 null；
+     * 这里兜底到工作目录的 config/，避免自检任务直接 NPE（真机上不会走到兜底）。
+     */
+    private static Path pinsFile() {
+        Path dir = null;
+        try {
+            dir = net.minecraftforge.fml.loading.FMLPaths.CONFIGDIR.get();
+        } catch (Throwable ignored) {
+        }
+        if (dir == null) {
+            dir = java.nio.file.Paths.get("config");
+        }
+        return dir.resolve("verity_extended").resolve("cloud_pins.json");
+    }
+
+    private static synchronized void loadPins() {
+        if (pinsLoaded) return;
+        pinsLoaded = true;
+        Path file = pinsFile();
+        if (!java.nio.file.Files.isRegularFile(file)) return;
+        try {
+            String text = java.nio.file.Files.readString(file, java.nio.charset.StandardCharsets.UTF_8);
+            JsonElement root = com.google.gson.JsonParser.parseString(text);
+            if (!root.isJsonObject()) return;
+            for (Map.Entry<String, JsonElement> entry : root.getAsJsonObject().entrySet()) {
+                List<String> path = split(entry.getKey());
+                if (!path.isEmpty()) pinned.put(List.copyOf(path), entry.getValue());
+            }
+        } catch (Throwable error) {
+            OllamaProxyMod.LOGGER.warn("读取本地覆盖记录失败，按没有记录处理: {}", error.toString());
+        }
+    }
+
+    private static void persistPins() {
+        Path file = pinsFile();
+        try {
+            java.nio.file.Files.createDirectories(file.getParent());
+            JsonObject root = new JsonObject();
+            for (Map.Entry<List<String>, JsonElement> entry : pinned.entrySet()) {
+                root.add(dotted(entry.getKey()), entry.getValue());
+            }
+            Path temp = file.resolveSibling(file.getFileName() + ".tmp");
+            java.nio.file.Files.writeString(temp, root.toString(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            try {
+                java.nio.file.Files.move(temp, file,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException fallback) {
+                java.nio.file.Files.move(temp, file,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (Throwable error) {
+            OllamaProxyMod.LOGGER.warn("保存本地覆盖记录失败（不影响本次运行）: {}", error.toString());
         }
     }
 
@@ -343,6 +501,9 @@ public final class CloudOverrides {
         if (active.isEmpty() || !spec.isLoaded()) {
             // 没覆盖就保持原样；没加载时也照旧让它抛，别把真实错误吞掉
             spec.save();
+            try {
+                ForgeConfigRepair.snapshotAfterSave(spec);
+            } catch (Throwable ignored) { Silent.ignore("CloudOverrides", ignored); }
             return;
         }
 
@@ -374,14 +535,20 @@ public final class CloudOverrides {
             slot.localValue = adoptedValue;
             active.remove(slot.path);
             // 记下放弃时云端给的值：下次拉取如果还是这个值就不再抢回去
-            adopted.put(slot.path, slot.cloudValue);
-            OllamaProxyMod.LOGGER.info("配置项 {} 已被本地改动覆盖（{}），放弃该项的云端覆盖",
+            pin(slot.path, slot.cloudValue);
+            OllamaProxyMod.LOGGER.info("配置项 {} 已被本地改动覆盖（{}），该项交回本地管理",
                     dotted(slot.path), adoptedValue);
         }
+        if (!adopt.isEmpty()) persistPins();
 
         try {
             spec.save();
         } finally {
+            // 保存成功后留一份完整快照：Forge 写 TOML 不是原子的，
+            // 半截文件会让 cloud.enable 之类读回默认值（表现为「云端自己关了」）
+            try {
+                ForgeConfigRepair.snapshotAfterSave(spec);
+            } catch (Throwable ignored) { Silent.ignore("CloudOverrides", ignored); }
             for (Slot slot : reapply) {
                 try {
                     write(slot.value, slot.cloudValue);

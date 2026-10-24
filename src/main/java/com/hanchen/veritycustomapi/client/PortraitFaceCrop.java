@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.client;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.skin.SkinManager;
 import com.hanchen.veritycustomapi.skin.VeritySkinTexture;
@@ -86,8 +88,7 @@ public final class PortraitFaceCrop {
             if (skin != null && texture.equals(skin.getTextureId())) {
                 return skin.getPixels();
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("PortraitFaceCrop", ignored); }
         return null;
     }
 

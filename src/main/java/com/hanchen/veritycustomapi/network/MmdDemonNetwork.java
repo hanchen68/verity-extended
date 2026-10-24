@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.network;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkRegistry;
@@ -105,7 +107,7 @@ public final class MmdDemonNetwork {
             try {
                 player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
                         "§e[MMD] 手速太快啦，歇一下再召唤。"));
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("MmdDemonNetwork", ignored); }
             return;
         }
         LAST_SPAWN_AT.put(player.getUUID(), nowMs);
@@ -118,7 +120,7 @@ public final class MmdDemonNetwork {
             try {
                 player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
                         "§c[MMD] 本维度展示用恶魔已达上限（" + MAX_DISPLAY_DEMONS_PER_LEVEL + "），请先清理再生成。"));
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("MmdDemonNetwork", ignored); }
             return;
         }
         // 单玩家上限。先把已经消失的实体 id 清掉，免得计数虚高
@@ -129,7 +131,7 @@ public final class MmdDemonNetwork {
             try {
                 player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
                         "§e[MMD] 你已经有 " + owned.size() + " 个恶魔了，先送走几个再召唤。"));
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("MmdDemonNetwork", ignored); }
             return;
         }
         // 多重 fallback：先按 ID 精确找，找不到就在 ENTITY_TYPES 里按 demon 模糊匹配
@@ -152,7 +154,7 @@ public final class MmdDemonNetwork {
             try {
                 player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
                         "§c[MMD] §r未找到恶魔实体类型。原版 Verity 模组未生效，请检查 mods 目录。"));
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("MmdDemonNetwork", ignored); }
             return;
         }
         final net.minecraft.world.entity.EntityType<?> type = resolved.get();
@@ -187,7 +189,7 @@ public final class MmdDemonNetwork {
             try {
                 player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
                         "§c[MMD] §r恶魔生成失败。请把 latest.log 末段贴回开发者。"));
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("MmdDemonNetwork", ignored); }
         }
     }
 

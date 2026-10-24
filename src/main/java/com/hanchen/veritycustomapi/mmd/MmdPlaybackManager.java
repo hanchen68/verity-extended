@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.mmd;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -630,7 +632,7 @@ public final class MmdPlaybackManager {
             // 安全删除：仅删除该目录及其内容
             try (java.util.stream.Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(root)) {
                 walk.sorted(java.util.Collections.reverseOrder())
-                        .forEach(p -> { try { java.nio.file.Files.deleteIfExists(p); } catch (Throwable ignored) {} });
+                        .forEach(p -> { try { java.nio.file.Files.deleteIfExists(p); } catch (Throwable ignored) { Silent.ignore("MmdPlaybackManager", ignored); } });
             }
             projectCache.remove(projectName);
             LOGGER.info("MMD 已删除舞蹈项目文件夹: {}", root);
@@ -836,7 +838,7 @@ public final class MmdPlaybackManager {
             clip.stop();
             clip.flush();
             clip.close();
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) { Silent.ignore("MmdPlaybackManager", ignored); }
     }
 
     private static final class PcmAudioStream implements AudioStream {
@@ -925,7 +927,7 @@ public final class MmdPlaybackManager {
                 if (format.getFrameLength() > 0 && audioFormat.getFrameRate() > 0.0f) {
                     return format.getFrameLength() / audioFormat.getFrameRate();
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("MmdPlaybackManager", ignored); }
             return 0.0f;
         }
     }
@@ -939,7 +941,7 @@ public final class MmdPlaybackManager {
                 net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
                 Entity entity = mc.level == null ? null : mc.level.getEntity(entityId);
                 if (entity != null && readNoAi(entity) != previous) setNoAi(entity, previous);
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("MmdPlaybackManager", ignored); }
         }
         if (cameraAnchorEntityId == entityId) selectCameraAnchor();
         if (activePlaybacks.isEmpty()) {
@@ -1246,7 +1248,7 @@ public final class MmdPlaybackManager {
                     for (Object o : iter) list.add((Entity) o);
                     if (!list.isEmpty()) return list;
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("MmdPlaybackManager", ignored); }
         }
         // AABB 大范围回退：以当前玩家位置为中心 4096 方块，遍历所有已加载实体
         try {
@@ -1405,7 +1407,7 @@ public final class MmdPlaybackManager {
                 bone.setScaleY(1.0f);
                 bone.setScaleZ(1.0f);
                 bone.setRotX(0.0f);
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("MmdPlaybackManager", ignored); }
         }
     }
 

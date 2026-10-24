@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.tts;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -92,7 +94,7 @@ public class OnlineTtsService {
                             public void onSubscribe(java.util.concurrent.Flow.Subscription s) { s.request(Long.MAX_VALUE); }
                             public void onNext(java.nio.ByteBuffer buf) {
                                 byte[] b = new byte[buf.remaining()]; buf.get(b);
-                                try { bos.write(b); } catch (Exception ignored) {}
+                                try { bos.write(b); } catch (Exception ignored) { Silent.ignore("OnlineTtsService", ignored); }
                             }
                             public void onError(Throwable t) {}
                             public void onComplete() {}
@@ -219,8 +221,7 @@ public class OnlineTtsService {
                 line.stop();
                 line.flush();
                 line.close();
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("OnlineTtsService", ignored); }
             CURRENT_LINE = null;
         }
 
@@ -230,8 +231,7 @@ public class OnlineTtsService {
                 Class<?> mediaPlayerClass = Class.forName("android.media.MediaPlayer");
                 Method stop = mediaPlayerClass.getMethod("stop");
                 stop.invoke(player);
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("OnlineTtsService", ignored); }
             CURRENT_ANDROID_PLAYER = null;
         }
         stopMinecraftOpenAl();
@@ -1254,7 +1254,7 @@ public class OnlineTtsService {
                 try {
                     line.stop();
                     line.close();
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) { Silent.ignore("OnlineTtsService", ignored); }
                 if (CURRENT_LINE == line) {
                     CURRENT_LINE = null;
                 }
@@ -1476,8 +1476,7 @@ public class OnlineTtsService {
             } finally {
                 try {
                     release.invoke(player);
-                } catch (Exception ignored) {
-                }
+                } catch (Exception ignored) { Silent.ignore("OnlineTtsService", ignored); }
                 if (CURRENT_ANDROID_PLAYER == player) {
                     CURRENT_ANDROID_PLAYER = null;
                 }

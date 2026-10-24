@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.network;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.compat.OriginalVerityStateAccess;
 import net.minecraft.network.chat.Component;
@@ -115,8 +117,7 @@ public final class ServerNavigationService {
             if (referenced instanceof VerityEntity entity && entity.isAlive()) {
                 return entity;
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("ServerNavigationService", ignored); }
         try {
             return player.serverLevel()
                     .getEntitiesOfClass(VerityEntity.class, player.getBoundingBox().inflate(SEARCH_RADIUS))

@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.client;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -843,7 +845,7 @@ public final class VerityAwarenessManager {
                 try {
                     responseBody = new String(is.readAllBytes(), StandardCharsets.UTF_8);
                 } finally {
-                    try { is.close(); } catch (Exception ignored) {}
+                    try { is.close(); } catch (Exception ignored) { Silent.ignore("VerityAwarenessManager", ignored); }
                 }
             }
 

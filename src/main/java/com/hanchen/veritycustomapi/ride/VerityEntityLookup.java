@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.ride;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.compat.OriginalVerityStateAccess;
 import com.hanchen.veritycustomapi.network.ServerVerityRegistry;
@@ -37,8 +39,7 @@ public final class VerityEntityLookup {
                     && claimableBy(player, entity)) {
                 return entity;
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("VerityEntityLookup", ignored); }
 
         VerityEntity nearby = nearest(player);
         if (nearby != null) return nearby;

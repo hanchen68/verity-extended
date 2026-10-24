@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.client;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.config.VerityUiWidgets;
 import com.hanchen.veritycustomapi.config.VerityUiDraw;
 import com.hanchen.veritycustomapi.config.VerityUiTheme;
@@ -109,8 +111,7 @@ public final class QuickCommandScreen extends Screen {
             } else {
                 com.hanchen.veritycustomapi.client.VerityChatSender.sendToVerity(entry.payload());
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("QuickCommandScreen", ignored); }
     }
 
     /** 服务器命令表里是否存在某个指令。 */

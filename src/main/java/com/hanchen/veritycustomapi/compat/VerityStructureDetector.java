@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.compat;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -17,6 +19,9 @@ public final class VerityStructureDetector {
 
     /** 6.2 起独立出来的回复发送方法；6.0/6.1 直接写在 lambda$queryAI$4 里。 */
     public static final String NEW_REPLY_METHOD = "sendReplyPart";
+
+    /** 6.0/6.1 的回复发送入口（编译器产出的 lambda 名，序号可能随重构变化）。 */
+    public static final String LEGACY_REPLY_METHOD = "lambda$queryAI$4";
 
     /** 6.2 起原版自带整套抚摸支持；存在时扩展的兼容层必须让位，否则一次抚摸响应两次。 */
     public static final String BUILTIN_PAT_RESOURCE = "varmite/verity/pat/PatQuips.class";
@@ -86,6 +91,11 @@ public final class VerityStructureDetector {
         return hasMethod(aiManagerBytes, NEW_REPLY_METHOD);
     }
 
+    /** AiManager 里是否还有旧版回复入口；新旧都没有说明上游又重构了，私聊适配会静默失效。 */
+    public static boolean hasLegacyReplyMethod(byte[] aiManagerBytes) {
+        return hasMethod(aiManagerBytes, LEGACY_REPLY_METHOD);
+    }
+
     // 以下判定会被运行期多处查询，结果缓存一次。
 
     private static volatile Boolean builtinPatSupport;
@@ -119,8 +129,7 @@ public final class VerityStructureDetector {
         try (java.io.InputStream in = VerityStructureDetector.class.getClassLoader()
                 .getResourceAsStream(TOOLS_RESOURCE)) {
             if (in != null) detected = hasMethod(in.readAllBytes(), RUN_COMMAND_METHOD);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("VerityStructureDetector", ignored); }
         runCommandTool = detected;
         return detected;
     }
@@ -135,8 +144,7 @@ public final class VerityStructureDetector {
         try (java.io.InputStream in = VerityStructureDetector.class.getClassLoader()
                 .getResourceAsStream(TOOLS_RESOURCE)) {
             if (in != null) detected = hasMethod(in.readAllBytes(), GOLDEN_BOOK_METHOD);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("VerityStructureDetector", ignored); }
         goldenBookMechanic = detected;
         return detected;
     }
@@ -166,8 +174,7 @@ public final class VerityStructureDetector {
         try (java.io.InputStream in = VerityStructureDetector.class.getClassLoader()
                 .getResourceAsStream(VERITY_ENTITY_RESOURCE)) {
             if (in != null) detected = hasMethod(in.readAllBytes(), SHOULDER_METHOD);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("VerityStructureDetector", ignored); }
         shoulderMountSystem = detected;
         return detected;
     }

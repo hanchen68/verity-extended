@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.tts;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.compat.RuntimePlatform;
@@ -55,8 +57,7 @@ public class AudioPlayer {
                 line.stop();
                 line.flush();
                 line.close();
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("AudioPlayer", ignored); }
         }
         VanillaAudioSink.stopAll();
     }
@@ -145,8 +146,7 @@ public class AudioPlayer {
             if (line != null) {
                 try {
                     line.close();
-                } catch (Throwable ignored) {
-                }
+                } catch (Throwable ignored) { Silent.ignore("AudioPlayer", ignored); }
             }
             synchronized (AudioPlayer.class) {
                 if (currentLine == line) {

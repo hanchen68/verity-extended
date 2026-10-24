@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.ai;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -108,8 +110,7 @@ public final class WebSearchClient {
     private static void log(String message) {
         try {
             com.hanchen.veritycustomapi.OllamaProxyMod.LOGGER.info("[联网搜索] {}", message);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("WebSearchClient", ignored); }
     }
 
     // ---------------------------------------------------------------- Tavily
@@ -468,8 +469,7 @@ public final class WebSearchClient {
                         // 错误体可能很长且换行，压成一行再塞进日志
                         detail = new String(data, StandardCharsets.UTF_8)
                                 .replace('\n', ' ').replace('\r', ' ');
-                    } catch (Exception ignored) {
-                    }
+                    } catch (Exception ignored) { Silent.ignore("WebSearchClient", ignored); }
                 }
                 log("HTTP " + status + (detail.isBlank() ? "" : "：" + detail));
                 return "";

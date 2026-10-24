@@ -47,6 +47,8 @@ public class OllamaProxyMod {
     }
 
     public OllamaProxyMod() {
+        // Forge 要到 ModLoading 阶段才真正读配置文件，先在这里把重复项洗干净，避免一开局就崩
+        com.hanchen.veritycustomapi.config.ForgeConfigRepair.repairIfNeeded();
         // 注册配置
         ConfigManager.registerAllConfigs();
         com.hanchen.veritycustomapi.cloud.BillingService.initialize();
@@ -74,6 +76,8 @@ public class OllamaProxyMod {
         com.hanchen.veritycustomapi.network.HeadPerchNetwork.register();
         // 插件管理界面的网络通道
         com.hanchen.veritycustomapi.network.PluginNetwork.register();
+        // Verity 手持物品（星之遥控器）的同步通道
+        com.hanchen.veritycustomapi.network.VerityHoldNetwork.register();
         // 物品索引必须等注册事件全部结束再构建：构造阶段模组物品还没进注册表
         net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
                 .addListener(this::onCommonSetup);

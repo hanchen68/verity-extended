@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.client;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -180,8 +182,7 @@ public final class ConversationLogStore {
             if (server != null) {
                 return server.getWorldData().getLevelName();
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("ConversationLogStore", ignored); }
         try {
             return net.minecraft.client.Minecraft.getInstance().level == null
                     ? "" : net.minecraft.client.Minecraft.getInstance().level.dimension().location().getPath();

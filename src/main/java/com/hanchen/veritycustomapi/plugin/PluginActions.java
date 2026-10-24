@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.plugin;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.compat.OriginalVerityChatBridge;
 import com.hanchen.veritycustomapi.config.ModConfig;
@@ -267,8 +269,7 @@ public final class PluginActions {
                     return name;
                 }
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("PluginActions", ignored); }
         return "Verity";
     }
 

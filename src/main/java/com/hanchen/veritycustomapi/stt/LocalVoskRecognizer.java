@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.stt;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
@@ -83,8 +85,7 @@ public class LocalVoskRecognizer implements SpeechRecognizer {
                             rawResult = new String(rawResult.getBytes("GBK"), StandardCharsets.UTF_8);
                         }
                     }
-                } catch (Exception e) {
-                }
+                } catch (Exception e) { Silent.ignore("LocalVoskRecognizer", e); }
             }
             
             String result = parseTextFromJson(rawResult);
@@ -109,8 +110,7 @@ public class LocalVoskRecognizer implements SpeechRecognizer {
         if (voskModel != null) {
             try {
                 voskModel.close();
-            } catch (Exception e) {
-            }
+            } catch (Exception e) { Silent.ignore("LocalVoskRecognizer", e); }
         }
     }
 

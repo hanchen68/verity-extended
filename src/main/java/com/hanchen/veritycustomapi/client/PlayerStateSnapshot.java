@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.client;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -144,7 +146,6 @@ public final class PlayerStateSnapshot {
                 return;
             }
             counts.merge(name, stack.getCount(), Integer::sum);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("PlayerStateSnapshot", ignored); }
     }
 }

@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.stt;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 
 import java.io.ByteArrayOutputStream;
@@ -137,8 +139,7 @@ public final class AndroidAudioRecorder {
         }
         try {
             audioRecordClass.getMethod("release").invoke(candidate);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("AndroidAudioRecorder", ignored); }
     }
 
     private void captureLoop(int bufferSize) {
@@ -174,8 +175,7 @@ public final class AndroidAudioRecorder {
             if (recorder != null && releaseMethod != null) {
                 releaseMethod.invoke(recorder);
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("AndroidAudioRecorder", ignored); }
         recorder = null;
         readMethod = null;
         stopMethod = null;
@@ -185,8 +185,7 @@ public final class AndroidAudioRecorder {
                 if (audioBuffer != null) {
                     audioBuffer.close();
                 }
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("AndroidAudioRecorder", ignored); }
             audioBuffer = null;
         }
     }
@@ -196,7 +195,6 @@ public final class AndroidAudioRecorder {
             if (recorder != null && stopMethod != null) {
                 stopMethod.invoke(recorder);
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("AndroidAudioRecorder", ignored); }
     }
 }

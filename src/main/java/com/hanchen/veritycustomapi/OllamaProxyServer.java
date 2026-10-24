@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -885,8 +887,7 @@ public class OllamaProxyServer {
                     return hasValidToolCalls(message.get("tool_calls"))
                             || hasValidFunctionCall(message.get("function_call"));
                 }
-            } catch (Exception ignored) {
-            }
+            } catch (Exception ignored) { Silent.ignore("OllamaProxyServer", ignored); }
             return false;
         }
 
@@ -941,8 +942,7 @@ public class OllamaProxyServer {
             if (!Boolean.TRUE.equals(CAMERA_IMAGE_INJECTED.get())) return;
             try {
                 com.hanchen.veritycustomapi.client.CameraChatVision.completeVisionRequest(hasUsableText);
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("OllamaProxyServer", ignored); }
         }
 
         private String applyRouteModel(String body, String model) {
@@ -1076,73 +1076,33 @@ public class OllamaProxyServer {
          * 原版工具调用时 content 为空，判定须同时看 tool_calls/function_call；上游空补全会留下空 assistant，
          * 之后每次请求都被拒。未配对但格式合法的 tool_calls 必须保留，不要校验其与 tool 消息的配对。
          */
+        /**
+         * 已迁到 {@link com.hanchen.veritycustomapi.proxy.ToolCallNormalizer}。
+         * 保留同名委托，散落各处的调用点一行都不用改。
+         */
         static String sanitizeAssistantHistory(String rawBody) {
-            if (rawBody == null || rawBody.isBlank()) return rawBody;
-            try {
-                JsonObject body = GSON.fromJson(rawBody, JsonObject.class);
-                if (body == null || !body.has("messages") || !body.get("messages").isJsonArray()) {
-                    return rawBody;
-                }
-                JsonArray messages = body.getAsJsonArray("messages");
-                JsonArray sanitized = new JsonArray();
-                int removed = 0;
-                for (JsonElement element : messages) {
-                    if (!element.isJsonObject()) {
-                        sanitized.add(element);
-                        continue;
-                    }
-                    JsonObject message = element.getAsJsonObject();
-                    String role = extractContentText(message.get("role"));
-                    boolean invalidAssistant = "assistant".equals(role)
-                            && extractContentText(message.get("content")).isBlank()
-                            && !hasValidToolCalls(message.get("tool_calls"))
-                            && !hasValidFunctionCall(message.get("function_call"));
-                    if (invalidAssistant) {
-                        removed++;
-                    } else {
-                        sanitized.add(element);
-                    }
-                }
-                if (removed == 0) return rawBody;
-                body.add("messages", sanitized);
-                LOGGER.warn("已从请求历史中移除 {} 条无内容且无工具调用的 assistant 消息", removed);
-                return GSON.toJson(body);
-            } catch (Exception error) {
-                LOGGER.warn("assistant 历史清洗失败，将保留原请求体: {}", error.toString());
-                return rawBody;
-            }
+            return com.hanchen.veritycustomapi.proxy.ToolCallNormalizer
+                    .sanitizeAssistantHistory(rawBody);
         }
 
         private static boolean hasValidToolCalls(JsonElement toolCalls) {
-            if (toolCalls == null || !toolCalls.isJsonArray() || toolCalls.getAsJsonArray().isEmpty()) {
-                return false;
-            }
-            for (JsonElement element : toolCalls.getAsJsonArray()) {
-                if (!element.isJsonObject()) return false;
-                JsonObject call = element.getAsJsonObject();
-                if (!hasNonBlankPrimitive(call, "id")
-                        || !"function".equals(extractContentText(call.get("type")))
-                        || !hasNamedFunction(call.get("function"))) {
-                    return false;
-                }
-            }
-            return true;
+            return com.hanchen.veritycustomapi.proxy.ToolCallNormalizer
+                    .hasValidToolCalls(toolCalls);
         }
 
         private static boolean hasValidFunctionCall(JsonElement functionCall) {
-            return hasNamedFunction(functionCall);
+            return com.hanchen.veritycustomapi.proxy.ToolCallNormalizer
+                    .hasValidFunctionCall(functionCall);
         }
 
         private static boolean hasNamedFunction(JsonElement function) {
-            if (function == null || !function.isJsonObject()) return false;
-            JsonObject object = function.getAsJsonObject();
-            return hasNonBlankPrimitive(object, "name")
-                    && object.has("arguments") && object.get("arguments").isJsonPrimitive();
+            return com.hanchen.veritycustomapi.proxy.ToolCallNormalizer
+                    .hasNamedFunction(function);
         }
 
         private static boolean hasNonBlankPrimitive(JsonObject object, String field) {
-            return object.has(field) && object.get(field).isJsonPrimitive()
-                    && !object.get(field).getAsString().isBlank();
+            return com.hanchen.veritycustomapi.proxy.ToolCallNormalizer
+                    .hasNonBlankPrimitive(object, field);
         }
 
         private String injectFormatRequirement(String rawBody) {
@@ -1421,8 +1381,7 @@ public class OllamaProxyServer {
                 if (userText.isBlank()) return;
                 com.hanchen.veritycustomapi.client.ConversationLogStore.record(userText, assistantText);
                 com.hanchen.veritycustomapi.memory.MemoryAutoWriter.consider(userText, assistantText);
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("OllamaProxyServer", ignored); }
         }
 
         /**
@@ -1630,8 +1589,7 @@ public class OllamaProxyServer {
                             JsonObject args = JsonParser.parseString(
                                     function.get("arguments").getAsString()).getAsJsonObject();
                             if (args.has("query")) query = args.get("query").getAsString();
-                        } catch (Exception ignored) {
-                        }
+                        } catch (Exception ignored) { Silent.ignore("OllamaProxyServer", ignored); }
                     }
                     String id = call.has("id") && call.get("id").isJsonPrimitive()
                             ? call.get("id").getAsString() : "call_search";
@@ -2488,12 +2446,7 @@ public class OllamaProxyServer {
         }
 
         private String toolNameOf(JsonObject tool) {
-            if (!tool.has("function") || !tool.get("function").isJsonObject()) {
-                return "";
-            }
-            JsonObject function = tool.getAsJsonObject("function");
-            return function.has("name") && function.get("name").isJsonPrimitive()
-                    ? function.get("name").getAsString() : "";
+            return com.hanchen.veritycustomapi.proxy.ToolCallNormalizer.toolNameOf(tool);
         }
 
         /** tool_calls 里是否点名了某个工具（用于拦截不能透传给原版的扩展工具）。 */
@@ -2537,8 +2490,7 @@ public class OllamaProxyServer {
                             if (args.has("keyword") && args.get("keyword").isJsonPrimitive()) {
                                 keyword = args.get("keyword").getAsString();
                             }
-                        } catch (Exception ignored) {
-                        }
+                        } catch (Exception ignored) { Silent.ignore("OllamaProxyServer", ignored); }
                     }
                     String id = call.has("id") && call.get("id").isJsonPrimitive()
                             ? call.get("id").getAsString() : "call_offload";
@@ -2775,28 +2727,8 @@ public class OllamaProxyServer {
         }
 
         static String extractContentText(JsonElement content) {
-            if (content == null || content.isJsonNull()) return "";
-            if (content.isJsonPrimitive()) return content.getAsString();
-            if (content.isJsonObject()) {
-                JsonObject object = content.getAsJsonObject();
-                String[] textFields = {"text", "output_text", "content", "parts", "message", "response"};
-                for (String field : textFields) {
-                    String value = extractContentText(object.get(field));
-                    if (!value.isBlank()) return value;
-                }
-                return "";
-            }
-            if (!content.isJsonArray()) return "";
-
-            StringBuilder text = new StringBuilder();
-            for (JsonElement part : content.getAsJsonArray()) {
-                String value = extractContentText(part);
-                if (!value.isBlank()) {
-                    if (!text.isEmpty()) text.append('\n');
-                    text.append(value);
-                }
-            }
-            return text.toString();
+            return com.hanchen.veritycustomapi.proxy.ToolCallNormalizer
+                    .extractContentText(content);
         }
         
         private static void settleSettlements(List<BillingSettlement> settlements) {
@@ -2833,8 +2765,7 @@ public class OllamaProxyServer {
                 if (!"none".equals(summary)) {
                     LOGGER.debug("【缓存】Prompt 前缀缓存: {}", summary);
                 }
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("OllamaProxyServer", ignored); }
         }
 
         /** 汇总上游缓存命中字段：hit 取两种风格中非空值，都没有时输出 none、不算命中率。 */
@@ -2885,8 +2816,7 @@ public class OllamaProxyServer {
                 if (json != null && json.has("stream") && json.get("stream").isJsonPrimitive()) {
                     return json.get("stream").getAsBoolean();
                 }
-            } catch (Exception ignored) {
-            }
+            } catch (Exception ignored) { Silent.ignore("OllamaProxyServer", ignored); }
             return false;
         }
 

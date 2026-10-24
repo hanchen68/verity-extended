@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.stt;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.compat.RuntimePlatform;
@@ -189,7 +191,7 @@ public class VoiceRecognitionService {
                         break;
                     } catch (javax.sound.sampled.LineUnavailableException e) {
                         // 格式声明支持但实际打开失败，尝试下一个
-                        if (line != null) { try { line.close(); } catch (Exception ignored) {} line = null; }
+                        if (line != null) { try { line.close(); } catch (Exception ignored) { Silent.ignore("VoiceRecognitionService", ignored); } line = null; }
                     }
                 }
                 if (line != null) break;

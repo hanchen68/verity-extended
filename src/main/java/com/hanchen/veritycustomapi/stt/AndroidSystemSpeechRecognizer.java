@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.stt;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
@@ -150,13 +152,11 @@ public final class AndroidSystemSpeechRecognizer {
             Class<?> activityThread = Class.forName("android.app.ActivityThread");
             Object application = activityThread.getMethod("currentApplication").invoke(null);
             if (application != null) return application;
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("AndroidSystemSpeechRecognizer", ignored); }
         try {
             Class<?> appGlobals = Class.forName("android.app.AppGlobals");
             return appGlobals.getMethod("getInitialApplication").invoke(null);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("AndroidSystemSpeechRecognizer", ignored); }
         return null;
     }
 
@@ -201,8 +201,7 @@ public final class AndroidSystemSpeechRecognizer {
         if (recognizer == null) return;
         try {
             recognizer.getClass().getMethod("destroy").invoke(recognizer);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("AndroidSystemSpeechRecognizer", ignored); }
     }
 
     /** SpeechRecognizer 只能跑在 Android 主 Looper 上，不能直接用 Minecraft 渲染线程。 */

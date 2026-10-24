@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.compat;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -64,8 +66,7 @@ public final class OriginalVerityChatBridge {
         Thread thread = new Thread(() -> {
             try {
                 queryAi(verityEntity, player, message);
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("OriginalVerityChatBridge", ignored); }
         }, "Verity-Event-Report");
         thread.setDaemon(true);
         thread.start();

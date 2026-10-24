@@ -254,10 +254,42 @@ public final class CloudConfigManager {
         });
     }
 
+    /** 上一次真正应用过的配置标识；用于「同版本短时间重复拉取」去重。 */
+    private static volatile String lastAppliedId;
+    private static volatile Integer lastAppliedVersion;
+    private static volatile long lastAppliedAt;
+
+    /** 上一次应用是来自网络（true）还是磁盘快照（false）。 */
+    private static volatile boolean lastAppliedFromNetwork;
+
+    /** 同版本重复应用的抑制窗口（毫秒）。启动那一分钟里客户端、服务端、几次 refresh 会拿到同一份配置。 */
+    private static final long DUPLICATE_APPLY_WINDOW_MS = 60_000L;
+
+    private static boolean isDuplicateWithinWindow(CloudConfig config) {
+        if (config == null || config.data == null) return false;
+        // 只压网络重复拉取。快照里没有内置线路密钥（按设计不落盘），
+        // 网络那次必须照常应用，否则密钥要等到下一次轮询才回来。
+        if (!lastAppliedFromNetwork) return false;
+        String id = config.data.config_id;
+        Integer version = config.data.version;
+        if (id == null || version == null) return false;
+        if (!id.equals(lastAppliedId) || !version.equals(lastAppliedVersion)) return false;
+        return System.currentTimeMillis() - lastAppliedAt < DUPLICATE_APPLY_WINDOW_MS;
+    }
+
     private static boolean apply(CloudConfig config, boolean persist) {
+        if (isDuplicateWithinWindow(config)) {
+            OllamaProxyMod.LOGGER.debug("云端配置 {} v{} 已在 {} 秒内应用过，跳过这次重复下发",
+                    config.data.config_id, config.data.version, DUPLICATE_APPLY_WINDOW_MS / 1000L);
+            return true;
+        }
         if (!ConfigManager.applyCloudConfig(config)) {
             return false;
         }
+        lastAppliedId = config.data.config_id;
+        lastAppliedVersion = config.data.version;
+        lastAppliedAt = System.currentTimeMillis();
+        lastAppliedFromNetwork = persist;
         CloudCredentialStore.getInstance().updateConfigId(config.data.config_id);
         CloudRuntimeReload.notifyApplied();
         configurePeriodicTask(ConfigManager.getCloudPullIntervalSeconds(), generation);

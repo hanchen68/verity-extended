@@ -5,6 +5,7 @@ import com.hanchen.veritycustomapi.compat.VerityEntityTalkAnimator;
 import com.hanchen.veritycustomapi.compat.VerityGrowthState;
 import com.hanchen.veritycustomapi.compat.VerityPatPatCompat;
 import com.hanchen.veritycustomapi.compat.VeritySubtitleManager;
+import com.hanchen.veritycustomapi.config.ModConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -123,18 +124,44 @@ public class SphereRendererTalkingStateMixin {
         VERITY_EXTENDED_ENTITY.remove();
         VERITY_EXTENDED_PARTIAL_TICK.remove();
         double groundedYOffset = 0.0D;
+        float renderStretchY = stretchY;
+        float renderStretchXZ = stretchXZ;
+        float renderRoll = rollAngle;
+        double renderY = entityY;
         if (entity != null) {
             float level = VerityEntityTalkAnimator.getAudioLevel(entity.getId());
             if (level >= 0.0F) {
                 float phase = Math.max(-1.0F, Math.min(1.0F, (stretchY - 1.0F) / 0.12F));
                 float amplitude = 0.015F + 0.165F * level;
-                stretchY = 1.0F + phase * amplitude;
-                stretchXZ = 1.0F + (1.0F - stretchY) * 0.5F;
+                renderStretchY = 1.0F + phase * amplitude;
+                renderStretchXZ = 1.0F + (1.0F - renderStretchY) * 0.5F;
             }
             float growthScale = VerityGrowthState.getClientScale(entity);
             groundedYOffset = VerityGrowthState.getGroundedYOffset(entity);
-            stretchY *= growthScale;
-            stretchXZ *= growthScale;
+            if (jellyEnabled() && (entity.clientIsTalking || VerityEntityTalkAnimator.isTalking(entity.getId()))) {
+                float time = entity.tickCount + (partialTick == null ? 0.0F : partialTick);
+                double amplitude = jellyAmplitude();
+                double speed = jellySpeed();
+                double wave;
+                if (jellyChaos()) {
+                    // 鬼畜模式：三个不成比例的频率叠在一起，节奏被打散，看着像抽搐而不是呼吸
+                    speed *= 2.6D;
+                    amplitude *= 1.6D;
+                    wave = Math.sin(time * speed)
+                            + 0.65D * Math.sin(time * speed * 1.9D + 0.7D)
+                            + 0.45D * Math.sin(time * speed * 3.3D + 2.1D);
+                    renderRoll += (float) (Math.sin(time * speed * 0.8D) * 0.22D * (amplitude / 0.45D));
+                    renderY += Math.abs(Math.sin(time * speed * 1.3D)) * 0.09D * (amplitude / 0.45D);
+                } else {
+                    // 主弹 + 二次抖动，叠加后有果冻那种回弹的余韵
+                    wave = Math.sin(time * speed) + 0.35D * Math.sin(time * speed * 1.7D + 1.3D);
+                }
+                float jellyY = (float) (1.0D + wave * amplitude);
+                renderStretchY = jellyY;
+                renderStretchXZ = (float) (1.0D + (1.0D - jellyY) * jellySquash());
+            }
+            renderStretchY *= growthScale;
+            renderStretchXZ *= growthScale;
         }
         poseStack.pushPose();
         poseStack.translate(0.0D, groundedYOffset, 0.0D);
@@ -147,20 +174,62 @@ public class SphereRendererTalkingStateMixin {
                 texture,
                 packedLight,
                 entityX,
-                entityY,
+                renderY,
                 entityZ,
                 viewerX,
                 viewerY,
                 viewerZ,
-                stretchY,
-                stretchXZ,
+                renderStretchY,
+                renderStretchXZ,
                 red,
                 green,
                 blue,
                 alpha,
-                rollAngle,
+                renderRoll,
                 bodyYaw
         );
         poseStack.popPose();
+    }
+
+    /** Q弹总开关；配置没加载出来时保持原版手感。 */
+    private static boolean jellyEnabled() {
+        try {
+            return ModConfig.VERITY_JELLY_ENABLED.get();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static double jellyAmplitude() {
+        try {
+            return ModConfig.VERITY_JELLY_AMPLITUDE.get();
+        } catch (Throwable ignored) {
+            return 0.45D;
+        }
+    }
+
+    private static double jellySpeed() {
+        try {
+            return ModConfig.VERITY_JELLY_SPEED.get();
+        } catch (Throwable ignored) {
+            return 0.75D;
+        }
+    }
+
+    /** 鬼畜模式：在 Q 弹基础上再翻倍幅度和速度，并叠加甩头与弹跳。 */
+    private static boolean jellyChaos() {
+        try {
+            return ModConfig.VERITY_JELLY_CHAOS.get();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static double jellySquash() {
+        try {
+            return ModConfig.VERITY_JELLY_SQUASH.get();
+        } catch (Throwable ignored) {
+            return 0.85D;
+        }
     }
 }

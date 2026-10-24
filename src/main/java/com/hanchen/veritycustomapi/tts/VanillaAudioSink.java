@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.tts;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.mixin.SoundEngineAccessor;
@@ -195,8 +197,7 @@ public final class VanillaAudioSink implements AutoCloseable {
         for (VanillaAudioSink sink : LIVE.toArray(new VanillaAudioSink[0])) {
             try {
                 sink.close();
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("VanillaAudioSink", ignored); }
         }
         LIVE.clear();
     }
@@ -217,8 +218,7 @@ public final class VanillaAudioSink implements AutoCloseable {
         Vec3 position = entity.position();
         try {
             handle.execute(channel -> channel.setSelfPosition(position));
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("VanillaAudioSink", ignored); }
     }
 
     // ------------------------------------------------------------------ 内部实现

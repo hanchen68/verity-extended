@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.client;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -425,7 +427,6 @@ public final class CameraChatVision {
                     minecraft.player.displayClientMessage(Component.literal(message), false);
                 }
             });
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("CameraChatVision", ignored); }
     }
 }

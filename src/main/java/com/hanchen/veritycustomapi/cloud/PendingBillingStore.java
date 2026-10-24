@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.cloud;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.hanchen.veritycustomapi.compat.ForgePaths;
@@ -48,8 +50,7 @@ final class PendingBillingStore {
                 if (state.schema_version == 1) entry.legacy_unbound = true;
                 if (entry.valid()) entries.put(entry.key(), entry);
             }
-        } catch (Exception ignored) {
-        }
+        } catch (Exception ignored) { Silent.ignore("PendingBillingStore", ignored); }
     }
 
     private void save() {

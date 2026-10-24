@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.compat;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import java.util.regex.Pattern;
 
 /**
@@ -31,8 +33,7 @@ public final class VeritySpeaker {
             if (value instanceof String name && !name.isBlank()) {
                 return name.trim();
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("VeritySpeaker", ignored); }
         return FALLBACK_NAME;
     }
 

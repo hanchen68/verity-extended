@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.client;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 
@@ -232,7 +234,7 @@ public final class CameraCaptureService {
                     "未产出画面。" + firstLines(output, 3)
                             + "（请确认：设置→隐私和安全性→相机 已允许桌面应用访问摄像头）");
         } finally {
-            try { Files.deleteIfExists(outFile); } catch (Throwable ignored) {}
+            try { Files.deleteIfExists(outFile); } catch (Throwable ignored) { Silent.ignore("CameraCaptureService", ignored); }
         }
     }
 
@@ -317,7 +319,7 @@ public final class CameraCaptureService {
             }
             return CaptureResult.failure("ffmpeg", "ffmpeg 未产出画面。" + firstLines(output, 4));
         } finally {
-            try { Files.deleteIfExists(outFile); } catch (Throwable ignored) {}
+            try { Files.deleteIfExists(outFile); } catch (Throwable ignored) { Silent.ignore("CameraCaptureService", ignored); }
         }
     }
 
@@ -339,8 +341,7 @@ public final class CameraCaptureService {
                     return candidate;
                 }
                 process.destroyForcibly();
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("CameraCaptureService", ignored); }
         }
         return null;
     }
@@ -361,8 +362,7 @@ public final class CameraCaptureService {
                     return matcher.group(1);
                 }
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("CameraCaptureService", ignored); }
         return null;
     }
 

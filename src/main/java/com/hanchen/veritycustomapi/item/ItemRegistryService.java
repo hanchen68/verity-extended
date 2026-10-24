@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.item;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -216,8 +218,7 @@ public final class ItemRegistryService {
                 Object modFile = info.getClass().getMethod("getFile").invoke(info);
                 Path root = (Path) modFile.getClass().getMethod("getFilePath").invoke(modFile);
                 scanRoot(root, en, zh);
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("ItemRegistryService", ignored); }
         }
         loadClasspathFallback(en, zh);
     }
@@ -251,8 +252,7 @@ public final class ItemRegistryService {
             if (opened) {
                 try {
                     fs.close();
-                } catch (Throwable ignored) {
-                }
+                } catch (Throwable ignored) { Silent.ignore("ItemRegistryService", ignored); }
             }
         }
     }
@@ -273,8 +273,7 @@ public final class ItemRegistryService {
     private static void mergeJson(Path path, Map<String, String> target) {
         try (InputStream in = Files.newInputStream(path)) {
             mergeJson(in, target);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("ItemRegistryService", ignored); }
     }
 
     private static void mergeJson(InputStream in, Map<String, String> target) {
@@ -297,8 +296,7 @@ public final class ItemRegistryService {
                 if (in != null) {
                     mergeJson(in, file.endsWith("zh_cn.json") ? zh : en);
                 }
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("ItemRegistryService", ignored); }
         }
     }
 }

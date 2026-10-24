@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.client;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.compat.OriginalVerityStateAccess;
 import net.minecraft.client.Minecraft;
@@ -245,8 +247,7 @@ public final class VerityNavigationService {
             if (referenced instanceof VerityEntity entity && entity.isAlive()) {
                 return entity;
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("VerityNavigationService", ignored); }
         VerityEntity nearby = nearestVerity(player);
         if (nearby != null) {
             return nearby;
@@ -357,8 +358,7 @@ public final class VerityNavigationService {
     private static void message(ServerPlayer player, String text) {
         try {
             player.displayClientMessage(Component.literal(text), true);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("VerityNavigationService", ignored); }
     }
 
     private static void notifyClient(String text) {

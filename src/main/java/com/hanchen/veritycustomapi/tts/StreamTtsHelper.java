@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.tts;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -46,12 +48,12 @@ public final class StreamTtsHelper {
         InputStream stream = currentStream;
         currentStream = null;
         if (stream != null) {
-            try { stream.close(); } catch (Exception ignored) {}
+            try { stream.close(); } catch (Exception ignored) { Silent.ignore("StreamTtsHelper", ignored); }
         }
         SourceDataLine line = currentLine;
         currentLine = null;
         if (line != null) {
-            try { line.stop(); line.flush(); line.close(); } catch (Exception ignored) {}
+            try { line.stop(); line.flush(); line.close(); } catch (Exception ignored) { Silent.ignore("StreamTtsHelper", ignored); }
         }
         VanillaAudioSink.stopAll();
     }
@@ -104,7 +106,7 @@ public final class StreamTtsHelper {
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
             HttpResponse<InputStream> resp = client.send(req, HttpResponse.BodyHandlers.ofInputStream());
             if (resp.statusCode() != 200) {
-                try { resp.body().close(); } catch (Exception ignored) {}
+                try { resp.body().close(); } catch (Exception ignored) { Silent.ignore("StreamTtsHelper", ignored); }
                 return false;
             }
             if (route.tier() != null) {
@@ -153,8 +155,7 @@ public final class StreamTtsHelper {
                         }
                         audioStarted = true;
                         total += pcm.length;
-                    } catch (Exception ignored) {
-                    }
+                    } catch (Exception ignored) { Silent.ignore("StreamTtsHelper", ignored); }
                 }
             }
             if (currentStream == stream) currentStream = null;
@@ -180,16 +181,16 @@ public final class StreamTtsHelper {
             return true;
         } catch (Throwable t) {
             if (ConfigManager.isDevMode()) OllamaProxyMod.LOGGER.warn("[StreamTTS] {}", t.getMessage());
-            if (line != null) try { line.close(); } catch (Exception ignored) {}
-            if (sink != null) try { sink.close(); } catch (Exception ignored) {}
+            if (line != null) try { line.close(); } catch (Exception ignored) { Silent.ignore("StreamTtsHelper", ignored); }
+            if (sink != null) try { sink.close(); } catch (Exception ignored) { Silent.ignore("StreamTtsHelper", ignored); }
             return audioStarted;
         } finally {
             if (stream != null && sessionGeneration != expectedSession) {
-                try { stream.close(); } catch (Exception ignored) {}
+                try { stream.close(); } catch (Exception ignored) { Silent.ignore("StreamTtsHelper", ignored); }
             }
             if (currentStream == stream) currentStream = null;
             if (currentLine == line) currentLine = null;
-            if (sink != null) try { sink.close(); } catch (Exception ignored) {}
+            if (sink != null) try { sink.close(); } catch (Exception ignored) { Silent.ignore("StreamTtsHelper", ignored); }
             com.hanchen.veritycustomapi.compat.VerityEntityTalkAnimator.end(entityId, talkToken);
         }
     }

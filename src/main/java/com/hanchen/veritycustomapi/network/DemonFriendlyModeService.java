@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.network;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Set;
@@ -64,7 +66,7 @@ public final class DemonFriendlyModeService {
                         return f;
                     }
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("DemonFriendlyModeService", ignored); }
             c = c.getSuperclass();
         }
         return null;
@@ -97,7 +99,7 @@ public final class DemonFriendlyModeService {
             Field avail = GoalSelector.class.getDeclaredField("availableGoals");
             avail.setAccessible(true);
             available = (List<?>) avail.get(selector);
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) { Silent.ignore("DemonFriendlyModeService", ignored); }
         if (available == null) return;
 
         int removed = 0;
@@ -121,7 +123,7 @@ public final class DemonFriendlyModeService {
                     selector.removeGoal((Goal) goal);
                     removed++;
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { Silent.ignore("DemonFriendlyModeService", ignored); }
         }
         if (removed > 0) {
             LOGGER.info("恶魔实体 {} 已移除 {} 个玩家目标选择器", mob.getClass().getSimpleName(), removed);

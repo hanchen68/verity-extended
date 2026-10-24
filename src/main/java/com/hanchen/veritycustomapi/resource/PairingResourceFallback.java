@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.resource;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.mmd.MmdPlaybackManager;
 import com.hanchen.veritycustomapi.skin.SkinManager;
@@ -21,8 +23,7 @@ public final class PairingResourceFallback {
                     ConfigManager.saveMimoVoice("苏打", false);
                 }
             }
-        } catch (Exception ignored) {
-        }
+        } catch (Exception ignored) { Silent.ignore("PairingResourceFallback", ignored); }
         MmdPlaybackManager.get().stopPlaybackForAllDemons();
     }
 

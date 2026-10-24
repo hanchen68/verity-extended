@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.compat;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.config.ModConfig;
 import com.hanchen.veritycustomapi.network.ServerVerityRegistry;
 import net.minecraft.network.chat.Component;
@@ -23,13 +25,11 @@ public final class PrivateChatReplySupport {
         try {
             Object value = varmite.verity.VerityConfig.VERITY_CUSTOM_NAME.get();
             if (value instanceof String name && !name.isBlank()) return name.trim();
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("PrivateChatReplySupport", ignored); }
         try {
             String name = verity.getName().getString();
             if (name != null && !name.isBlank()) return name;
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("PrivateChatReplySupport", ignored); }
         return "Verity";
     }
 
@@ -50,8 +50,7 @@ public final class PrivateChatReplySupport {
         // 站头/骑乘报告后的回复扫描：AI 明确拒绝才让 Verity 下来
         try {
             com.hanchen.veritycustomapi.ride.PerchRideState.scanReply(verity, answer);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("PrivateChatReplySupport", ignored); }
         if (!ModConfig.SERVER_VERITY_ADAPTER_ENABLED.get()) {
             playerList.broadcastSystemMessage(message, overlay);
             return;

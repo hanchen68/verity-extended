@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.client;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.compat.VerityGrowthState;
 import com.hanchen.veritycustomapi.memory.VerityMemoryBridge;
@@ -169,8 +171,7 @@ public final class VerityHudOverlay {
                     return skinTexture;
                 }
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("VerityHudOverlay", ignored); }
         String key = variant == null || variant.isBlank() ? "happy" : variant;
         ResourceLocation cached = PORTRAIT_CACHE.get(key);
         if (cached != null) {
@@ -183,8 +184,7 @@ public final class VerityHudOverlay {
                 PORTRAIT_CACHE.put(key, candidate);
                 return candidate;
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("VerityHudOverlay", ignored); }
         ResourceLocation fallback = ResourceLocation.tryParse("verity:textures/entity/happy.png");
         PORTRAIT_CACHE.put(key, fallback);
         return fallback;

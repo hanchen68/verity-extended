@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.compat;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import net.minecraft.client.Minecraft;
@@ -64,8 +66,7 @@ public final class OriginalVerityVoiceBridge {
         try {
             Class<?> aiApi = Class.forName(AI_API_CLASS);
             aiApi.getMethod("interruptSpeech").invoke(null);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { Silent.ignore("OriginalVerityVoiceBridge", ignored); }
     }
 
     public static String transcribeAudio(byte[] pcmData, AudioFormat format) {

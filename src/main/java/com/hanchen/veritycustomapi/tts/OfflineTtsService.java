@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.tts;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
@@ -44,10 +46,10 @@ public class OfflineTtsService {
                 synchronized (INIT_LOCK) {
                     // 关闭旧的 session 和 env，避免资源泄漏
                     if (session != null) {
-                        try { session.close(); } catch (Exception ignored) {}
+                        try { session.close(); } catch (Exception ignored) { Silent.ignore("OfflineTtsService", ignored); }
                     }
                     if (env != null && env != newEnv) {
-                        try { env.close(); } catch (Exception ignored) {}
+                        try { env.close(); } catch (Exception ignored) { Silent.ignore("OfflineTtsService", ignored); }
                     }
                     env = newEnv;
                     session = newSession;

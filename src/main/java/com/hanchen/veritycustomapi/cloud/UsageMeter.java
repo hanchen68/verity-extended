@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.cloud;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -26,8 +28,7 @@ public final class UsageMeter {
                 output = integer(usage, "output_tokens", "completion_tokens");
                 total = integer(usage, "total_tokens");
             }
-        } catch (Exception ignored) {
-        }
+        } catch (Exception ignored) { Silent.ignore("UsageMeter", ignored); }
         if (!allowEstimate && (input == null || output == null)) return null;
         if (input == null) input = estimateTokens(extractText(requestJson));
         if (output == null) output = estimateTokens(outputText);
@@ -59,8 +60,7 @@ public final class UsageMeter {
             if (object.has(name) && !object.get(name).isJsonNull()) {
                 try {
                     return Math.max(0, object.get(name).getAsInt());
-                } catch (Exception ignored) {
-                }
+                } catch (Exception ignored) { Silent.ignore("UsageMeter", ignored); }
             }
         }
         return null;

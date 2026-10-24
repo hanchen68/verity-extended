@@ -1206,6 +1206,33 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private void appearanceCategory() {
         category("外观与资源", "更换皮肤、管理资源", "外观与资源");
         skinCategory();
+        jellyCategory();
+    }
+
+    /** Verity 说话时的 Q 弹形变：默认关闭，打开后可以在这里直接调三个手感参数。 */
+    private void jellyCategory() {
+        section("说话动作（Q 弹）");
+        toggle("Q 弹形变",
+                ModConfig.VERITY_JELLY_ENABLED::get, false,
+                ModConfig.VERITY_JELLY_ENABLED::set);
+        info("Q 弹形变", "打开后 Verity 说话时整个人会明显一弹一弹：纵向拉长时横向收窄，压扁时变胖，比原版夸张很多；"
+                + "关闭则完全恢复原版手感。只在她说话时生效，不影响走路和其它动画");
+        if (ModConfig.VERITY_JELLY_ENABLED.get()) {
+            toggle("鬼畜模式",
+                    ModConfig.VERITY_JELLY_CHAOS::get, false,
+                    ModConfig.VERITY_JELLY_CHAOS::set);
+            info("鬼畜模式", "在 Q 弹的基础上幅度 ×1.6、速度 ×2.6，再把三个不成比例的频率叠在一起，"
+                    + "配上左右甩头和原地弹跳，看起来像在抽搐而不是呼吸");
+            decimal("弹动幅度", ModConfig.VERITY_JELLY_AMPLITUDE.get(), 0.45D, 0.05D, 1.0D,
+                    ModConfig.VERITY_JELLY_AMPLITUDE::set);
+            info("弹动幅度", "纵向拉伸/压扁的最大比例；0.05 几乎不动，0.45 已经很明显，1.0 会夸张到变形");
+            decimal("弹动速度", ModConfig.VERITY_JELLY_SPEED.get(), 0.75D, 0.1D, 3.0D,
+                    ModConfig.VERITY_JELLY_SPEED::set);
+            info("弹动速度", "每秒弹动的快慢，数值越大弹得越急");
+            decimal("横向挤压", ModConfig.VERITY_JELLY_SQUASH.get(), 0.85D, 0.0D, 1.5D,
+                    ModConfig.VERITY_JELLY_SQUASH::set);
+            info("横向挤压", "纵向拉长时横向收窄的强度，0.85 左右最像果冻；调到 0 就是只上下拉长");
+        }
     }
 
     private void verityBehaviorCategory() {
@@ -1442,6 +1469,24 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             info("当前状态", "已授权，但云端开关是关闭的；打开上面的开关并保存后才会同步云端配置");
         }
         info("同步状态", ConfigManager.isCloudConfigLoaded() ? "云端配置已生效" : "等待云端配置");
+
+        section("本地改动与云端的关系");
+        info("规则", "你在本地手动改过的配置项会被记住（存在 config/verity_extended/cloud_pins.json），"
+                + "云端之后下发同样的值不会再生效；只有云端把这个键改成别的值时才重新接管"
+                + "；本地改成与默认值不同的项，首次拉取时云端也不会冲掉它");
+        info("生效时机", "改完保存即生效，重启游戏后依然保留，不需要关掉云端开关");
+        int pinnedCount = CloudOverrides.pinnedCount();
+        if (pinnedCount > 0) {
+            info("当前状态", "已有 " + pinnedCount + " 项由本地接管");
+            action("交还云端接管", "清掉本地覆盖记录，这些配置项重新跟随云端下发", () -> {
+                int released = CloudOverrides.releasePins();
+                statusMessage = "已交还 " + released + " 项给云端，保存后重新拉取会按云端生效";
+                statusMessageTimer = 80;
+                refreshCurrentCategory();
+            }, "全部交还");
+        } else {
+            info("当前状态", "暂无本地覆盖，全部跟随云端");
+        }
         // 「额度消耗」分组（计费方式 / 单次最低扣费 / 各服务单价 / 结算说明）已移除：
         // 这些是云端结算信息，属于运营侧数据，不放在玩家界面上展示。
     }

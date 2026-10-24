@@ -51,9 +51,15 @@ public class MixinPlugin implements IMixinConfigPlugin {
         if (verityAvailable) {
             OllamaProxyMod.LOGGER.info("[MixinPlugin] 检测到原版 Verity 模组，将启用皮肤 Mixin");
             verityNewReplyStructure = detectNewReplyStructure(loader);
+            boolean legacyReply = detectLegacyReplyStructure(loader);
             OllamaProxyMod.LOGGER.info("[MixinPlugin] 原版回复发送结构：{}",
                     verityNewReplyStructure ? "新版（AiManager.sendReplyPart，6.2+）"
-                            : "旧版（AiManager.lambda$queryAI$4，6.0/6.1）");
+                            : legacyReply ? "旧版（AiManager.lambda$queryAI$4，6.0/6.1）"
+                            : "未知（两代入口都没有，私聊适配将失效）");
+            if (!verityNewReplyStructure && !legacyReply) {
+                OllamaProxyMod.LOGGER.warn("[MixinPlugin] sendReplyPart 与 lambda$queryAI$4 都不在 AiManager 里，"
+                        + "私聊/广播适配会静默失效；这通常是 Verity 又重构了回复链路，需要重新适配");
+            }
             VerityLocalization.setEnabled(readLocalizationEnabled());
             VerityLocalization.load();
             localizationActive = VerityLocalization.isEnabled();
@@ -71,6 +77,17 @@ public class MixinPlugin implements IMixinConfigPlugin {
                     .isNewReplyStructure(in.readAllBytes());
         } catch (Throwable error) {
             OllamaProxyMod.LOGGER.warn("[MixinPlugin] 检测原版回复结构失败，按旧版处理: {}", error.toString());
+            return false;
+        }
+    }
+
+    /** 旧版 lambda 入口是否还在；读不到就按不存在处理。 */
+    private static boolean detectLegacyReplyStructure(ClassLoader loader) {
+        try (java.io.InputStream in = loader.getResourceAsStream(AI_MANAGER_CLASS)) {
+            if (in == null) return false;
+            return com.hanchen.veritycustomapi.compat.VerityStructureDetector
+                    .hasLegacyReplyMethod(in.readAllBytes());
+        } catch (Throwable error) {
             return false;
         }
     }

@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.cloud;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.Gson;
 import com.hanchen.veritycustomapi.compat.ForgePaths;
 
@@ -111,8 +113,7 @@ public final class CloudCredentialStore {
                     return value;
                 }
             }
-        } catch (Exception ignored) {
-        }
+        } catch (Exception ignored) { Silent.ignore("CloudCredentialStore", ignored); }
         return UUID.randomUUID().toString();
     }
 
@@ -133,8 +134,7 @@ public final class CloudCredentialStore {
     private void deleteLegacyClientId() {
         try {
             Files.deleteIfExists(legacyClientId);
-        } catch (Exception ignored) {
-        }
+        } catch (Exception ignored) { Silent.ignore("CloudCredentialStore", ignored); }
     }
 
     static void atomicWrite(Path target, String content) throws Exception {

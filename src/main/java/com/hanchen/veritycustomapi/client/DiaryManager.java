@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.client;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -78,8 +80,7 @@ public final class DiaryManager {
                     long at = object.has("t") ? object.get("t").getAsLong() : 0L;
                     String world = object.has("w") && !object.get("w").isJsonNull() ? object.get("w").getAsString() : "";
                     entries.add(new Entry(at, world, text));
-                } catch (Exception ignored) {
-                }
+                } catch (Exception ignored) { Silent.ignore("DiaryManager", ignored); }
             }
         } catch (IOException error) {
             OllamaProxyMod.LOGGER.warn("日记读取失败: {}", error.toString());

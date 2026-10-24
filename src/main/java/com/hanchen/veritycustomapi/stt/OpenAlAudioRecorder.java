@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.stt;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import org.lwjgl.openal.ALC10;
 import org.lwjgl.openal.ALC11;
@@ -77,17 +79,15 @@ public final class OpenAlAudioRecorder {
         if (device != 0L) {
             try {
                 ALC11.alcCaptureStop(device);
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("OpenAlAudioRecorder", ignored); }
             try {
                 ALC11.alcCaptureCloseDevice(device);
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) { Silent.ignore("OpenAlAudioRecorder", ignored); }
             device = 0L;
         }
         captureThread = null;
         if (audioBuffer != null) {
-            try { audioBuffer.close(); } catch (Throwable ignored) { }
+            try { audioBuffer.close(); } catch (Throwable ignored) { Silent.ignore("OpenAlAudioRecorder", ignored); }
             audioBuffer = null;
         }
     }

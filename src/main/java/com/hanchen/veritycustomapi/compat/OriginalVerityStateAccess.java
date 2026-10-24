@@ -1,8 +1,11 @@
 package com.hanchen.veritycustomapi.compat;
 
+import com.hanchen.veritycustomapi.util.Silent;
+
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
 /**
  * 用反射读原版 Verity 的运行时状态（Karma、实体引用、空闲/孤独计时器、恶魔与已生成标志）。
@@ -19,6 +22,8 @@ public final class OriginalVerityStateAccess {
     private static Field lonelinessTimerField;
     private static Field isMonstrousField;
     private static Field followPlayerField;
+    private static Method entityIsMonstrous;
+    private static Method entitySetMonstrous;
     private static boolean initialized = false;
 
     private OriginalVerityStateAccess() {}
@@ -39,8 +44,14 @@ public final class OriginalVerityStateAccess {
         isMonstrousField = findField(verityStateClass, "isMonstrous");
         followPlayerField = findField(verityStateClass, "followPlayer");
 
-        OllamaProxyMod.LOGGER.info("[StateAccess] 原版 Verity 状态访问已就绪，跟随开关={}",
-                followPlayerField != null ? "可用" : "不可用");
+        // 6.0.0-beta.9 起恶魔标志搬到了实体自己身上，全局字段没了就走这条
+        Class<?> verityEntityClass = findClass("varmite.verity.entity.verity.VerityEntity");
+        entityIsMonstrous = findMethod(verityEntityClass, "isMonstrous");
+        entitySetMonstrous = findMethod(verityEntityClass, "setMonstrous", boolean.class);
+
+        OllamaProxyMod.LOGGER.info("[StateAccess] 原版 Verity 状态访问已就绪，跟随开关={}，恶魔形态={}",
+                followPlayerField != null ? "可用" : "不可用",
+                isMonstrousField != null || entitySetMonstrous != null ? "可用" : "不可用");
     }
 
     private static Class<?> findClass(String name) {
@@ -48,6 +59,19 @@ public final class OriginalVerityStateAccess {
             return Class.forName(name);
         } catch (Throwable missing) {
             OllamaProxyMod.LOGGER.warn("[StateAccess] 当前 Verity 版本没有类 {}，相关功能将不可用", name);
+            return null;
+        }
+    }
+
+    /** 取方法，取不到只让这一个功能失效；这类缺失在版本差异里很常见，不打 warn 免得刷屏。 */
+    private static Method findMethod(Class<?> owner, String name, Class<?>... params) {
+        if (owner == null) return null;
+        try {
+            Method method = owner.getMethod(name, params);
+            method.setAccessible(true);
+            return method;
+        } catch (Throwable missing) {
+            OllamaProxyMod.LOGGER.debug("[StateAccess] 当前 Verity 版本没有方法 {}，将使用兜底路径", name);
             return null;
         }
     }
@@ -118,7 +142,7 @@ public final class OriginalVerityStateAccess {
         init();
         try {
             if (verityEntityField != null) return verityEntityField.get(null);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
         return null;
     }
 
@@ -140,7 +164,7 @@ public final class OriginalVerityStateAccess {
             java.lang.reflect.Method getName = entity.getClass().getMethod("getName");
             Object name = getName.invoke(entity);
             return name != null ? name.toString() : "Verity";
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
         return "Verity";
     }
 
@@ -150,7 +174,7 @@ public final class OriginalVerityStateAccess {
         init();
         try {
             if (hasSpawnedField != null) return hasSpawnedField.getBoolean(null);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
         return false;
     }
 
@@ -162,24 +186,57 @@ public final class OriginalVerityStateAccess {
         init();
         try {
             if (hasSpawnedField != null) hasSpawnedField.setBoolean(null, value);
-        } catch (Exception ignored) {
-        }
+        } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
     }
 
+    /**
+     * 是否处于恶魔形态。
+     *
+     * 6.0.x 之前是 VerityState 上的全局静态字段；6.0.0-beta.9 起那个字段没了，
+     * 改成实体自己的 SynchedEntityData（VerityEntity#isMonstrous）。
+     * 两条路都试，取不到就当 false。
+     */
     public static boolean isMonstrous() {
         init();
         try {
             if (isMonstrousField != null) return isMonstrousField.getBoolean(null);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
+        Object entity = currentVerityEntity();
+        if (entity != null && entityIsMonstrous != null) {
+            try {
+                return Boolean.TRUE.equals(entityIsMonstrous.invoke(entity));
+            } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
+        }
         return false;
     }
 
+    /** 切换恶魔形态；旧版写全局字段，新版写实体自己的同步数据。 */
     public static void setMonstrous(boolean value) {
         init();
+        if (isMonstrousField != null) {
+            try {
+                isMonstrousField.setBoolean(null, value);
+                return;
+            } catch (Exception e) {
+                OllamaProxyMod.LOGGER.debug("[StateAccess] setMonstrous 字段写入失败: {}", e.getMessage());
+            }
+        }
+        Object entity = currentVerityEntity();
+        if (entity == null || entitySetMonstrous == null) return;
         try {
-            if (isMonstrousField != null) isMonstrousField.setBoolean(null, value);
+            entitySetMonstrous.invoke(entity, value);
         } catch (Exception e) {
-            OllamaProxyMod.LOGGER.debug("[StateAccess] setMonstrous 失败: {}", e.getMessage());
+            OllamaProxyMod.LOGGER.debug("[StateAccess] setMonstrous 实体写入失败: {}", e.getMessage());
+        }
+    }
+
+    /** 原版当前那只 Verity 实体，没有就返回 null。 */
+    private static Object currentVerityEntity() {
+        if (verityEntityField == null) return null;
+        try {
+            return verityEntityField.get(null);
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
@@ -187,7 +244,7 @@ public final class OriginalVerityStateAccess {
         init();
         try {
             if (followPlayerField != null) return followPlayerField.getBoolean(null);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
         return false;
     }
 
@@ -212,7 +269,7 @@ public final class OriginalVerityStateAccess {
         init();
         try {
             if (idleChatTimerField != null) return idleChatTimerField.getInt(null);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
         return 3600;
     }
 
@@ -220,14 +277,14 @@ public final class OriginalVerityStateAccess {
         init();
         try {
             if (idleChatTimerField != null) idleChatTimerField.setInt(null, value);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
     }
 
     public static int getLonelinessTimer() {
         init();
         try {
             if (lonelinessTimerField != null) return lonelinessTimerField.getInt(null);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
         return 3000;
     }
 
@@ -235,7 +292,7 @@ public final class OriginalVerityStateAccess {
         init();
         try {
             if (lonelinessTimerField != null) lonelinessTimerField.setInt(null, value);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { Silent.ignore("OriginalVerityStateAccess", ignored); }
     }
 
     /** 触发 Verity 立即说话（将空闲计时器设为0） */

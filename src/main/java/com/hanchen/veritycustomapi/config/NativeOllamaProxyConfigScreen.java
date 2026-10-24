@@ -1460,7 +1460,6 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             info("获取配对码", "打开 verity.xrstudio.cn，登录后生成配对码");
             text("配对码", pairingCode, "", v -> pairingCode = v);
             action("一键授权", "输入配对码后点击，自动完成账号授权", this::exchangePairingCode, "授权");
-            info("说明", "授权成功后会立即同步并应用云端配置");
         }
 
         section("云端设置");
@@ -1471,9 +1470,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         info("同步状态", ConfigManager.isCloudConfigLoaded() ? "云端配置已生效" : "等待云端配置");
 
         section("本地改动与云端的关系");
-        info("规则", "你在本地手动改过的配置项会被记住（存在 config/verity_extended/cloud_pins.json），"
-                + "云端之后下发同样的值不会再生效；只有云端把这个键改成别的值时才重新接管"
-                + "；本地改成与默认值不同的项，首次拉取时云端也不会冲掉它");
+        info("规则", "本地改过的项会被钉住（cloud_pins.json）：云端下发同样的值不生效，"
+                + "改成别的值才重新接管；本地非默认值在首次拉取时也不会被冲掉");
         info("生效时机", "改完保存即生效，重启游戏后依然保留，不需要关掉云端开关");
         int pinnedCount = CloudOverrides.pinnedCount();
         if (pinnedCount > 0) {
@@ -1644,16 +1642,14 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         if (ModConfig.WEB_SEARCH_ENABLED.get()) {
             toggle("每轮都搜索", ModConfig.WEB_SEARCH_ALWAYS::get, false,
                     ModConfig.WEB_SEARCH_ALWAYS::set);
-            info("触发方式", "默认只在话里出现「搜索/查一下/最新/今天/价格」这类信号时才搜，"
-                    + "漏判就会觉得「开了没反应」；打开上面的开关则每轮都搜，更稳，"
-                    + "代价是每句话多一次请求和几百毫秒延迟");
+            info("触发方式", "默认只在话里出现「搜索/最新/今天」这类信号时才搜，漏判就会觉得没反应；"
+                    + "打开上面的开关则每轮都搜，更稳但每句话多一次请求");
             choice("搜索服务", ModConfig.WEB_SEARCH_PROVIDER.get(), "TAVILY",
                     new String[]{"Tavily", "Brave Search", "DeepSeek", "自定义 API"},
                     new String[]{"TAVILY", "BRAVE", "DEEPSEEK", "CUSTOM"},
                     ModConfig.WEB_SEARCH_PROVIDER::set);
-            info("切换方式", "点一下「搜索服务」会按顺序循环："
-                    + "Tavily → Brave Search → DeepSeek → 自定义 API。"
-                    + "要接自己的接口就点到「自定义 API」，下面会多出 5 个输入项。");
+            info("切换方式", "点一下按顺序循环：Tavily → Brave → DeepSeek → 自定义 API；"
+                    + "选到「自定义 API」会多出 5 个输入项");
             boolean customSearch = "CUSTOM".equalsIgnoreCase(ModConfig.WEB_SEARCH_PROVIDER.get());
             text("搜索访问密钥", ModConfig.WEB_SEARCH_API_KEY.get(), "", ModConfig.WEB_SEARCH_API_KEY::set);
             if (!customSearch) {
@@ -2191,7 +2187,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
      *
      * <p>其余都是说明句，收进浮层。
      * 阈值取 10 是照现有文案定的：状态词最长不过「在线识别」这种 4~5 字，
-     * 而最短的说明句「授权成功后会立即同步并应用云端配置」也有 18 字——
+     * 而最短的说明句（如「改完保存即生效」）也有 10 字以上——
      * 之前用 24 会把这类短说明误判成状态。
      */
     private static boolean isStatusValue(String value) {

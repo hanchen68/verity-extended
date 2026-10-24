@@ -146,6 +146,12 @@ public class OllamaProxyMod {
         com.hanchen.veritycustomapi.plugin.PluginEngine.clear();
         com.hanchen.veritycustomapi.ride.RideGrace.clear();
         com.hanchen.veritycustomapi.ride.HeadPerchState.clear();
+        // 下面这几处都是「static 表 + 玩家/实体 id 做 key」，不清会跨存档残留：
+        // 实体 id 是每个存档从 0 开始计数的，新存档里的 id 5 会读到上个存档的状态。
+        com.hanchen.veritycustomapi.ride.PerchRideState.clear();
+        com.hanchen.veritycustomapi.ride.VerityStepStore.clear();
+        com.hanchen.veritycustomapi.ai.AiEventThrottle.reset();
+        com.hanchen.veritycustomapi.compat.CrossSavePursuit.resetSession();
         com.hanchen.veritycustomapi.memory.MemoryAutoWriter.resetState();
         com.hanchen.veritycustomapi.memory.MemoryMetaStore.clear();
         // 服务器停止时，关闭代理服务释放端口

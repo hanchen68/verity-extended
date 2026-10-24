@@ -78,6 +78,15 @@ public final class BuiltinPmxModelManager {
             loaded = null;
             lastFailureKey = "";
         }
+        // 纹理缓存按「绝对文件路径」做 key 且没有上限，换模型/换项目后旧纹理
+        // 会一直占着显存（每张都是 NativeImage + DynamicTexture）。
+        // 重载模型时一并释放，否则长时间换模型会持续吃显存。
+        try {
+            com.hanchen.veritycustomapi.pmx.client.MmdTextureCache.clear();
+        } catch (Throwable error) {
+            com.hanchen.veritycustomapi.OllamaProxyMod.LOGGER
+                    .debug("释放 PMX 纹理缓存失败: {}", error.toString());
+        }
     }
 
     public static Path root() {

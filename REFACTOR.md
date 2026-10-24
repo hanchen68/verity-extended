@@ -37,11 +37,11 @@
 |---|---|---|---|---|
 | P2a | `OllamaProxyServer` | 3441 → **3243** | `proxy/` 包。✅ 已完成：`ToolCallNormalizer` / `BillingGuard`（+ `BillingSettlement` 提为顶层）/ `StreamFlags` / `PromptInjections`。⏳ 未做：`ChatRequestAdapter`（剩余实例态注入）、`HttpRouter`（`handle()` 与 exchange/routes 深度耦合，建议不拆） | 中高（请求链路，必须有真实对话回归） |
 | P2b | `config/NativeOllamaProxyConfigScreen` | 3060 → **2971** | 每个分类一个 `Category` 类，保留框架/绘制/滚动；行控件抽 `widget/` | 中（纯 UI，易回归截图） |
-| P2c | `ConfigManager` | 1924 | 保留为门面，抽 `voice/VoiceSettings`、`ai/ModelRouting`、`cloud/Credits`、`prompt/Persona` | 中（807 处调用依赖它，方法签名不能变） |
-| P2d | `tts/OnlineTtsService` | 1949 | `tts/engine/`：按协议拆分（OpenAI 兼容 / Mimo / 自定义），公共的重试与限流提到基类 | 中 |
-| P2e | `action/AiBuildingManager` | 1861 | 计划/执行/回滚三段拆开，蓝图 IO 独立 | 中高（会改世界） |
-| P2f | `mmd/MmdPlaybackManager` | 1590 | 加载 / 播放 / 相机 三层 | 中 |
-| P2g | `client/VerityHorrorDirector` | 1254 | 事件编排 / 表现（镜头、音效、文字） / 状态机 | 中 |
+| P2c | `ConfigManager` | 1924 → **1911** | 保留为门面，抽 `voice/VoiceSettings`、`ai/ModelRouting`、`cloud/Credits`、`prompt/Persona` | 中（807 处调用依赖它，方法签名不能变） |
+| P2d | `tts/OnlineTtsService` | 1948 → **1885** | `tts/engine/`：按协议拆分（OpenAI 兼容 / Mimo / 自定义），公共的重试与限流提到基类 | 中 |
+| P2e | `action/AiBuildingManager` | 1861 → **1834** | 计划/执行/回滚三段拆开，蓝图 IO 独立 | 中高（会改世界） |
+| P2f | `mmd/MmdPlaybackManager` | 1592 → **1577** | 加载 / 播放 / 相机 三层 | 中 |
+| P2g | `client/VerityHorrorDirector` | 1254 → **1237** | 事件编排 / 表现（镜头、音效、文字） / 状态机 | 中 |
 
 ### P2a 进度（2026-10-24）
 
@@ -70,6 +70,28 @@
 剩余可拆：15 个行控件（`Row`/`InfoRow`/`ToggleRow`/`TextRow`/`ChoiceRow`…，约 600 行）
 是**非静态内部类**，依赖宿主屏幕的 `font` / `addRenderableWidget` / `requestRebuild`，
 要拆得先定义一个宿主接口——收益中等、改动面大，建议等 P2c 之后单独一轮。
+
+### P2c–P2g 进度（2026-10-24 第二轮）
+
+六个上帝类全部动了刀，**每个都只抽「纯函数」层**，实例状态与主流程原地不动：
+
+| 项 | 新类 | 抽出的内容 | 行数变化 |
+|---|---|---|---|
+| P2c | `config/ConfigText` | 空值收敛、层级归一、端点比对、Key 清洗、额度格式化 | 1924 → 1911 |
+| P2d | `tts/AudioBytes` | PCM→WAV 封头、WAV/MP3 头识别、data 块定位、十六进制打印 | 1948 → 1885 |
+| P2e | `action/BlueprintRules` | 方块分类、致命错误识别、坐标严格解析 | 1861 → 1834 |
+| P2f | `mmd/MmdManifestParsing` | 清单字段解析 + **防目录穿越**的路径校验 | 1592 → 1577 |
+| P2g | `client/HorrorRules` | 退出按钮识别、环境权重与概率封顶、实体类型判断 | 1254 → 1237 |
+
+**统一做法**：只搬纯逻辑（不碰世界、不碰网络、不碰实例字段），原类保留同名委托，
+调用点零改动。每抽一块立刻 `compileJava`，全部抽完跑一次全量自检（30 项）。
+
+**没做的部分（有意为之）**：各类的「编排层」仍留在原处——
+`AiBuildingManager` 的执行/回滚、`MmdPlaybackManager` 的播放状态机、
+`VerityHorrorDirector` 的事件编排、`OnlineTtsService` 的播放与重试，
+它们都强依赖实例状态与世界/客户端上下文，硬拆要传一长串上下文，
+回归风险大于收益。真要拆，应按「状态机 → 独立对象」的方式重构，
+而不是简单搬家。
 
 拆的时候的硬规则：
 

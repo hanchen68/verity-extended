@@ -425,16 +425,11 @@ public final class AiBuildingManager {
     }
 
     private static boolean isLightBlock(String path) {
-        return path.contains("lantern") || path.contains("glowstone") || path.contains("shroomlight")
-                || path.contains("froglight") || path.contains("sea_lantern") || path.contains("redstone_lamp");
+        return com.hanchen.veritycustomapi.action.BlueprintRules.isLightBlock(path);
     }
 
     private static boolean isFatalBlueprintError(IllegalArgumentException error) {
-        String message = error.getMessage();
-        return message != null && (message.startsWith("蓝图包含禁止方块")
-                || message.startsWith("坐标超出安全范围")
-                || message.startsWith("单个操作范围过大")
-                || message.startsWith("坐标必须为整数"));
+        return com.hanchen.veritycustomapi.action.BlueprintRules.isFatalBlueprintError(error);
     }
 
     private static void logSpecialBlockPositions(Map<BlockPos, BlockState> blocks, ServerLevel level) {
@@ -544,45 +539,23 @@ public final class AiBuildingManager {
     }
 
     private static String requiredString(JsonObject object, String key) {
-        if (!object.has(key) || !object.get(key).isJsonPrimitive()) throw new IllegalArgumentException("缺少字段 " + key);
-        String value = object.get(key).getAsString().trim();
-        if (value.isBlank() || value.length() > 128) throw new IllegalArgumentException("字段无效 " + key);
-        return value;
+        return com.hanchen.veritycustomapi.action.BlueprintRules.requiredString(object, key);
     }
 
     private static int[] requiredPosition(JsonObject object, String key, int maxSize) {
-        if (!object.has(key) || !object.get(key).isJsonArray()) throw new IllegalArgumentException("缺少坐标 " + key);
-        JsonArray array = object.getAsJsonArray(key);
-        if (array.size() == 1 && array.get(0).isJsonArray()) array = array.get(0).getAsJsonArray();
-        if (array.size() != 3) throw new IllegalArgumentException("坐标必须包含 x,y,z");
-        int x = strictInt(array.get(0));
-        int y = strictInt(array.get(1));
-        int z = strictInt(array.get(2));
-        if (Math.abs(x) > maxSize || y < 0 || y > maxSize || Math.abs(z) > maxSize) {
-            throw new IllegalArgumentException("坐标超出安全范围");
-        }
-        return new int[]{x, y, z};
+        return com.hanchen.veritycustomapi.action.BlueprintRules.requiredPosition(object, key, maxSize);
     }
 
     private static int strictInt(JsonElement element) {
-        if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isNumber()) {
-            throw new IllegalArgumentException("坐标必须为整数");
-        }
-        double value = element.getAsDouble();
-        if (!Double.isFinite(value) || value != Math.rint(value) || value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException("坐标必须为整数");
-        }
-        return (int) value;
+        return com.hanchen.veritycustomapi.action.BlueprintRules.strictInt(element);
     }
 
     private static boolean isNonFullPlacementBlock(String path) {
-        return path.endsWith("_door") || path.endsWith("_trapdoor") || path.endsWith("_stairs")
-                || path.endsWith("_slab") || path.endsWith("_pane") || path.endsWith("_fence")
-                || path.endsWith("_wall") || path.endsWith("_button") || path.endsWith("_pressure_plate");
+        return com.hanchen.veritycustomapi.action.BlueprintRules.isNonFullPlacementBlock(path);
     }
 
     private static boolean isPlanarWindow(int[] from, int[] to) {
-        return from[0] == to[0] || from[2] == to[2];
+        return com.hanchen.veritycustomapi.action.BlueprintRules.isPlanarWindow(from, to);
     }
 
     private static BlockState resolveBlueprintState(String blockSpec, Direction facing) {

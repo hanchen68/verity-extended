@@ -1385,47 +1385,19 @@ public class OnlineTtsService {
     }
 
     private static byte[] toWavBytes(byte[] pcmData, AudioFormat format) throws IOException {
-        int sampleRate = (int) format.getSampleRate();
-        int channels = format.getChannels();
-        int bitsPerSample = format.getSampleSizeInBits();
-        int byteRate = sampleRate * channels * bitsPerSample / 8;
-        int blockAlign = channels * bitsPerSample / 8;
-        int dataSize = pcmData.length;
-        int fileSize = 36 + dataSize;
-        ByteArrayOutputStream out = new ByteArrayOutputStream(44 + dataSize);
-        writeAscii(out, "RIFF");
-        writeIntLE(out, fileSize);
-        writeAscii(out, "WAVE");
-        writeAscii(out, "fmt ");
-        writeIntLE(out, 16);
-        writeShortLE(out, 1);
-        writeShortLE(out, channels);
-        writeIntLE(out, sampleRate);
-        writeIntLE(out, byteRate);
-        writeShortLE(out, blockAlign);
-        writeShortLE(out, bitsPerSample);
-        writeAscii(out, "data");
-        writeIntLE(out, dataSize);
-        out.write(pcmData);
-        return out.toByteArray();
+        return com.hanchen.veritycustomapi.tts.AudioBytes.toWav(pcmData, format);
     }
 
     private static void writeAscii(ByteArrayOutputStream out, String value) {
-        for (int i = 0; i < value.length(); i++) {
-            out.write(value.charAt(i));
-        }
+        com.hanchen.veritycustomapi.tts.AudioBytes.writeAscii(out, value);
     }
 
     private static void writeIntLE(ByteArrayOutputStream out, int value) {
-        out.write(value & 0xFF);
-        out.write((value >> 8) & 0xFF);
-        out.write((value >> 16) & 0xFF);
-        out.write((value >> 24) & 0xFF);
+        com.hanchen.veritycustomapi.tts.AudioBytes.writeIntLE(out, value);
     }
 
     private static void writeShortLE(ByteArrayOutputStream out, int value) {
-        out.write(value & 0xFF);
-        out.write((value >> 8) & 0xFF);
+        com.hanchen.veritycustomapi.tts.AudioBytes.writeShortLE(out, value);
     }
 
     private static void playAndroidAudio(
@@ -1564,28 +1536,11 @@ public class OnlineTtsService {
     }
 
     private static int findWavDataStart(byte[] rawData) {
-        int offset = 12;
-        while (offset + 8 <= rawData.length) {
-            int chunkSize = (rawData[offset + 4] & 0xFF)
-                    | (rawData[offset + 5] & 0xFF) << 8
-                    | (rawData[offset + 6] & 0xFF) << 16
-                    | (rawData[offset + 7] & 0xFF) << 24;
-            if (rawData[offset] == 'd' && rawData[offset + 1] == 'a'
-                    && rawData[offset + 2] == 't' && rawData[offset + 3] == 'a') {
-                return offset + 8;
-            }
-            if (chunkSize < 0) break;
-            long next = (long) offset + 8L + chunkSize + (chunkSize & 1);
-            if (next > rawData.length) break;
-            offset = (int) next;
-        }
-        return Math.min(44, rawData.length);
+        return com.hanchen.veritycustomapi.tts.AudioBytes.findWavDataStart(rawData);
     }
 
     private static boolean isWavHeader(byte[] data) {
-        if (data.length < 12) return false;
-        return data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F'
-                && data[8] == 'W' && data[9] == 'A' && data[10] == 'V' && data[11] == 'E';
+        return com.hanchen.veritycustomapi.tts.AudioBytes.isWavHeader(data);
     }
     
     private static boolean isValidAudioData(byte[] data, String format) {
@@ -1642,37 +1597,19 @@ public class OnlineTtsService {
     }
     
     private static boolean isMp3Header(byte[] data) {
-        if (data.length < 3) return false;
-        if ((data[0] & 0xFF) == 0xFF && (data[1] & 0xE0) == 0xE0) {
-            return true;
-        }
-        if (data[0] == 'I' && data[1] == 'D' && data[2] == '3') {
-            return true;
-        }
-        return false;
+        return com.hanchen.veritycustomapi.tts.AudioBytes.isMp3Header(data);
     }
     
     private static String hexDump(byte[] data, int length) {
-        if (data == null || data.length == 0) return "empty";
-        StringBuilder sb = new StringBuilder();
-        int limit = Math.min(length, data.length);
-        for (int i = 0; i < limit; i++) {
-            sb.append(String.format("%02X ", data[i] & 0xFF));
-        }
-        return sb.toString().trim();
+        return com.hanchen.veritycustomapi.tts.AudioBytes.hexDump(data, length);
     }
 
     private static double clamp(double value, double min, double max) {
-        return Math.max(min, Math.min(max, value));
+        return com.hanchen.veritycustomapi.tts.AudioBytes.clamp(value, min, max);
     }
 
     private static String escapeJson(String text) {
-        if (text == null) return "";
-        return text.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
+        return com.hanchen.veritycustomapi.tts.AudioBytes.escapeJson(text);
     }
 
     public static void shutdown() {

@@ -258,14 +258,7 @@ public final class MmdPlaybackManager {
 
     private static Path resolveManifestFile(Path directory, String name,
                                             java.util.function.Predicate<Path> validator, String field) {
-        if (name == null || name.isBlank()) return null;
-        Path normalizedDirectory = directory.toAbsolutePath().normalize();
-        Path selected = normalizedDirectory.resolve(name).normalize();
-        if (!selected.getParent().equals(normalizedDirectory) || !validator.test(selected)) {
-            LOGGER.warn("manifest.json 的 {} 文件无效或越出项目目录: {}", field, name);
-            return null;
-        }
-        return selected;
+        return com.hanchen.veritycustomapi.mmd.MmdManifestParsing.resolveManifestFile(directory, name, validator, field);
     }
 
     private static ProjectManifest readManifest(Path directory) {
@@ -292,19 +285,11 @@ public final class MmdPlaybackManager {
     }
 
     private static String jsonString(JsonObject root, String name) {
-        JsonElement value = root.get(name);
-        return value != null && value.isJsonPrimitive() ? value.getAsString() : null;
+        return com.hanchen.veritycustomapi.mmd.MmdManifestParsing.jsonString(root, name);
     }
 
     private static float jsonFloat(JsonObject root, String name, float fallback) {
-        JsonElement value = root.get(name);
-        if (value == null || !value.isJsonPrimitive()) return fallback;
-        try {
-            float parsed = value.getAsFloat();
-            return Float.isFinite(parsed) && parsed > 0.0f ? parsed : fallback;
-        } catch (RuntimeException ignored) {
-            return fallback;
-        }
+        return com.hanchen.veritycustomapi.mmd.MmdManifestParsing.jsonFloat(root, name, fallback);
     }
 
     private static MmdDanceProject loadLegacyProject(Path vmdFile) {

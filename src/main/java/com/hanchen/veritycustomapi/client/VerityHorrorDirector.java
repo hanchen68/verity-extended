@@ -293,14 +293,7 @@ public final class VerityHorrorDirector {
     }
 
     private static boolean isQuitLabel(String text) {
-        return text.contains("保存并退出")
-                || text.contains("保存并回到标题屏幕")
-                || text.contains("保存并回到")
-                || text.contains("退出并保存")
-                || text.contains("回到标题屏幕")
-                || text.contains("Save and Quit")
-                || text.contains("断开连接")
-                || text.contains("Disconnect");
+        return com.hanchen.veritycustomapi.client.HorrorRules.isQuitLabel(text);
     }
 
     /** 假退出菜单内：ESC 被吞掉，右 Shift 仍然能强制退出。 */
@@ -407,19 +400,11 @@ public final class VerityHorrorDirector {
 
     static int ambientContextWeight(boolean night, boolean underground, boolean dark,
                                     boolean alone, boolean lookedAway) {
-        int weight = 0;
-        if (night) weight += 2;
-        if (underground) weight += 3;
-        if (dark) weight += 2;
-        if (alone) weight += 1;
-        if (lookedAway) weight += 3;
-        return weight;
+        return com.hanchen.veritycustomapi.client.HorrorRules.ambientContextWeight(night, underground, dark, alone, lookedAway);
     }
 
     static double ambientChance(int contextWeight, double frequency) {
-        double safeFrequency = Mth.clamp(frequency, 0.0D, 3.0D);
-        return Math.min(0.018D, (0.0015D + Mth.clamp(contextWeight, 0, 11) * 0.00115D)
-                * safeFrequency);
+        return com.hanchen.veritycustomapi.client.HorrorRules.ambientChance(contextWeight, frequency);
     }
 
     private static int ambientContextWeight(Minecraft minecraft, boolean lookedAway) {
@@ -451,9 +436,7 @@ public final class VerityHorrorDirector {
     }
 
     private static boolean isNormalVerity(Entity entity) {
-        if (entity == null || !entity.isAlive()) return false;
-        ResourceLocation id = ForgeRegistries.ENTITY_TYPES.getKey(entity.getType());
-        return id != null && "verity".equals(id.getNamespace()) && "verity".equals(id.getPath());
+        return com.hanchen.veritycustomapi.client.HorrorRules.isNormalVerity(entity);
     }
 
     private static boolean hasLoadedDemon(Minecraft minecraft) {

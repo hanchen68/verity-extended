@@ -489,8 +489,7 @@ public class ConfigManager {
     }
 
     private static boolean sameEndpoint(String first, String second) {
-        if (first == null || second == null) return false;
-        return first.trim().replaceAll("/+$", "").equalsIgnoreCase(second.trim().replaceAll("/+$", ""));
+        return com.hanchen.veritycustomapi.config.ConfigText.sameEndpoint(first, second);
     }
 
     /**
@@ -522,12 +521,7 @@ public class ConfigManager {
 
     /** 展示用文本：整数不带小数点，小数最多保留 4 位并去掉末尾 0。 */
     public static String formatCredits(double value) {
-        if (value < 0) return "未知";
-        if (value == Math.rint(value)) return String.valueOf((long) value);
-        return java.math.BigDecimal.valueOf(value)
-                .setScale(4, java.math.RoundingMode.DOWN)
-                .stripTrailingZeros()
-                .toPlainString();
+        return com.hanchen.veritycustomapi.config.ConfigText.formatCredits(value);
     }
 
     public static boolean isCreditsExhausted() {
@@ -649,7 +643,7 @@ public class ConfigManager {
     }
 
     private static String normalizeTier(String value) {
-        return value != null && "paid".equalsIgnoreCase(value.trim()) ? "paid" : "free";
+        return com.hanchen.veritycustomapi.config.ConfigText.normalizeTier(value);
     }
 
     private static boolean isSecureChatConfig(BuiltinChatConfig config) {
@@ -1019,15 +1013,15 @@ public class ConfigManager {
     }
 
     private static String firstNonBlank(String value, String fallback) {
-        return value != null && !value.isBlank() ? value : fallback;
+        return com.hanchen.veritycustomapi.config.ConfigText.firstNonBlank(value, fallback);
     }
 
     private static String blankToNull(String value) {
-        return value != null && !value.isBlank() ? value : null;
+        return com.hanchen.veritycustomapi.config.ConfigText.blankToNull(value);
     }
 
     private static String safeLog(String value) {
-        return value == null || value.isBlank() ? "unknown" : value;
+        return com.hanchen.veritycustomapi.config.ConfigText.safeLog(value);
     }
 
     // ========== 代理服务 ==========
@@ -1074,8 +1068,7 @@ public class ConfigManager {
         return "screen".equalsIgnoreCase(source) || "both".equalsIgnoreCase(source);
     }
     private static String safeSource() {
-        String source = ModConfig.CAMERA_SOURCE.get();
-        return source == null || source.isBlank() ? "camera" : source.trim();
+        return com.hanchen.veritycustomapi.config.ConfigText.safeSource();
     }
     public static String getCameraBackend() { return ModConfig.CAMERA_BACKEND.get(); }
     public static String getCameraFfmpegPath() { return ModConfig.CAMERA_FFMPEG_PATH.get(); }
@@ -1184,7 +1177,7 @@ public class ConfigManager {
 
     /** 配置里可能写着空白串；统一收敛成「空串」而不是 null，调用方不用再判空。 */
     private static String trimOrEmpty(String value) {
-        return value == null ? "" : value.trim();
+        return com.hanchen.veritycustomapi.config.ConfigText.trimOrEmpty(value);
     }
     public static boolean isMemoryEnabled() { return ModConfig.MEMORY_ENABLED.get(); }
     public static boolean isMemoryRetrievalEnabled() { return ModConfig.MEMORY_RETRIEVAL_ENABLED.get(); }
@@ -1913,12 +1906,6 @@ public class ConfigManager {
     }
 
     private static String cleanApiKey(String key) {
-        if (key == null) return null;
-        String cleaned = key.trim().replaceAll("[^\\x20-\\x7E]", "");
-        if (!cleaned.equals(key)) {
-            OllamaProxyMod.LOGGER.warn("API Key 包含无效字符，已清洗。原长度: {}, 清洗后长度: {}", key.length(), cleaned.length());
-        }
-        // 清洗后为空串视为无有效 Key
-        return cleaned.isBlank() ? null : cleaned;
+        return com.hanchen.veritycustomapi.config.ConfigText.cleanApiKey(key);
     }
 }

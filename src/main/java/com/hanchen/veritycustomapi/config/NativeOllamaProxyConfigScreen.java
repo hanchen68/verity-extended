@@ -1173,10 +1173,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
     private void serverSettingsCategory() {
         category("多人游戏设置", "多人聊天、权限和 Verity 回复显示范围", "多人游戏设置");
+        // 「处理方式 / 服务器职责」两条是架构说明，对配服的人没有操作价值，删掉只留去哪配。
         section("AI 对话 API");
-        info("处理方式", "所有玩家的 /v 对话统一使用服务器配置的原版 Verity 公共 API");
-        info("服务器职责", "服务器调用原版 Verity 的提示词、记忆、工具和 AI 链路，并把回复广播到公屏");
-        info("配置位置", "请在服务端 verity-common.toml 的 GeneralSettings.AISettings 中配置 API 地址、模型和密钥");
+        info("配置位置", "服务端 verity-common.toml → GeneralSettings.AISettings 里填 API 地址、模型和密钥");
 
         section("对话触发方式");
         toggle("必须使用 /v 指令才能对话",
@@ -1284,9 +1283,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         section("开始使用");
         info("舞蹈项目", "将动作、镜头和音乐放入 config/verity_extended/mmd/<项目名>，重新扫描后按 N 选择播放");
         advancedSection("进阶玩法");
-        info("自定义项目", "在项目文件夹中新建 manifest.json，可设置显示名称、模型缩放与循环方式");
-        info("多动作分配", "一个项目可放入多个动作文件，播放时会自动分给附近多个 Demon Mode");
-        info("循环播放", "默认只播放一遍；在 manifest.json 中开启循环后可反复播放");
+        info("manifest.json", "项目文件夹里放 manifest.json 可改显示名称、模型缩放、循环方式；"
+                + "一个项目也能放多个动作文件，播放时自动分给附近多个 Demon Mode");
         advancedSection("镜头设置");
         decimal("镜头高度（方块）", ModConfig.MMD_CAMERA_HEIGHT.get(), 2.4D, -16.0D, 32.0D,
                 ModConfig.MMD_CAMERA_HEIGHT::set);
@@ -1448,7 +1446,6 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         section("账号授权");
         if (authorized) {
             info("授权状态", "已授权 (" + maskKey(currentKey) + ")");
-            info("同步方式", "授权后自动获取云端配置，无需重启游戏");
             action("重新授权", "清除当前授权并关闭云端开关，之后可输入新配对码", () -> {
                 PairingResourceFallback.apply(currentKey);
                 CloudCredentialStore.getInstance().clearAuthorization();
@@ -1460,8 +1457,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             }, "清除授权");
         } else {
             info("获取配对码", "打开 verity.xrstudio.cn，登录后生成配对码");
+            // 用 warning 而不是 info：info 里带标点的长句会被判成「说明」收进悬停浮层，
+            // 而「必须点按钮」正是最该直接看到的一句。
+            warning("注意", "配对码粘贴到下面后，必须点右侧「授权」按钮；只填不点不会生效", WARNING);
             text("配对码", pairingCode, "", v -> pairingCode = v);
-            action("一键授权", "输入配对码后点击，自动完成账号授权", this::exchangePairingCode, "授权");
+            action("提交配对码", "粘贴配对码后点右侧按钮完成授权", this::exchangePairingCode, "授权");
         }
 
         section("云端设置");
@@ -1470,22 +1470,17 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             info("当前状态", "已授权，但云端开关是关闭的；打开上面的开关并保存后才会同步云端配置");
         }
         info("同步状态", ConfigManager.isCloudConfigLoaded() ? "云端配置已生效" : "等待云端配置");
-
-        section("本地改动与云端的关系");
-        info("规则", "本地改过的项会被钉住（cloud_pins.json）：云端下发同样的值不生效，"
-                + "改成别的值才重新接管；本地非默认值在首次拉取时也不会被冲掉");
-        info("生效时机", "改完保存即生效，重启游戏后依然保留，不需要关掉云端开关");
+        // 原来这里有一整组「本地改动与云端的关系」（规则 / 生效时机 / 当前状态），
+        // 三行全是说明、没有可操作的控件，纯占地方。只在**真的有本地覆盖**时才提两行。
         int pinnedCount = CloudOverrides.pinnedCount();
         if (pinnedCount > 0) {
-            info("当前状态", "已有 " + pinnedCount + " 项由本地接管");
+            info("本地接管", "已有 " + pinnedCount + " 项由本地接管，云端下发同值不再覆盖");
             action("交还云端接管", "清掉本地覆盖记录，这些配置项重新跟随云端下发", () -> {
                 int released = CloudOverrides.releasePins();
                 statusMessage = "已交还 " + released + " 项给云端，保存后重新拉取会按云端生效";
                 statusMessageTimer = 80;
                 refreshCurrentCategory();
             }, "全部交还");
-        } else {
-            info("当前状态", "暂无本地覆盖，全部跟随云端");
         }
         // 「额度消耗」分组（计费方式 / 单次最低扣费 / 各服务单价 / 结算说明）已移除：
         // 这些是云端结算信息，属于运营侧数据，不放在玩家界面上展示。

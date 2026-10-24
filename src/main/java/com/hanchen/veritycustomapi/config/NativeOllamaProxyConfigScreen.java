@@ -1293,9 +1293,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         toggle("自动生成恶魔", ModConfig.AI_DEMON_AUTO_SPAWN::get, true,
                 ModConfig.AI_DEMON_AUTO_SPAWN::set);
         info("生成规则", "播放 MMD 时如果世界内没有恶魔，会让服务器在玩家正前方自动生成一只");
-        toggle("恶魔友好模式（不攻击玩家）", ModConfig.AI_DEMON_FRIENDLY_MODE::get, true,
-                ModConfig.AI_DEMON_FRIENDLY_MODE::set);
-        info("生效范围", "永久关闭恶魔的「追玩家」「破门」「抓玻璃」等行为，包括按需生成的恶魔");
+        // 原来这里有个「恶魔友好模式」开关，但它配了没人读（业务代码只看 FRIENDLY_MODE），
+        // 点了没有任何效果，反而让人以为已经关掉了攻击行为。删掉并指向真正的开关。
+        info("关闭恶魔攻击", "要关掉恶魔的追击/破门/抓玻璃，请到「高级与诊断 → 游戏体验」打开「友好模式」");
         integer("生成请求超时（毫秒）", ModConfig.AI_DEMON_SPAWN_RETRY_MS.get(), 8000, 2000, 30000,
                 ModConfig.AI_DEMON_SPAWN_RETRY_MS::set);
         info("超时建议", "8 秒默认；联机卡顿时建议调大，单机高延迟请保持默认");
@@ -1510,11 +1510,6 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         integer("每日好感上限", ModConfig.DAILY_KARMA_GAIN_CAP.get(), 3, 0, 20,
                 ModConfig.DAILY_KARMA_GAIN_CAP::set);
         info("好感上限", "喂食、送礼和 Verity 自己在对话中加的好感共用这个每日额度；0 表示不限制");
-
-        section("界面汉化");
-        toggle("汉化原版 Verity 界面", ModConfig.ENABLE_VERITY_LOCALIZATION::get, true,
-                ModConfig.ENABLE_VERITY_LOCALIZATION::set);
-        info("生效时机", "游戏启动时完成汉化，修改后需要重启游戏");
 
         section("恐怖增强");
         toggle("启用分层恐怖导演", ModConfig.HORROR_ENABLED::get, true, ModConfig.HORROR_ENABLED::set);
@@ -1734,8 +1729,6 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         text("访问密钥", ModConfig.TARGET_API_KEY.get(), "", ModConfig.TARGET_API_KEY::set);
         text("模型", ModConfig.TARGET_MODEL.get(), "", ModConfig.TARGET_MODEL::set);
         integer("请求超时（秒）", ModConfig.REQUEST_TIMEOUT.get(), 30, 5, 300, ModConfig.REQUEST_TIMEOUT::set);
-        section("本地代理");
-        integer("代理端口", ModConfig.SERVER_PORT.get(), 4000, 1, 65535, ModConfig.SERVER_PORT::set);
         section("自定义语音识别协议");
         integer("录音设备采样率", ModConfig.SAMPLE_RATE.get(), 16000, 8000, 48000, ModConfig.SAMPLE_RATE::set);
         choice("请求体格式", ModConfig.SPEECH_REQUEST_FORMAT.get(), "multipart",
@@ -1750,8 +1743,6 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         integer("后台同步间隔（秒）", ModConfig.CLOUD_PULL_INTERVAL.get(), 0, 0, 86400, ModConfig.CLOUD_PULL_INTERVAL::set);
         integer("云端请求超时（秒）", ModConfig.CLOUD_TIMEOUT.get(), 10, 1, 120, ModConfig.CLOUD_TIMEOUT::set);
         toggle("允许加载云端缓存", ModConfig.CLOUD_FALLBACK_TO_LOCAL::get, true, ModConfig.CLOUD_FALLBACK_TO_LOCAL::set);
-        section("开发与调试");
-        toggle("开发诊断模式", () -> ModConfig.DEV_MODE.get(), false, ModConfig.DEV_MODE::set);
     }
 
     private void sttCategory() {
@@ -2109,12 +2100,6 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 () -> openLogTarget(false), "打开");
         action("打开日志目录", "在文件管理器中打开 logs 目录",
                 () -> openLogTarget(true), "打开");
-        section("运行状态记录");
-        toggle("记录性能指标", ModConfig.DEBUG_RUNTIME_METRICS::get, false, ModConfig.DEBUG_RUNTIME_METRICS::set);
-        if (ModConfig.DEBUG_RUNTIME_METRICS.get()) {
-            integer("记录间隔（秒）", ModConfig.DEBUG_RUNTIME_METRICS_INTERVAL_SECONDS.get(), 60, 5, 3600,
-                    ModConfig.DEBUG_RUNTIME_METRICS_INTERVAL_SECONDS::set);
-        }
     }
 
     private void openLogTarget(boolean directory) {

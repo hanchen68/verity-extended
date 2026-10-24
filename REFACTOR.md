@@ -93,6 +93,30 @@
 回归风险大于收益。真要拆，应按「状态机 → 独立对象」的方式重构，
 而不是简单搬家。
 
+### P3 进度（2026-10-24）
+
+新增 `compat/ReflectiveTarget`，把「反射访问原版私有成员」的套路收成一处：
+
+| 方法 | 用途 |
+|---|---|
+| `type(name, tag)` | `Class.forName`，失败 warn |
+| `method` / `declaredMethod` | 取方法并 `setAccessible`，失败 debug |
+| `field(owner, name, tag)` | 取字段并 `setAccessible`，失败 warn |
+| `invoke` / `invokeStatic` | 调用并吞异常（debug） |
+| `get` / `set` / `getFloat` / `getBoolean` | 字段读写，`set` 返回是否成功 |
+
+**日志分级是有讲究的**：类缺失打 `warn`（版本不兼容是大事），方法与字段缺失打 `debug`
+（版本间增删很常见，打 warn 会刷屏）。所有日志带 `tag`，一眼看出哪块功能在降级。
+
+**只迁移了 `OriginalVerityStateAccess`**（302 → 279 行，它是唯一已经把反射集中成
+`findClass/findMethod/findField` 的类）。其余 compat 类里的内联反射**故意不动**：
+它们大多是 `try { Class.forName(...) } catch { return false; }` 这种**版本探测**，
+换成 `type()` 会改变日志级别与降级行为——按「只搬代码、不顺手改逻辑」的规则，
+这些应当在新写代码时逐步采用新 helper，而不是一次性机械替换。
+
+🔴 `ReflectiveTarget` 只用于**已确定存在**的成员访问。判断「原版有没有某功能」
+必须走 `VerityStructureDetector` 的字节扫描，`Class.forName` 会触发静态初始化、可能带崩启动。
+
 拆的时候的硬规则：
 
 1. 只搬代码 + 改可见性，**不顺手改逻辑**；每搬一块立刻 `compileJava`。

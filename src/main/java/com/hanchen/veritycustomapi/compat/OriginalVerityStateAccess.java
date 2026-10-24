@@ -55,25 +55,12 @@ public final class OriginalVerityStateAccess {
     }
 
     private static Class<?> findClass(String name) {
-        try {
-            return Class.forName(name);
-        } catch (Throwable missing) {
-            OllamaProxyMod.LOGGER.warn("[StateAccess] 当前 Verity 版本没有类 {}，相关功能将不可用", name);
-            return null;
-        }
+        return com.hanchen.veritycustomapi.compat.ReflectiveTarget.type(name, "[StateAccess]");
     }
 
     /** 取方法，取不到只让这一个功能失效；这类缺失在版本差异里很常见，不打 warn 免得刷屏。 */
     private static Method findMethod(Class<?> owner, String name, Class<?>... params) {
-        if (owner == null) return null;
-        try {
-            Method method = owner.getMethod(name, params);
-            method.setAccessible(true);
-            return method;
-        } catch (Throwable missing) {
-            OllamaProxyMod.LOGGER.debug("[StateAccess] 当前 Verity 版本没有方法 {}，将使用兜底路径", name);
-            return null;
-        }
+        return com.hanchen.veritycustomapi.compat.ReflectiveTarget.method(owner, name, "[StateAccess]", params);
     }
 
     /**
@@ -81,17 +68,7 @@ public final class OriginalVerityStateAccess {
      * 原版各版本字段会增减（比如 6.0.0-beta.9 就去掉了 isMonstrous），一个个独立解析免得连带失效。
      */
     private static Field findField(Class<?> owner, String name) {
-        if (owner == null) {
-            return null;
-        }
-        try {
-            Field field = owner.getDeclaredField(name);
-            field.setAccessible(true);
-            return field;
-        } catch (Throwable missing) {
-            OllamaProxyMod.LOGGER.warn("[StateAccess] 当前 Verity 版本没有字段 {}，相关功能将不可用", name);
-            return null;
-        }
+        return com.hanchen.veritycustomapi.compat.ReflectiveTarget.field(owner, name, "[StateAccess]");
     }
 
     // ========== Karma ==========

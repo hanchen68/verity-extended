@@ -54,17 +54,34 @@ public final class ToolListTrimmer {
         }
         try {
             JsonObject body = JsonParser.parseString(rawBody).getAsJsonObject();
+            return applyInPlace(body) ? body.toString() : rawBody;
+        } catch (Throwable error) {
+            OllamaProxyMod.LOGGER.warn("工具清单瘦身失败，原样转发: {}", error.toString());
+            return rawBody;
+        }
+    }
+
+    /**
+     * 原地瘦身工具清单：直接改传入的 {@link JsonObject}，**不做序列化**。
+     *
+     * @return 是否真的改动过
+     */
+    public static boolean applyInPlace(JsonObject body) {
+        if (!isEnabled() || body == null) {
+            return false;
+        }
+        try {
             if (!body.has("tools") || !body.get("tools").isJsonArray()) {
-                return rawBody;
+                return false;
             }
             JsonArray tools = body.getAsJsonArray("tools");
             int total = tools.size();
             if (total <= PASS_THROUGH_LIMIT) {
-                return rawBody;
+                return false;
             }
             String latestUser = latestUserText(body.getAsJsonArray("messages"));
             if (latestUser == null || latestUser.isBlank()) {
-                return rawBody;
+                return false;
             }
             JsonArray kept = new JsonArray();
             for (JsonElement tool : tools) {
@@ -78,16 +95,15 @@ public final class ToolListTrimmer {
                 }
             }
             if (kept.size() == total) {
-                return rawBody;
+                return false;
             }
             body.add("tools", kept);
-            String result = body.toString();
             OllamaProxyMod.LOGGER.debug("【省 token】工具清单两阶段装载：{} -> {} 个（本轮：{}）",
                     total, kept.size(), clip(latestUser, 40));
-            return result;
+            return true;
         } catch (Throwable error) {
-            OllamaProxyMod.LOGGER.warn("工具清单瘦身失败，原样转发: {}", error.toString());
-            return rawBody;
+            OllamaProxyMod.LOGGER.warn("工具清单瘦身失败，保留原请求体: {}", error.toString());
+            return false;
         }
     }
 

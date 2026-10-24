@@ -77,9 +77,28 @@ public final class ToolCallNormalizer {
         if (rawBody == null || rawBody.isBlank()) return rawBody;
         try {
             JsonObject body = GSON.fromJson(rawBody, JsonObject.class);
-            if (body == null || !body.has("messages") || !body.get("messages").isJsonArray()) {
-                return rawBody;
-            }
+            if (body == null) return rawBody;
+            return sanitizeInPlace(body) ? GSON.toJson(body) : rawBody;
+        } catch (Exception error) {
+            LOGGER.warn("assistant 历史清洗失败，将保留原请求体: {}", error.toString());
+            return rawBody;
+        }
+    }
+
+    /**
+     * 原地清洗：直接改传入的 {@link JsonObject}，**不做序列化**。
+     *
+     * <p>给「一次解析、一次序列化」的请求流水线用。原来每个阶段各自
+     * {@code fromJson + toJson}，一条请求要解析 6 次、序列化 4 次，
+     * 每次都是一次完整的树构建 + 字符串拼接。
+     *
+     * @return 是否真的改动过（调用方据此决定要不要重新序列化）
+     */
+    public static boolean sanitizeInPlace(JsonObject body) {
+        if (body == null || !body.has("messages") || !body.get("messages").isJsonArray()) {
+            return false;
+        }
+        try {
             JsonArray messages = body.getAsJsonArray("messages");
             JsonArray sanitized = new JsonArray();
             int removedAssistant = 0;
@@ -128,14 +147,14 @@ public final class ToolCallNormalizer {
                 openCallIds.clear();
             }
 
-            if (removedAssistant == 0 && removedOrphanTool == 0) return rawBody;
+            if (removedAssistant == 0 && removedOrphanTool == 0) return false;
             body.add("messages", sanitized);
             LOGGER.warn("已清洗请求历史：移除 {} 条空 assistant、{} 条孤儿 tool 消息",
                     removedAssistant, removedOrphanTool);
-            return GSON.toJson(body);
+            return true;
         } catch (Exception error) {
-            LOGGER.warn("assistant 历史清洗失败，将保留原请求体: {}", error.toString());
-            return rawBody;
+            LOGGER.warn("assistant 历史清洗失败，保留原请求体: {}", error.toString());
+            return false;
         }
     }
 

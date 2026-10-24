@@ -389,29 +389,54 @@ public class OllamaProxyServer {
                 String requestBody = new String(requestBytes, StandardCharsets.UTF_8);
                 LOGGER.info("========== 收到Verity请求 [{}] ==========", VERSION);
 
-                String sanitizedRequestBody = sanitizeAssistantHistory(requestBody);
-                // 6.2 原版的后台提示词调用（记忆提炼 memory_refine / 日记 journal_*）与玩家对话共用同一个代理。
-                // 这类请求必须原样透传：任何注入都会写进日记与长期记忆（例如双语分隔符 <|verity_zh|>），
-                // 响应被加工同样会污染原版自己保存的记忆文本。
-                boolean internalPromptCall = isInternalPromptCall(sanitizedRequestBody);
-                if (internalPromptCall) {
-                    LOGGER.info("识别到原版内部提示词调用（记忆/日记），本次不做注入与加工，原样透传");
+                // 预处理流水线：**只解析一次**，各阶段原地改同一棵 JSON 树，最后序列化一次。
+                // 原来是每个阶段各自 fromJson + toJson，一条请求要解析 6~7 次、序列化 4 次；
+                // 每次都是一次完整的树构建 + 字符串拼接，纯属白烧 CPU。
+                long preprocessStartedAt = System.currentTimeMillis();
+                JsonObject requestJson = null;
+                try {
+                    requestJson = GSON.fromJson(requestBody, JsonObject.class);
+                } catch (Exception parseError) {
+                    LOGGER.warn("请求体不是合法 JSON，跳过预处理原样转发: {}", parseError.toString());
                 }
-                if (!internalPromptCall) {
-                    // 机械裁剪：旧工具结果 / 超长旧回复 / 旧截图瘦身；最近两轮完整保留
-                    sanitizedRequestBody = com.hanchen.veritycustomapi.ai.ContextTrimmer.trim(sanitizedRequestBody);
-                    // 裁剪后再兜一次配对修复：滑动窗口按「轮」切分，理论上不会拆开
-                    // tool_calls 与 tool，但一旦拆开上游就整轮 400
-                    //（Messages with role 'tool' must be a response to a preceding message with 'tool_calls'）。
-                    // 该方法是幂等的：没有孤儿时原样返回，代价只有一次 JSON 解析。
-                    sanitizedRequestBody = sanitizeAssistantHistory(sanitizedRequestBody);
-                    // 两阶段工具清单：核心常驻 + 意图装载，工具多时砍掉无关的
-                    sanitizedRequestBody = com.hanchen.veritycustomapi.ai.ToolListTrimmer.apply(sanitizedRequestBody);
+
+                String sanitizedRequestBody;
+                boolean internalPromptCall = false;
+                if (requestJson == null) {
+                    // 解析失败时退回原字符串，保持旧行为（不因解析失败就拒绝请求）
+                    sanitizedRequestBody = requestBody;
+                } else {
+                    com.hanchen.veritycustomapi.proxy.ToolCallNormalizer.sanitizeInPlace(requestJson);
+                    // 6.2 原版的后台提示词调用（记忆提炼 memory_refine / 日记 journal_*）与玩家对话共用同一个代理。
+                    // 这类请求必须原样透传：任何注入都会写进日记与长期记忆（例如双语分隔符 <|verity_zh|>），
+                    // 响应被加工同样会污染原版自己保存的记忆文本。
+                    internalPromptCall = isInternalPromptCall(requestJson);
+                    if (internalPromptCall) {
+                        LOGGER.info("识别到原版内部提示词调用（记忆/日记），本次不做注入与加工，原样透传");
+                    } else {
+                        // 机械裁剪：旧工具结果 / 超长旧回复 / 旧截图瘦身；最近两轮完整保留
+                        if (com.hanchen.veritycustomapi.ai.ContextTrimmer.trimInPlace(requestJson)) {
+                            // 只有裁剪真的改了内容才需要再兜一次配对修复：
+                            // 窗口按「轮」切分理论上不拆对，但拆开就是整轮 400
+                            //（Messages with role 'tool' must be a response to a preceding message with 'tool_calls'）。
+                            com.hanchen.veritycustomapi.proxy.ToolCallNormalizer.sanitizeInPlace(requestJson);
+                        }
+                        // 两阶段工具清单：核心常驻 + 意图装载，工具多时砍掉无关的
+                        com.hanchen.veritycustomapi.ai.ToolListTrimmer.applyInPlace(requestJson);
+                    }
+                    sanitizedRequestBody = GSON.toJson(requestJson);
                 }
+                // 预处理耗时：一次解析 + 一次序列化，正常应在个位数毫秒内。
+                // 明显变慢通常说明上下文很大（窗口没生效）或某个裁剪阶段在做重活。
+                LOGGER.debug("【预处理】{} 字节 → {} 字节，耗时 {} ms",
+                        requestBody.length(), sanitizedRequestBody.length(),
+                        System.currentTimeMillis() - preprocessStartedAt);
                 // 滑动窗口本轮是否真实发生过转存；现在取走标记，避免线程池线程间残留
                 boolean offloadThisRequest =
                         com.hanchen.veritycustomapi.ai.ContextTrimmer.consumeOffloadMarker();
-                boolean explicitBuildingRequest = isExplicitBuildingRequestBody(sanitizedRequestBody);
+                boolean explicitBuildingRequest = requestJson != null
+                        ? isExplicitBuildingRequest(latestUserMessage(requestJson))
+                        : isExplicitBuildingRequestBody(sanitizedRequestBody);
                 boolean explicitCameraRequest = !internalPromptCall && isCameraSkillAvailable()
                         && com.hanchen.veritycustomapi.client.CameraChatVision.containsExplicitCameraRequest(sanitizedRequestBody);
                 EXPLICIT_CAMERA_REQUEST.set(explicitCameraRequest);
@@ -423,9 +448,9 @@ public class OllamaProxyServer {
                     }
                     LOGGER.info("检测到玩家明确的摄像头请求，将强制启动摄像头技能");
                 }
-                String processedRequestBody = internalPromptCall
+                String processedRequestBody = internalPromptCall || requestJson == null
                         ? sanitizedRequestBody
-                        : injectFormatRequirement(sanitizedRequestBody);
+                        : injectFormatRequirement(requestJson);
                 if (!internalPromptCall) {
                     processedRequestBody = attachCameraImage(processedRequestBody);
                     // 推理模型可能把 token 全烧进思维链：缺省补个上限，显式配置不覆盖；建造/摄像头走自己的配额
@@ -1110,15 +1135,14 @@ public class OllamaProxyServer {
                     .hasNonBlankPrimitive(object, field);
         }
 
-        private String injectFormatRequirement(String rawBody) {
-            JsonObject bodyJson;
-            try {
-                bodyJson = GSON.fromJson(rawBody, JsonObject.class);
-            } catch (Exception error) {
-                LOGGER.warn("请求体不是合法 JSON，原样转发: {}", error.toString());
-                return rawBody;
-            }
-            if (bodyJson == null) return rawBody;
+        /**
+         * 在**已解析**的请求体上跑完整注入链，返回序列化结果。
+         *
+         * <p>不再自己 {@code fromJson}：调用方（{@code handle()}）已经把请求体解析成
+         * 同一棵树跑完了清洗与裁剪，这里直接复用，省掉一次完整解析。
+         */
+        private String injectFormatRequirement(JsonObject bodyJson) {
+            if (bodyJson == null) return "{}";
             LOGGER.debug("[注入] 注入链开始，顶层字段={}", bodyJson.keySet());
 
             // 每项注入各自 try/catch：一处失败不影响其余注入。
@@ -1136,8 +1160,8 @@ public class OllamaProxyServer {
             try {
                 return GSON.toJson(bodyJson);
             } catch (Exception error) {
-                LOGGER.warn("请求体序列化失败，原样转发", error);
-                return rawBody;
+                LOGGER.warn("请求体序列化失败，返回空对象占位", error);
+                return "{}";
             }
         }
 
@@ -1272,8 +1296,16 @@ public class OllamaProxyServer {
         /** 最新一条用户消息是否为原版内部提示词调用（记忆提炼 / 日记写入）。 */
         private boolean isInternalPromptCall(String rawBody) {
             try {
-                return VerityStructureDetector.isInternalPromptRequest(
-                        latestUserText(GSON.fromJson(rawBody, JsonObject.class)));
+                return isInternalPromptCall(GSON.fromJson(rawBody, JsonObject.class));
+            } catch (Throwable ignored) {
+                return false;
+            }
+        }
+
+        /** 复用已解析的请求体，省掉一次解析。 */
+        private boolean isInternalPromptCall(JsonObject bodyJson) {
+            try {
+                return VerityStructureDetector.isInternalPromptRequest(latestUserText(bodyJson));
             } catch (Throwable ignored) {
                 return false;
             }

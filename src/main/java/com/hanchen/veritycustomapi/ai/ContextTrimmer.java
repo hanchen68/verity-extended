@@ -46,8 +46,27 @@ public final class ContextTrimmer {
         }
         try {
             JsonObject body = JsonParser.parseString(rawBody).getAsJsonObject();
+            return trimInPlace(body) ? body.toString() : rawBody;
+        } catch (Throwable error) {
+            OllamaProxyMod.LOGGER.warn("机械裁剪失败，原样转发: {}", error.toString());
+            return rawBody;
+        }
+    }
+
+    /**
+     * 原地裁剪：直接改传入的 {@link JsonObject}，**不做序列化**。
+     *
+     * <p>给「一次解析、一次序列化」的请求流水线用。
+     *
+     * @return 是否真的改动过
+     */
+    public static boolean trimInPlace(JsonObject body) {
+        if (!isEnabled() || body == null) {
+            return false;
+        }
+        try {
             if (!body.has("messages") || !body.get("messages").isJsonArray()) {
-                return rawBody;
+                return false;
             }
             boolean changed = isWindowEnabled() && applyWindow(body);
             JsonArray messages = body.getAsJsonArray("messages");
@@ -62,15 +81,13 @@ public final class ContextTrimmer {
                 }
             }
             if (!changed) {
-                return rawBody;
+                return false;
             }
-            String result = body.toString();
-            OllamaProxyMod.LOGGER.debug("【省 token】上下文瘦身：字符 {} -> {}（最近 {} 轮完整保留）",
-                    rawBody.length(), result.length(), KEEP_TURNS);
-            return result;
+            OllamaProxyMod.LOGGER.debug("【省 token】上下文瘦身：最近 {} 轮完整保留", KEEP_TURNS);
+            return true;
         } catch (Throwable error) {
-            OllamaProxyMod.LOGGER.warn("机械裁剪失败，原样转发: {}", error.toString());
-            return rawBody;
+            OllamaProxyMod.LOGGER.warn("机械裁剪失败，保留原请求体: {}", error.toString());
+            return false;
         }
     }
 

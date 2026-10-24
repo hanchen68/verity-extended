@@ -8,7 +8,8 @@
 2. **确认上游是否可达** —— 401 / 403 / 504 / 超时
 3. **确认 TTS** —— 404 / 格式 / 解码 / 音频播放
 4. **确认 STT** —— 录音设备 / 采样率 / 识别
-5. **确认 Dedicated Server** —— invalid dist
+5. **确认云端** —— `cloud.enable` 是否被写成 false（重启后连不上优先查这条）
+6. **确认 Dedicated Server** —— invalid dist
 
 ---
 
@@ -244,6 +245,64 @@ missing mods.toml file
 **验证方式**
 
 只要后面没有跟着 `LoadingFailedException`，一般不影响运行。
+
+---
+
+## 10. 重启游戏后连不上 AI API，重新配对才恢复
+
+`云端` `配置` `Android` `FCL` `cloud.enable`
+
+重启后对话报连不上、进配置界面重新配对（或重新授权）就能恢复，完全退出再启动又复现。
+
+**这不是密钥失效，而是开关被关掉了。** 重新配对的过程会顺带把 `cloud.enable` 打开，
+所以看起来像「配对修好了」。
+
+凭据存在两个地方，会不同步：
+
+| 文件 | 内容 |
+|---|---|
+| `config/verity_extended/cloud-credentials.json` | api-key（配对时写入） |
+| `config/verity_extended-common.toml` | `[cloud] enable`（总开关） |
+
+开关一旦是 `false`，`CloudConfigManager.start()` 直接返回，云端线程根本不启动。
+而配置界面可能仍显示「已授权」——因为它读的是凭据文件。
+
+**日志关键字**
+
+```text
+云端配置线程未启动: cloud.enable=false 但凭据仍存在
+```
+
+看到这句就是本问题，不用再查别处。
+
+**根因**
+
+Forge 写 TOML 不是原子操作，进程被强杀会留下半截文件，`cloud.enable` 被读成默认值 `false`。
+
+**Android / FCL / Pojav 上高发**：手机端进程被强杀是常态（启动器退出方式、系统回收后台），
+所以这个坑在 PC 上偶发、在手机上能稳定复现。
+
+4.5.2 的防护是「启动时检查 TOML 缺不缺键，缺了用快照恢复」——
+但**文件没缺键、只是 `enable` 的值变成 false 时，这个检查是过得去的**，恢复不了。
+
+**解决方案**
+
+- **5.0 及以上**：已修复，无需操作。三层守卫：保存前后比对配置项数量（骤降 >10% 回滚）、
+  JVM 关闭钩子再校验一次、快照恢复门槛放宽到键数 90%。另外保存只写用户改动过的项，
+  不再整棵树重写——这才是写坏的根源。
+- **4.5.2 / 4.5.3**：打开 `config/verity_extended-common.toml`，把 `[cloud]` 下的
+  `enable = false` 改成 `true` 存盘；或进配置界面把云端开关重新打开。
+  能撑到下次写坏为止，建议升级。
+
+**验证方式**
+
+重启游戏后，日志应出现：
+
+```text
+云端配置线程启动: generation=1, cloud.enable=true, 凭据存在=true
+```
+
+`凭据存在=false` 说明是另一个问题（凭据文件丢了或被清除授权），不是本条目。
 
 ---
 

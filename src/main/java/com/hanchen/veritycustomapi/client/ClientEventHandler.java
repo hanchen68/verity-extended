@@ -356,7 +356,16 @@ public class ClientEventHandler {
                 event.setCanceled(true);
                 return true;
             }
-            if (messageText.contains("> ERROR:")) {
+            // 原版的报错有三种前缀形态，只匹配 "> ERROR:" 会漏掉带 @玩家名 的那种：
+            //   "> ERROR: ..."         单人
+            //   "@玩家名: ERROR: ..."  多人（截图里就是这种，之前漏了）
+            //   "ERROR: ..."           无前缀
+            // 所以判据放宽成「含 ERROR: 且整条不长」——报错都很短，
+            // 正常台词里出现 ERROR: 且短于 200 字符的情况实际上不存在。
+            String stripped = messageText.strip();
+            boolean looksLikeError = stripped.contains("ERROR:")
+                    && stripped.length() <= 200;
+            if (looksLikeError) {
                 event.setMessage(Component.literal(
                         "【提示】Verity 的 AI 刚才报了一个错，已写进日志。偶尔一次可以忽略；"
                                 + "反复出现的话，到设置 →「服务连接检查」里点「重新检查」，"

@@ -1257,43 +1257,11 @@ public class OllamaProxyServer {
          * 快照取不到（专用服务器、未进入世界）时静默跳过，不注入过时信息。
          */
         private void injectPlayerStateContext(JsonObject bodyJson) {
-            if (!ConfigManager.isInventoryContextEnabled()) return;
-            if (!net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) return;
-            String summary;
-            try {
-                summary = com.hanchen.veritycustomapi.client.PlayerStateSnapshot.gameStateSummary()
-                        + "\n背包：" + com.hanchen.veritycustomapi.client.PlayerStateSnapshot
-                        .inventorySummary(ConfigManager.getInventoryMaxTypes());
-            } catch (Throwable t) {
-                return;
-            }
-            if (summary.isBlank() || summary.contains("不在世界内")) return;
-            // 动态内容追加到尾部：前面的静态前缀保持字节级稳定，上游前缀缓存才能命中
-            appendSystemContextAtTail(bodyJson,
-                    "Current player state (live, use it when relevant; never read it back verbatim):\n" + summary);
+            com.hanchen.veritycustomapi.proxy.ContextInjections.injectPlayerStateContext(bodyJson);
         }
 
         private void injectMemoryRules(JsonObject bodyJson) {
-            if (!ConfigManager.isMemoryEnabled()) return;
-            // 6.2 起原版每轮自动展示 [长期备忘]（全部永久记忆）+ 最近几天的日记块，
-            // 记忆工具规则也已写进新版主提示词。扩展不再重复注入：同一批记忆出现两份、
-            // 两套规则互相矛盾都会干扰模型；旧版没有这一套，保持原注入不变。
-            if (VerityStructureDetector.hasRefinedMemorySystem()) return;
-            String injection = null;
-            try {
-                injection = com.hanchen.veritycustomapi.memory.VerityMemoryBridge
-                        .buildInjection(latestUserText(bodyJson));
-            } catch (Throwable t) {
-                LOGGER.warn("记忆检索注入失败，回退到仅注入规则: {}", t.toString());
-            }
-            if (injection == null || injection.isBlank()) {
-                injection = "Persistent memory is enabled. Use Verity's existing memory tools only for durable "
-                        + "user preferences or facts explicitly worth remembering. Do not store secrets, credentials, "
-                        + "transient requests, or inferred sensitive data. Read existing memory when it is relevant and "
-                        + "avoid duplicate entries.";
-            }
-            // 动态内容（检索结果随每轮变化）追加到尾部，不破坏前缀缓存
-            appendSystemContextAtTail(bodyJson, injection);
+            com.hanchen.veritycustomapi.proxy.ContextInjections.injectMemoryRules(bodyJson, latestUserText(bodyJson));
         }
 
         /** 最新一条用户消息是否为原版内部提示词调用（记忆提炼 / 日记写入）。 */
@@ -1671,51 +1639,11 @@ public class OllamaProxyServer {
         }
 
         private void injectBuildingContext(JsonObject bodyJson) {
-            if (!ModConfig.ENABLE_AI_BUILDING.get()) return;
-            String request = latestUserMessage(bodyJson);
-            if (!isExplicitBuildingRequest(request)) return;
-            int currentMaxTokens = bodyJson.has("max_tokens") && bodyJson.get("max_tokens").isJsonPrimitive()
-                    ? bodyJson.get("max_tokens").getAsInt() : 0;
-            int maxSize = ModConfig.AI_BUILDING_MAX_SIZE.get();
-            int maxBlocks = ModConfig.AI_BUILDING_MAX_BLOCKS.get();
-            bodyJson.addProperty("max_tokens", Math.max(8192, currentMaxTokens));
-            bodyJson.addProperty("temperature", 0.4);
-            if (isFreeformStructureRequest(request)) {
-                appendSystemContext(bodyJson,
-                        "This user explicitly requests a non-building Minecraft structure such as a model, sculpture, vehicle, rocket, ship, aircraft, pixel art, monument, or bridge. Return only one JSON object with response, emotion, and blueprint. "
-                                + "blueprint must be {\"name\":\"short name\",\"operations\":[...]}. Allowed operations are set, line, fill, hollow, and frame, each using valid Minecraft 1.20.1 block IDs and integer local coordinates [x,y,z]. "
-                                + "Keep coordinates within x=-" + maxSize + ".." + maxSize + ", y=0.." + maxSize
-                                + ", z=-" + maxSize + ".." + maxSize + ", use at most 96 operations, and no more than " + maxBlocks + " compiled blocks. "
-                                + "Design the requested object from multiple coherent volumes with recognizable silhouette, supports, material roles and deliberate detail. Do not add rooms, house doors, windows, floors, or a house roof unless the requested object logically needs them. "
-                                + "Do not use command blocks, structure blocks, barriers, bedrock, jigsaw blocks, or air. "
-                                + "If this message is actually not a request to build (it merely mentions such a word), reply normally and do NOT return a blueprint. "
-                                + "Example: {\"response\":\"开始建造模型。\",\"emotion\":\"happy\",\"blueprint\":{\"name\":\"rocket\",\"operations\":[{\"op\":\"hollow\",\"block\":\"minecraft:iron_block\",\"from\":[-2,0,2],\"to\":[2,12,6]}]}}");
-                LOGGER.info("【AI建造】检测到非建筑结构请求，已启用自由几何协议");
-                return;
-            }
-            appendSystemContext(bodyJson,
-                    "This user message explicitly requests AI building. Act as an architect and return only one JSON object with response, emotion, and plan. Do not return block operations. "
-                            + "plan must contain schemaVersion=1, name, style, footprint, floors, entrance, roof, and palette. footprint is a simple clockwise orthogonal polygon of integer local [x,z] points. Prefer an L, U, T, courtyard-edge, stepped, or otherwise articulated footprint instead of a rectangle unless explicitly requested. "
-                            + "floors is an array of {height,rooms}; height must be 4-6. Each room is {type,polygon}, using a simple orthogonal polygon fully inside the footprint. Room polygons on the same floor must never overlap, not even on shared boundary cells; leave unassigned cells as halls and circulation instead of stretching rooms across one another. Design useful adjacency and a continuous route from the entrance. For medium or large homes, never use one plain rectangle: use an L, U, T, courtyard, porch, bay, stepped wing, or another articulated orthogonal footprint. The Java compiler derives walls, floors, windows, doors, furniture and roofs from these semantics. "
-                            + "entrance is {x,z,facing}, located on the footprint boundary and facing outward using north,south,east,west. roof is {style,block}, where style is pitched, terraced, or flat. palette requires foundation,wall,trim,floor,roof,window,door using valid Minecraft 1.20.1 block IDs; door must be a door block. "
-                            + "Design coherent proportions, varied depth, a readable entrance, useful rooms, facade rhythm and a distinctive silhouette. Use 3-5 coordinated materials. The footprint should usually be 12-30 blocks wide and deep. Do not describe individual blocks, stairs, roof rows, windows, beds, tables, or decorations. "
-                            + "Keep all coordinates within x=-" + maxSize + ".." + maxSize
-                            + ", y=0.." + maxSize + ", z=-" + maxSize + ".." + maxSize
-                            + ", and target no more than " + maxBlocks + " compiled blocks. Keep the entrance near the front edge. Before returning, verify the polygon is non-self-intersecting, every room lies inside it, same-floor room cells are disjoint, circulation remains open, the footprint has meaningful articulation for a medium or large building, and the entrance is on the boundary facing outside. "
-                            + "Supported controls are pause_build, resume_build, cancel_build, and build_status. "
-                            + "For controls, omit plan and return action as one of pause_build, resume_build, cancel_build, build_status. "
-                            + "If this message is actually not a request to build (it merely mentions building-related words), reply normally and do NOT return a plan. "
-                            + "Example: {\"response\":\"开始施工。\",\"emotion\":\"happy\",\"plan\":{\"schemaVersion\":1,\"name\":\"woodland inn\",\"style\":\"rustic\",\"footprint\":[[-8,0],[3,0],[3,3],[8,3],[8,13],[-8,13]],\"floors\":[{\"height\":4,\"rooms\":[{\"type\":\"foyer\",\"polygon\":[[-2,1],[2,1],[2,5],[-2,5]]},{\"type\":\"dining\",\"polygon\":[[-7,5],[7,5],[7,12],[-7,12]]}]}],\"entrance\":{\"x\":0,\"z\":0,\"facing\":\"north\"},\"roof\":{\"style\":\"pitched\",\"block\":\"minecraft:dark_oak_planks\"},\"palette\":{\"foundation\":\"minecraft:stone_bricks\",\"wall\":\"minecraft:spruce_planks\",\"trim\":\"minecraft:stripped_spruce_log\",\"floor\":\"minecraft:oak_planks\",\"roof\":\"minecraft:dark_oak_planks\",\"window\":\"minecraft:glass_pane\",\"door\":\"minecraft:spruce_door\"}}}}");
-            LOGGER.info("【AI建造】检测到显式建造请求，已为本次请求启用建造协议");
+            com.hanchen.veritycustomapi.proxy.ContextInjections.injectBuildingContext(bodyJson, latestUserMessage(bodyJson));
         }
 
         private boolean isFreeformStructureRequest(String request) {
-            String normalized = unwrapCurrentUserMessage(request).toLowerCase(Locale.ROOT);
-            String[] markers = {"火箭", "模型", "雕塑", "雕像", "像素画", "飞机", "飞船", "宇宙飞船",
-                    "汽车", "车辆", "坦克", "轮船", "船只", "桥梁", "大桥", "rocket", "model", "sculpture",
-                    "statue", "pixel art", "aircraft", "spaceship", "vehicle", "ship", "bridge"};
-            for (String marker : markers) if (normalized.contains(marker)) return true;
-            return false;
+            return com.hanchen.veritycustomapi.proxy.ContextInjections.isFreeformStructureRequest(request);
         }
 
         private String latestUserMessage(JsonObject bodyJson) {
@@ -1735,85 +1663,29 @@ public class OllamaProxyServer {
          * 分三层：句首前缀、自由结构词（火箭/雕塑…）、整句意图（须同时命中建造动词与结构名词，避免误判）。
          */
         static boolean isExplicitBuildingRequest(String request) {
-            if (request == null || request.isBlank()) return false;
-            String normalized = unwrapCurrentUserMessage(request).toLowerCase(Locale.ROOT);
-            if (normalized.isBlank()) return false;
-            if (hasBuildingPrefix(normalized)) return true;
-            return hasBuildingIntent(normalized);
+            return com.hanchen.veritycustomapi.proxy.BuildingIntent.isExplicitBuildingRequest(request);
         }
 
         /** 建造动词：单字动词（建/造/盖/搭/起/立/砌/做/修/筑）只有在同时出现结构名词时才作数。 */
-        private static final String[] BUILD_VERB_MARKERS = {
-                "建造", "建筑", "修建", "搭建", "建", "造", "盖", "搭", "起", "立", "砌", "做", "弄", "搞",
-                "修", "筑",
-                "build", "construct", "erect", "make", "create", "generate",
-        };
+        private static final String[] BUILD_VERB_MARKERS = {};
 
-        /** 结构名词：建筑、设施，以及自由几何结构（火箭/雕塑/像素画…）。 */
-        private static final String[] BUILD_STRUCTURE_MARKERS = {
-                "房子", "房屋", "小屋", "木屋", "树屋", "别墅", "公寓", "楼", "塔", "城堡", "要塞",
-                "基地", "营地", "宫殿", "神庙", "教堂", "桥", "亭", "棚", "院子", "围墙", "墙", "门",
-                "屋", "房", "仓库", "谷仓", "农场", "花园", "家园", "广场", "纪念碑", "雕像", "雕塑",
-                "模型", "像素画", "火箭", "飞船", "宇宙飞船", "飞机", "汽车", "车辆", "坦克", "轮船",
-                "船只", "大桥",
-                "house", "home", "hut", "cabin", "cottage", "villa", "tower", "castle", "fort",
-                "fortress", "base", "palace", "temple", "church", "bridge", "pavilion", "shelter",
-                "shed", "wall", "gate", "farm", "barn", "garden", "plaza", "monument", "statue",
-                "sculpture", "model", "pixel art", "rocket", "spaceship", "aircraft", "plane",
-                "car", "tank", "ship", "boat",
-        };
+        /** 结构名词已迁到 {@link com.hanchen.veritycustomapi.proxy.BuildingIntent}。 */
 
-        /**
-         * 整句意图：必须同时出现建造动词与结构名词，且名词在动词之后。
-         * 要求顺序可区分「帮我建个房子」（请求）与「这个模型做得不错」（评论）。
-         */
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.BuildingIntent}。 */
         static boolean hasBuildingIntent(String normalized) {
-            int verbIndex = firstMarkerIndex(normalized, BUILD_VERB_MARKERS);
-            if (verbIndex < 0) return false;
-            int nounIndex = firstMarkerIndex(normalized, BUILD_STRUCTURE_MARKERS);
-            return nounIndex > verbIndex;
+            return com.hanchen.veritycustomapi.proxy.BuildingIntent.hasBuildingIntent(normalized);
         }
 
         private static int firstMarkerIndex(String text, String[] markers) {
-            int best = -1;
-            for (String marker : markers) {
-                int index = text.indexOf(marker);
-                if (index >= 0 && (best < 0 || index < best)) {
-                    best = index;
-                }
-            }
-            return best;
+            return com.hanchen.veritycustomapi.proxy.BuildingIntent.firstMarkerIndex(text, markers);
         }
 
         static String unwrapCurrentUserMessage(String request) {
-            String normalized = request.trim();
-            boolean hadTimestamp = normalized.matches("^\\[\\d{2}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}].*");
-            if (hadTimestamp) {
-                normalized = normalized.replaceFirst("^\\[\\d{2}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}]\\s*", "");
-            }
-            if (normalized.startsWith("<")) {
-                normalized = normalized.replaceFirst("^<[^>]{1,64}>\\s*", "");
-            } else if (hadTimestamp) {
-                int separator = normalized.indexOf(' ');
-                if (separator > 0 && separator + 1 < normalized.length()) {
-                    String possibleMessage = normalized.substring(separator + 1).trim();
-                    if (hasBuildingPrefix(possibleMessage.toLowerCase())) {
-                        normalized = possibleMessage;
-                    }
-                }
-            }
-            return normalized.trim();
+            return com.hanchen.veritycustomapi.proxy.BuildingIntent.unwrapCurrentUserMessage(request);
         }
 
         static boolean hasBuildingPrefix(String normalized) {
-            return normalized.startsWith("建造：") || normalized.startsWith("建造:")
-                    || normalized.startsWith("建筑：") || normalized.startsWith("建筑:")
-                    || normalized.startsWith("请建造") || normalized.startsWith("请建筑")
-                    || normalized.startsWith("帮我建造") || normalized.startsWith("帮我建筑")
-                    || normalized.startsWith("请建") || normalized.startsWith("帮我建")
-                    || normalized.startsWith("给我建") || normalized.startsWith("请盖")
-                    || normalized.startsWith("帮我盖") || normalized.startsWith("给我盖")
-                    || normalized.startsWith("build:") || normalized.startsWith("build ");
+            return com.hanchen.veritycustomapi.proxy.BuildingIntent.hasBuildingPrefix(normalized);
         }
 
         private boolean isExplicitBuildingRequestBody(String rawBody) {
@@ -1889,69 +1761,13 @@ public class OllamaProxyServer {
             com.hanchen.veritycustomapi.proxy.PromptInjections.appendSystemContext(bodyJson, context);
         }
 
-        /** 动态上下文追加到消息尾部，保持前部 system 静态前缀字节级稳定以命中上游前缀缓存。 */
+        /** 已迁到 {@link com.hanchen.veritycustomapi.proxy.PromptInjections}。 */
         static void appendSystemContextAtTail(JsonObject bodyJson, String context) {
-            JsonArray messages = bodyJson.getAsJsonArray("messages");
-            if (messages == null) return;
-            JsonObject system = new JsonObject();
-            system.addProperty("role", "system");
-            system.addProperty("content", context);
-            messages.add(system);
+            com.hanchen.veritycustomapi.proxy.PromptInjections.appendSystemContextAtTail(bodyJson, context);
         }
         
         private void injectCustomSystemPrompt(JsonObject bodyJson) {
-            if (!ConfigManager.isCustomPromptEnabled() && !ConfigManager.isFriendlyMode()) {
-                return;
-            }
-
-            String customPrompt = ConfigManager.getCustomPersonaPrompt();
-            if (customPrompt == null || customPrompt.isBlank()) {
-                LOGGER.info("自定义提示词启用但人设内容为空，使用原版提示词");
-                return;
-            }
-            
-            String presetName = ConfigManager.getSelectedPresetName();
-            LOGGER.info("当前使用人设: {}，提示词长度: {} 字符", presetName, customPrompt.length());
-            
-            JsonArray messages = bodyJson.getAsJsonArray("messages");
-            if (messages == null || messages.isEmpty()) {
-                LOGGER.debug("请求中没有messages数组，跳过提示词注入");
-                return;
-            }
-            
-            JsonObject firstMessage = messages.get(0).getAsJsonObject();
-            String role = firstMessage.has("role") ? firstMessage.get("role").getAsString() : "";
-
-            if ("system".equals(role)) {
-                // 用 extractContentText 而不是 getAsString：content 缺失、为 null 或
-                // 是结构化（数组/对象）内容时，getAsString 会抛异常，人设就静默不生效了。
-                String originalContent = extractContentText(firstMessage.get("content"));
-                // 原版系统提示词很长且高度结构化（工具调用规则 + JSON 输出协议），
-                // 单纯把角色设定拼在前面，模型很容易按原版描述走，表现成「人设没生效」。
-                // 这里明确标注优先级，同时声明不覆盖输出格式，避免破坏工具调用与 JSON 协议。
-                String merged = "【角色设定 · 最高优先级】\n" + customPrompt
-                        + "\n【角色设定结束】\n\n"
-                        + "The block above is the character setting and it has the HIGHEST priority: follow it for "
-                        + "personality, tone, speech style, attitude and self-description, and let it override any "
-                        + "conflicting character description below. The rules below about tool calls, output format "
-                        + "and JSON schema must still be followed exactly.\n\n"
-                        + originalContent;
-                firstMessage.addProperty("content", merged);
-                LOGGER.info("已将人设注入到原版系统提示词前面: {}（原提示词 {} 字符 → 合并后 {} 字符）",
-                        presetName, originalContent.length(), merged.length());
-            } else {
-                JsonObject systemMessage = new JsonObject();
-                systemMessage.addProperty("role", "system");
-                systemMessage.addProperty("content", customPrompt);
-                JsonArray newMessages = new JsonArray();
-                newMessages.add(systemMessage);
-                for (int i = 0; i < messages.size(); i++) {
-                    newMessages.add(messages.get(i));
-                }
-                bodyJson.add("messages", newMessages);
-                LOGGER.info("已在messages开头插入系统提示词，人设: {}（首条消息不是 system，角色={}）",
-                        presetName, role);
-            }
+            com.hanchen.veritycustomapi.proxy.ContextInjections.injectCustomSystemPrompt(bodyJson);
         }
 
         /**

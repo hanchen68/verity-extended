@@ -39,6 +39,21 @@ public final class PromptInjections {
     }
 
     /**
+     * 把动态上下文追加到消息**尾部**。
+     *
+     * <p>为什么不放前面：前面的 system 是静态前缀，上游按字节比对做前缀缓存；
+     * 把每轮都变的检索结果插进去会让整段缓存失效，延迟和成本都会涨。
+     */
+    public static void appendSystemContextAtTail(JsonObject bodyJson, String context) {
+        JsonArray messages = bodyJson.getAsJsonArray("messages");
+        if (messages == null) return;
+        JsonObject system = new JsonObject();
+        system.addProperty("role", "system");
+        system.addProperty("content", context);
+        messages.add(system);
+    }
+
+    /**
      * 把技能规则合并进第一条 system 消息；没有 system 时新建一条。
      *
      * <p>合并而不是新建：技能规则与主提示词是同一层语义，拆成两条 system

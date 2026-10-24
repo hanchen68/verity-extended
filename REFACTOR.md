@@ -35,7 +35,7 @@
 
 | 顺序 | 目标 | 行数 | 建议拆法 | 风险 |
 |---|---|---|---|---|
-| P2a | `OllamaProxyServer` | 3441 → **3243** | `proxy/` 包。✅ 已完成：`ToolCallNormalizer` / `BillingGuard`（+ `BillingSettlement` 提为顶层）/ `StreamFlags` / `PromptInjections`。⏳ 未做：`ChatRequestAdapter`（剩余实例态注入）、`HttpRouter`（`handle()` 与 exchange/routes 深度耦合，建议不拆） | 中高（请求链路，必须有真实对话回归） |
+| P2a | `OllamaProxyServer` | 3441 → **3059** | `proxy/` 包。✅ 已完成：`ToolCallNormalizer` / `BillingGuard`（+ `BillingSettlement` 提为顶层）/ `StreamFlags` / `PromptInjections`。⏳ 未做：`ChatRequestAdapter`（剩余实例态注入）、`HttpRouter`（`handle()` 与 exchange/routes 深度耦合，建议不拆） | 中高（请求链路，必须有真实对话回归） |
 | P2b | `config/NativeOllamaProxyConfigScreen` | 3060 → **2971** | 每个分类一个 `Category` 类，保留框架/绘制/滚动；行控件抽 `widget/` | 中（纯 UI，易回归截图） |
 | P2c | `ConfigManager` | 1924 → **1911** | 保留为门面，抽 `voice/VoiceSettings`、`ai/ModelRouting`、`cloud/Credits`、`prompt/Persona` | 中（807 处调用依赖它，方法签名不能变） |
 | P2d | `tts/OnlineTtsService` | 1948 → **1885** | `tts/engine/`：按协议拆分（OpenAI 兼容 / Mimo / 自定义），公共的重试与限流提到基类 | 中 |
@@ -60,6 +60,22 @@
 收益小于回归风险。剩余可拆的是 `injectPlayerStateContext` / `injectMemoryRules` /
 `injectBuildingContext` / `injectCustomSystemPrompt` 四项——它们读实例上下文
 （玩家状态快照、记忆库、建造意图），要连依赖一起搬，建议单独一轮做。
+
+### P2a 收尾（2026-10-24 第三轮）
+
+再把「注入链」和「建造意图」两块从处理器里搬出来，`OllamaProxyServer` **3243 → 3059**：
+
+| 新类 | 内容 |
+|---|---|
+| `proxy/BuildingIntent` | 建造意图判定：100+ 关键词、动词/名词顺序、时间戳与 `<名字>` 前缀剥离。**有 `buildingIntentTest` 全量用例覆盖** |
+| `proxy/ContextInjections` | 4 个需要运行时上下文的注入：玩家状态、记忆规则、建造协议、人设。取不到上下文一律静默跳过 |
+| `proxy/PromptInjections`（补） | 新增 `appendSystemContextAtTail`——动态内容必须追加到**尾部**，否则上游前缀缓存全失效 |
+
+**为什么建造意图值得单独成类**：它是全项目最容易改错的一块——判错就会**凭空开始建造**。
+抽出来之后可以直接用测试跑全量用例，不用起游戏。
+
+**分界线**：`PromptInjections` 只读配置拼固定文案；`ContextInjections` 要读世界/玩家/记忆，
+所以「最后一条用户消息」由调用方当参数传进来，不在类里再取一遍。
 
 ### P2b 进度（2026-10-24）
 

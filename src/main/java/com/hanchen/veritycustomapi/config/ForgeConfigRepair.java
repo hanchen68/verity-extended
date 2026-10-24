@@ -44,6 +44,21 @@ public final class ForgeConfigRepair {
 
     /** 上一次完整文件的快照后缀。 */
     private static final String SNAPSHOT_SUFFIX = ".snapshot";
+    /** 快照版本戳后缀：记录快照是哪一版写下的。 */
+    private static final String SNAPSHOT_META_SUFFIX = ".snapshot.meta";
+
+    /**
+     * 「完整」的判定比例：当前文件的配置键数低于快照的这个比例，就认为被截断了。
+     *
+     * <p>为什么不能只看哨兵键：{@code cloud.enable} 与 {@code server.port} 都在文件前部，
+     * 文件被截在它们**之后**时哨兵仍然存在，判据会误以为文件完整——
+     * 而真正丢失的是后面的键。2026-10-24 实测就是这样：修正前的备份只有 2479 字节、
+     * 缺 20 多个键，Forge 报 "Configuration file is not correct" 后按默认值重建，
+     * 于是 {@code cloud.enable} 回到默认的 false。
+     *
+     * <p>留 10% 余量是给「确实删了几个配置项」的版本升级用，避免误判。
+     */
+    private static final double COMPLETENESS_RATIO = 0.9;
     private static final Pattern TABLE_LINE = Pattern.compile("^\\s*\\[([^\\[\\]]+)]\\s*$");
     private static final Pattern KEY_LINE = Pattern.compile("^\\s*([A-Za-z0-9_.\\-]+)\\s*=");
 
@@ -80,14 +95,55 @@ public final class ForgeConfigRepair {
         }
     }
 
-    /** 复制一份快照；只有包含全部哨兵键的文件才会被当成「完整」。 */
+    /**
+     * 复制一份快照。
+     *
+     * <p>两个门槛缺一不可：
+     * <ol>
+     *   <li>哨兵键齐全；</li>
+     *   <li><b>键数不能明显少于已有快照</b>——否则一个被截断的文件会把好快照覆盖掉，
+     *       下次真出问题时就没得恢复了（这是上一版的真实缺陷）。</li>
+     * </ol>
+     */
     private static void snapshot(Path path, String fileName) {
         if (!hasSentinels(path, fileName)) return;
         try {
-            Files.copy(path, snapshotPath(path), StandardCopyOption.REPLACE_EXISTING);
+            Path snapshot = snapshotPath(path);
+            int current = countKeys(path);
+            if (Files.isRegularFile(snapshot)) {
+                int previous = countKeys(snapshot);
+                if (previous > 0 && current < previous * COMPLETENESS_RATIO) {
+                    OllamaProxyMod.LOGGER.warn(
+                            "{} 只有 {} 个配置键（快照有 {} 个），疑似被写坏，本次不覆盖快照",
+                            fileName, current, previous);
+                    return;
+                }
+            }
+            Files.copy(path, snapshot, StandardCopyOption.REPLACE_EXISTING);
+            Files.writeString(metaPath(path), OllamaProxyMod.version(), StandardCharsets.UTF_8);
         } catch (Exception error) {
             OllamaProxyMod.LOGGER.debug("写入配置快照失败: {}", error.toString());
         }
+    }
+
+    private static Path metaPath(Path path) {
+        return path.resolveSibling(path.getFileName() + SNAPSHOT_META_SUFFIX);
+    }
+
+    /** 统计文件里的配置键数量；读不出来返回 0。 */
+    private static int countKeys(Path path) {
+        int count = 0;
+        try {
+            for (String line : Files.readAllLines(path, StandardCharsets.UTF_8)) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
+                if (TABLE_LINE.matcher(line).matches()) continue;
+                if (KEY_LINE.matcher(line).find()) count++;
+            }
+        } catch (Exception error) {
+            return 0;
+        }
+        return count;
     }
 
     private static Path snapshotPath(Path path) {
@@ -100,10 +156,32 @@ public final class ForgeConfigRepair {
      * 表现出来就是「云端配置自己关了」。
      */
     private static void restoreIfTruncated(Path path, String fileName) {
-        if (hasSentinels(path, fileName)) return;
         Path snapshot = snapshotPath(path);
-        if (!Files.isRegularFile(snapshot) || !hasSentinels(snapshot, fileName)) {
-            OllamaProxyMod.LOGGER.warn("{} 缺少必需配置键且没有可用快照，将按默认值加载（云端开关可能变回关闭）", fileName);
+        boolean sentinelsOk = hasSentinels(path, fileName);
+        boolean snapshotUsable = Files.isRegularFile(snapshot) && hasSentinels(snapshot, fileName);
+
+        // 判据一：哨兵缺失 → 一定坏了
+        // 判据二：键数明显少于快照 → 截断点在哨兵之后，同样算坏
+        int current = countKeys(path);
+        int previous = snapshotUsable ? countKeys(snapshot) : 0;
+        boolean truncated = !sentinelsOk
+                || (previous > 0 && current < previous * COMPLETENESS_RATIO);
+
+        if (!truncated) return;
+
+        if (!snapshotUsable) {
+            OllamaProxyMod.LOGGER.warn("{} 看起来被写坏了（{} 个键）且没有可用快照，将按默认值加载"
+                    + "（云端开关可能变回关闭）", fileName, current);
+            return;
+        }
+
+        // 快照是「上一版」写的就不能用：新版可能删掉过配置项，
+        // 拿旧快照恢复会把这些键复活，Forge 又要再修正一次。
+        String snapshotVersion = readMeta(path);
+        String currentVersion = OllamaProxyMod.version();
+        if (snapshotVersion != null && !snapshotVersion.equals(currentVersion)) {
+            OllamaProxyMod.LOGGER.warn("{} 的快照来自 {}，与当前版本 {} 不一致，跳过恢复（下次保存会刷新快照）",
+                    fileName, snapshotVersion, currentVersion);
             return;
         }
         try {
@@ -114,6 +192,18 @@ public final class ForgeConfigRepair {
                     fileName, broken.getFileName());
         } catch (Exception error) {
             OllamaProxyMod.LOGGER.warn("{} 快照恢复失败: {}", fileName, error.toString());
+        }
+    }
+
+    /** 读快照版本戳；没有或读不出来返回 null。 */
+    private static String readMeta(Path path) {
+        Path meta = metaPath(path);
+        if (!Files.isRegularFile(meta)) return null;
+        try {
+            String text = Files.readString(meta, StandardCharsets.UTF_8).trim();
+            return text.isEmpty() ? null : text;
+        } catch (Exception error) {
+            return null;
         }
     }
 

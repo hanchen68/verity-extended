@@ -23,7 +23,7 @@ import org.apache.logging.log4j.Logger;
 @SuppressWarnings({"unused", "SpellCheckingInspection"})
 public class OllamaProxyMod {
     public static final String MOD_ID = "verity_extended";
-    private static final String FALLBACK_VERSION = "4.5.1";
+    private static final String FALLBACK_VERSION = "4.5.3";
     public static final Logger LOGGER = LogManager.getLogger();
 
     /** 实际加载的模组版本；独立测试未启动 Forge 时回退到当前发布版本。 */

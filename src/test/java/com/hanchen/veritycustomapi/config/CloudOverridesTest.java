@@ -82,7 +82,10 @@ public final class CloudOverridesTest {
         require(fromSpec.equals(fromFields), "规格树枚举与字段枚举不一致：仅规格有 " + difference(fromSpec, fromFields)
                 + "，仅字段有 " + difference(fromFields, fromSpec));
         require(overridable.equals(fromSpec), "有配置项没被覆盖通道接上：" + difference(fromSpec, overridable));
-        require(overridable.size() == 181, "配置项总数变了（期望 181，实际 " + overridable.size() + "）");
+        // 这个数字是「配置项总数」的哨兵：新增/删除配置键时必须同步改这里，
+        // 否则说明有人加了键却没意识到云端覆盖通道、配置界面、文档都要跟着动。
+        // 181（4.5.1）+ 4（stellar_remote）+ 5（verity_jelly）= 190
+        require(overridable.size() == 190, "配置项总数变了（期望 190，实际 " + overridable.size() + "）");
 
         // cloud.* 是唯一被硬禁的一段，其余全部可下发
         int forbidden = 0;

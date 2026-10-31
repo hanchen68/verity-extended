@@ -3,11 +3,14 @@
 [中文](README.md) | **English**
 
 An add-on for [Verity JE](https://modrinth.com/mod/verity-je-official) that layers gameplay
-and quality-of-life features on top of it: riding and head-perching, AI building, proactive
-system, persona and memory, voice input/output, MMD skeletal animation, and more.
+and quality-of-life features on top of it: **local AI tools** (she can actually look at the world,
+place and break blocks, and run long tasks), **combat** (guardian mode and last-stand awakening),
+riding and head-perching, AI building, proactive behaviour, persona and memory,
+voice input/output, MMD skeletal animation, and more.
 
 > This is an **add-on** for Verity. It cannot run without the original Verity installed.
 
+- Current version **5.1** ([download](https://github.com/hanchen68/verity-extended/releases))
 - Minecraft **1.20.1**
 - Forge **47.3+** (47.3.x and 47.4.x both work)
 - Java **17+**
@@ -33,8 +36,19 @@ system, persona and memory, voice input/output, MMD skeletal animation, and more
   and fights back when you are attacked
 - **Proactive awareness** — events such as entering a world, low health, death and sleeping can
   start a conversation on their own
+- **Local tools** — 11 of them: scan the terrain, find blocks, read containers, check your inventory,
+  read signs; harvest, plant and tidy chests; plus long-running tasks from a single sentence
+  ("clear this forest", "mine some iron", "plant a field")
 - **Web search** — optionally connect a search service so the model can look up current information
 - **Camera vision** — feed a camera frame into the conversation (handy on mobile: "look at what's in front of me")
+
+**Combat**
+
+- **Guardian** — when a hostile mob hits you she locks onto it and hits back for 8% of its max health
+  (minimum 3), so ordinary mobs go down in two swings
+- **Last-stand awakening** — when a boss hits you, your health runs out, or a blow would be lethal,
+  she summons the original demon to hold the line, while you get Resistance V plus an instant heal.
+  You can still kill it yourself for the original "you set me free" ending
 
 **Voice**
 
@@ -51,6 +65,8 @@ system, persona and memory, voice input/output, MMD skeletal animation, and more
 - **Custom skins** — swap the skin texture, with the first-person viewmodel keeping in sync
 - **Translucent UI** — in-world menus let the world show through; the main menu falls back to
   the vanilla background
+- **Sphere animation** — a bouncy walk, squashing on landing, a wobble when bumping into walls,
+  and per-syllable jelly while talking (pure rendering, physics untouched)
 
 **Multiplayer**
 

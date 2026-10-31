@@ -3,10 +3,12 @@
 **中文** | [English](README_EN.md)
 
 为 [Verity JE](https://modrinth.com/mod/verity-je-official) 增加玩法与体验层的 Forge 扩展模组：
+**AI 本地工具**（真的能看世界、能做方块、能跑长任务）、**战斗护主与残血觉醒**、
 骑乘与站头互动、AI 建造、主动行为、人设与记忆、语音输入输出、MMD 骨骼动画等。
 
 > 这是 Verity 的**扩展模组**，不能脱离原版 Verity 单独运行。
 
+- 当前版本 **5.1**（[下载](https://github.com/hanchen68/verity-extended/releases)）
 - Minecraft **1.20.1**
 - Forge **47.3+**（47.3.x / 47.4.x 均可）
 - Java **17+**

@@ -34,8 +34,21 @@ import varmite.verity.event.WorldSpawnData;
  * 以前本类在 hardcore 下整体 {@code return}，结果是「hardcore 存档生物生成被关掉后永不恢复」。
  * 现在昼夜循环仍按原版规则只在非 hardcore 恢复，生物生成不分 hardcore 都恢复。
  *
- * <p>🔴 <b>2026-10-25 行为调整（按用户要求）</b>：昼夜循环改成
- * <b>「检测到被关掉就当场恢复」</b>，不再等「恶魔被击败」那个条件。
+ * <p>🔴 <b>2026-11-01 根因更正</b>：原版关昼夜循环不是「一次性的 bug」，而是
+ * <b>「世界末日」状态的持续维持</b>——反编译 {@code VerityEntity.tick()} 可见：
+ * <pre>
+ * if (dayTime / 24000 &gt;= VerityConfig.DAY_COUNT &amp;&amp; verityKarma &lt; 9000) {
+ *     if (gamerule(RULE_DAYLIGHT) &amp;&amp; !server.isHardcore()) gamerule.set(false);   // 每 tick 都关
+ *     transformIntoDemon(...);
+ * }
+ * </pre>
+ * 也就是说：<b>好感没到 9000 之前，这个世界本来就该是永夜</b>。
+ * 之前「检测到被关就当场恢复」的逻辑会每 tick 打开、原版每 tick 关回去，
+ * 两边无限对冲：日志刷屏、每次都向所有客户端同步一次 gamerule，而且永远「修不好」。
+ * 现在改成：<b>只要原版还在维持永夜（day ≥ DAY_COUNT 且 karma &lt; 9000），就完全不碰</b>；
+ * 等好感够了 / 天数没到 / 恶魔事件结束，才恢复一次。
+ *
+ * <p>旧的「检测到被关掉就当场恢复」规则（2026-10-25）保留在下面，但加了上面这条前置判断。
  * 两条保护措施：
  * <ol>
  *   <li>只在本存档确实发生过 Verity 恐怖事件（{@code hasHostileDaySpawn || hasProvokedSpawn}）时动手，
@@ -56,15 +69,38 @@ public final class VerityWorldStateGuard {
 
     /** 判定「恢复后又被原版立刻关掉」的时间窗口：40 tick（2 秒）。 */
     private static final long FIGHT_WINDOW_TICKS = 40L;
-    /** 判定为「原版正在维持永夜」后的重试间隔：100 tick（5 秒）。 */
-    private static final long RETRY_BACKOFF_TICKS = 100L;
+
+    /**
+     * 原版此刻是否**有意**维持永夜。
+     *
+     * <p>反编译 {@code VerityEntity.tick()}（6.0.0）：只要
+     * {@code dayTime / 24000 >= VerityConfig.DAY_COUNT && verityKarma < 9000}，
+     * 原版每 tick 都会把 {@code doDaylightCycle} 关一次。这是「世界末日」设计，不是 bug。
+     * 这种状态下把规则打开只会被下一 tick 关回去——既刷屏又毫无意义，所以必须让位。
+     *
+     * <p>反过来说：原版 <b>从不</b>把规则设回 true。所以等好感 ≥ 9000、或天数没到时，
+     * 还得由我们负责恢复一次。
+     */
+    private static boolean originalMaintainsNight(Level level) {
+        if (!(level instanceof ServerLevel serverLevel)) return false;
+        try {
+            int dayCount = varmite.verity.VerityConfig.DAY_COUNT.get();
+            long day = serverLevel.getDayTime() / 24000L;
+            float karma = WorldSpawnData.get(serverLevel).verityKarma;
+            return day >= (long) dayCount && karma < 9000.0F;
+        } catch (Throwable error) {
+            // 拿不到配置/存档数据时退回旧行为：宁可试着恢复，也不要放任世界停在永夜
+            return false;
+        }
+    }
 
     /** 上一次强行恢复昼夜循环的时刻（gameTime）。 */
     private static volatile long lastDaylightRestoreAt = Long.MIN_VALUE / 2;
-    /** 下一次允许强行恢复的时刻（gameTime）；对抗时退避到 5 秒一次。 */
-    private static volatile long daylightRetryAt;
-    /** 连续「恢复后又被立刻关掉」的次数，用来决定是否退避。 */
-    private static volatile int daylightFights;
+    /**
+     * 已确认「原版就是在维持永夜」后置位：本会话不再尝试恢复，避免每 tick 对打。
+     * 昼夜循环重新变回开启时清零。
+     */
+    private static volatile boolean daylightGaveUp;
 
     private VerityWorldStateGuard() {
     }
@@ -81,33 +117,27 @@ public final class VerityWorldStateGuard {
         if (server == null) return;
         boolean daylight = rule(server, GameRules.RULE_DAYLIGHT);
         boolean spawning = rule(server, GameRules.RULE_DOMOBSPAWNING);
-        // 昼夜循环：**检测到被关掉就当场恢复**，不再等「恶魔被击败」。
-        // 只在本世界确实发生过 Verity 恐怖事件时才动手，避免抢走管理员手动设的值。
-        if (!daylight && !server.isHardcore() && verityEventHappened(level)) {
+        // 昼夜循环：只有「原版已经不再维持永夜」时才恢复。
+        // 原版在世界末日期间每 tick 都会关一次，这时候去打开只会被关回去 ——
+        // 无限对冲、日志刷屏、每次都同步一遍 gamerule，还永远修不好（2026-11-01 实测）。
+        if (!daylight && !server.isHardcore() && verityEventHappened(level)
+                && !originalMaintainsNight(level) && !daylightGaveUp) {
             long now = level.getGameTime();
-            if (now >= daylightRetryAt) {
+            if (now - lastDaylightRestoreAt <= FIGHT_WINDOW_TICKS) {
+                // 刚恢复又被关掉：说明原版还在管，让位，只记一行，之后不再尝试
+                daylightGaveUp = true;
+                OllamaProxyMod.LOGGER.info("原版仍在关闭昼夜循环，已停止反复恢复"
+                        + "（等好感足够或恶魔事件结束后会再恢复一次）");
+            } else {
                 server.getGameRules().getRule(GameRules.RULE_DAYLIGHT).set(true, server);
-                // 原版在永夜期间每 tick 都会重新关掉它。短时间内又被关，
-                // 说明它正在主动维持永夜 —— 这时退避到 5 秒一次，避免每 tick 对打
-                // （每次 set 都会给所有客户端同步一次 gamerule）。
-                boolean foughtAgain = now - lastDaylightRestoreAt <= FIGHT_WINDOW_TICKS;
-                daylightFights = foughtAgain ? daylightFights + 1 : 0;
                 lastDaylightRestoreAt = now;
-                if (daylightFights >= 2) {
-                    daylightRetryAt = now + RETRY_BACKOFF_TICKS;
-                    if (daylightFights == 2) {
-                        OllamaProxyMod.LOGGER.info("原版正在维持永夜（反复关闭昼夜循环），"
-                                + "改为每 {} 秒检查恢复一次", RETRY_BACKOFF_TICKS / 20);
-                    }
-                } else {
-                    OllamaProxyMod.LOGGER.info("检测到昼夜循环被关闭，已立即恢复时间流逝");
-                }
+                OllamaProxyMod.LOGGER.info("检测到昼夜循环被关闭且原版不再维持永夜，已恢复时间流逝");
                 daylight = true;
             }
         } else if (daylight) {
-            // 时间正常流逝时把退避状态清干净，下次事件能立刻恢复
-            daylightRetryAt = 0L;
-            daylightFights = 0;
+            // 时间正常流逝：清掉「放弃」标记，下次事件还能再尝试一次
+            daylightGaveUp = false;
+            lastDaylightRestoreAt = 0L;
         }
         // 生物生成：原版**没有** hardcore 保护，hardcore 下照样关，所以照样要记下来恢复。
         // 它由 hasTriggeredDay2 一次性关掉（不会每 tick 重关），所以仍按「恶魔没了再恢复」处理。
@@ -134,10 +164,13 @@ public final class VerityWorldStateGuard {
         MinecraftServer server = serverOf(level);
         if (server == null) return false;
         boolean changed = false;
-        // 永夜结束：退避状态清空，允许立刻再恢复一次
-        daylightRetryAt = 0L;
-        daylightFights = 0;
-        if (!server.isHardcore() && !rule(server, GameRules.RULE_DAYLIGHT)) {
+        // 事件结束：允许重新尝试恢复一次
+        daylightGaveUp = false;
+        lastDaylightRestoreAt = 0L;
+        // 但原版若仍处于「世界末日」状态（好感不足、天数够了），它下一 tick 就会再关掉，
+        // 这时恢复毫无意义，还会刷一行日志
+        boolean suppressed = originalMaintainsNight(level);
+        if (!suppressed && !server.isHardcore() && !rule(server, GameRules.RULE_DAYLIGHT)) {
             server.getGameRules().getRule(GameRules.RULE_DAYLIGHT).set(true, server);
             OllamaProxyMod.LOGGER.info("恶魔已被击败，已恢复昼夜循环（时间重新开始流逝）");
             changed = true;
@@ -165,10 +198,12 @@ public final class VerityWorldStateGuard {
         MinecraftServer server = serverOf(level);
         if (server == null) return false;
         boolean changed = false;
-        if (!server.isHardcore() && lastSeenDaylight && !rule(server, GameRules.RULE_DAYLIGHT)) {
+        boolean suppressed = originalMaintainsNight(level);
+        if (!suppressed && !server.isHardcore() && lastSeenDaylight
+                && !rule(server, GameRules.RULE_DAYLIGHT)) {
             server.getGameRules().getRule(GameRules.RULE_DAYLIGHT).set(true, server);
-            daylightRetryAt = 0L;
-            daylightFights = 0;
+            daylightGaveUp = false;
+            lastDaylightRestoreAt = 0L;
             OllamaProxyMod.LOGGER.info("变身已被配置取消，但原版此前已关闭昼夜循环，已当场恢复时间流逝");
             changed = true;
         }
@@ -195,6 +230,8 @@ public final class VerityWorldStateGuard {
         WorldSpawnData data = WorldSpawnData.get(serverLevel);
         boolean transformedBefore = data.hasHostileDaySpawn || data.hasProvokedSpawn;
         if (!transformedBefore || data.hasLiveDemon()) return;
+        // 原版还在维持永夜（好感不足）时，这里恢复也会被立刻关回去 —— 直接跳过
+        if (originalMaintainsNight(level)) return;
         inferredRestoreDone = true;
         boolean changed = false;
         // 昼夜循环：hardcore 下原版不会关它，别碰
@@ -248,7 +285,6 @@ public final class VerityWorldStateGuard {
         disabledMobSpawning = false;
         inferredRestoreDone = false;
         lastDaylightRestoreAt = Long.MIN_VALUE / 2;
-        daylightRetryAt = 0L;
-        daylightFights = 0;
+        daylightGaveUp = false;
     }
 }

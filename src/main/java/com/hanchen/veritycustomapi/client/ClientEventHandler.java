@@ -155,6 +155,10 @@ public class ClientEventHandler {
                 OllamaProxyMod.LOGGER.warn("退出世界时清理记忆状态失败（可忽略）: {}", error.toString());
             }
             VerityDialogueFeed.clear();
+            // 站头状态按实体 id 存：实体 id 每个存档从 0 开始，不清会串到下一个存档
+            com.hanchen.veritycustomapi.ride.ClientPerchState.clear();
+            com.hanchen.veritycustomapi.combat.GuardianRegistry.clear();
+            com.hanchen.veritycustomapi.client.BallAnimator.clear();
             ReminderManager.clear();
             OriginalVeritySttInjector.endSession(sessionGeneration);
             SpeechRecognitionManager.INSTANCE.shutdown();

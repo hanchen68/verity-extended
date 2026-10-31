@@ -107,7 +107,8 @@ public class FightTargetGoal extends Goal {
     private void sayQuip() {
         Player nearest = nearestPlayer();
         if (nearest == null) return;
-        nearest.sendSystemMessage(Component.literal("<Verity> " + QUIPS[RAND.nextInt(QUIPS.length)]));
+        // 走统一的说话格式：名字取原版配置，TTS 与 HUD 气泡才认得出这句
+        com.hanchen.veritycustomapi.compat.VeritySay.to(nearest, QUIPS[RAND.nextInt(QUIPS.length)]);
     }
 
     /** 32 格内最近的玩家；没有就返回 {@code null}。 */

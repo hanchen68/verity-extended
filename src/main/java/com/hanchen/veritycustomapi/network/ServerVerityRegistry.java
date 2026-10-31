@@ -35,6 +35,14 @@ public final class ServerVerityRegistry {
     private static final Map<UUID, UUID> OWNER_BY_ENTITY = new ConcurrentHashMap<>();
     private static final Map<UUID, Set<UUID>> ENTITIES_BY_OWNER = new ConcurrentHashMap<>();
     private static final Map<UUID, UUID> SELECTED_BY_PLAYER = new ConcurrentHashMap<>();
+    /**
+     * 玩家 → 最近一次确认过的 Verity 实体 UUID。
+     *
+     * <p>玩家跑远/传送到别的区块后，Verity 可能不在加载范围内，{@link #findForPlayer} 就找不到她了
+     * ——护主与觉醒会整条链路静默失效（2026-10-31 日志实录：`Verity=未找到`）。
+     * 这里记一份最近已知的引用，找不到时按 UUID 再去各维度捞一次。
+     */
+    private static final Map<UUID, UUID> LAST_KNOWN = new ConcurrentHashMap<>();
 
     private ServerVerityRegistry() {
     }
@@ -91,6 +99,7 @@ public final class ServerVerityRegistry {
         verity.getOwnerUUID().ifPresent(owner -> {
             OWNER_BY_ENTITY.put(entityId, owner);
             ENTITIES_BY_OWNER.computeIfAbsent(owner, ignored -> ConcurrentHashMap.newKeySet()).add(entityId);
+            LAST_KNOWN.put(owner, entityId);
         });
     }
 
@@ -125,7 +134,37 @@ public final class ServerVerityRegistry {
         // 世界自带的、或玩家从未右键认领过。没有 owner 就永远不进 ENTITIES_BY_OWNER，
         // /v 会一直回「你目前没有可用的 Verity。」。
         // 单人世界里没有必要区分归属，直接取同维度一只最近的活 Verity。
-        return findAnyNearby(player);
+        VerityEntity nearby = findAnyNearby(player);
+        if (nearby != null) {
+            LAST_KNOWN.put(playerId, nearby.getUUID());
+            return nearby;
+        }
+        return null;
+    }
+
+    /**
+     * 战斗用的兜底查找：{@link #findForPlayer} 找不到时，按「最近已知 UUID」再去各维度捞一次。
+     *
+     * <p>为什么需要：玩家被 Boss 追着跑、或传送到远处时，Verity 可能不在加载范围里，
+     * 普通查找会返回 null —— 护主和残血觉醒就整条链路静默失效。这里不要求她离得近，
+     * 只要实体还活着就能拿到（替身是召唤到 Boss 脚下的，不需要她在场）。
+     */
+    public static VerityEntity findAnywhere(ServerPlayer player) {
+        if (player == null) return null;
+        VerityEntity found = findForPlayer(player);
+        if (found != null) return found;
+
+        MinecraftServer server = player.getServer();
+        if (server == null) return null;
+        UUID knownId = LAST_KNOWN.get(player.getUUID());
+        if (knownId == null) return null;
+        for (ServerLevel level : server.getAllLevels()) {
+            Entity entity = level.getEntity(knownId);
+            if (entity instanceof VerityEntity verity && verity.isAlive()) {
+                return verity;
+            }
+        }
+        return null;
     }
 
     /**

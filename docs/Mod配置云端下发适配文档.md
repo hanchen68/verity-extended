@@ -5,9 +5,37 @@
 > 配套文档：`docs/MMD资源中心云端适配文档.md`（资源下载，与本文件互不影响）、
 > `docs/TTS服务商云端适配文档.md`（18 家语音服务商的端点/鉴权/请求体细节与下发示例）
 >
-> **实现状态：`overrides` 通道已落地，190/190 项均可云端下发**（Mod 4.4）。  
+> **实现状态：`overrides` 通道已落地，但自 Mod 4.5.3 起改为「只接受 API 连接配置」白名单（21 项）。**  
 > 云端只要在响应里加一个 `data.overrides` 对象即可，**不需要 Mod 再发版**。  
 > 自检：`gradlew cloudOverridesTest`。
+
+> ## 🔴 重要变更（2026-10-24）
+>
+> **云端不再下发任何功能开关与行为参数。**
+>
+> 原因：凡是云端下发过的功能开关，玩家在本地都改不回来——下一轮拉取又盖回去，
+> 表现为「设置自己变回去了」。这个现象被误诊过很久（一度以为是 TOML 被写坏）。
+> 因此覆盖通道收窄为**只管理连接信息**：换上游地址、换密钥、换模型、换协议格式。
+>
+> 白名单共 **21 项**，全部是「怎么连上去」，不含任何 `enabled` / `allow*` / 速率 / 上限：
+>
+> | 分组 | 键 |
+> |---|---|
+> | 对话模型 | `llm.apiProvider`、`llm.apiUrl`、`llm.apiKey`、`llm.model`、`llm.requestTimeout` |
+> | 语音识别 | `speech_recognition.apiProvider`、`.apiUrl`、`.apiKey`、`.model`、`.requestFormat`、`.authType`、`.responseField` |
+> | 语音合成 | `text_to_speech.apiProvider`、`.apiUrl`、`.apiKey`、`.apiModel`、`.apiVoice` |
+> | 线路选择 | `tts_route.kind` |
+> | 台词翻译 | `voice_language.translateModel`、`.translateUrl`、`.translateApiKey` |
+>
+> 白名单之外的键**下发后不生效**，日志会明确列出被忽略的键名与原因
+> （`云端下发了 N 项非 API 连接配置，已忽略`）。
+>
+> 另外，白名单内的键**跳过**「首次接管时本地非默认值就保留」这条保护规则——
+> 否则云端永远改不动玩家本地的旧地址。玩家手动改过之后仍以玩家为准。
+>
+> 本文档下面第 2、8 节里「188 项全部可下发」的描述**已过时**，
+> 保留作历史记录；以本节为准。
+
 
 
 
@@ -321,7 +349,7 @@ public static boolean isEnableTts() {
 
 ### 7.4 类型与校验
 
-Mod 端以本地 TOML 的**声明类型**为准（全部 190 项只有四种类型：布尔 100、整数 32、小数 9、字符串 49），  
+Mod 端以本地 TOML 的**声明类型**为准（全部 190 项只有四种类型：布尔 101、整数 31、小数 9、字符串 49），  
 云端值的处理规则：
 
 | 本地类型 | 接受的 JSON                                                                                         | 转换                       | 不合法时           |
@@ -361,7 +389,7 @@ Mod 端以本地 TOML 的**声明类型**为准（全部 190 项只有四种类�
 
 - 第 4 节那 33 项：继续只用具名字段（或整体迁到 `overrides`，但不要并用）。
 - 其余 157 项：只能用 `overrides`。
-- 两者相加 = 190 项全覆盖。
+- 两者相加 = 188 项全覆盖。
 
 ### 7.6 生效时机、保存守卫与热重载
 
@@ -400,7 +428,7 @@ Mod 端以本地 TOML 的**声明类型**为准（全部 190 项只有四种类�
 （`Builder.build()` 会把每个 ConfigValue 按路径塞进一棵新配置树），递归走一遍即可，**不需要反射读 `ModConfig` 的字段**。
 
 **防漏自检（已实现）**：`CloudOverridesTest.everyConfigKeyIsReachable()` 用**两套互不相干的办法**各枚举一遍——
-一套扫配置规格的树，一套反射读 `ModConfig` 的静态字段——两者必须完全一致，且总数必须是 190。
+一套扫配置规格的树，一套反射读 `ModConfig` 的静态字段——两者必须完全一致，且总数必须是 188。
 以后新增配置项若没被覆盖通道接上，或某个字段没进规格，测试会直接失败。
 
 ### 7.8 向后兼容
@@ -418,9 +446,9 @@ Mod 端以本地 TOML 的**声明类型**为准（全部 190 项只有四种类�
 ---
 
 
-## 8. 全部配置键表（190 项）
+## 8. 全部配置键表（188 项）
 
-> 「云端可下发」列的含义：**现在全部 190 项都是 ✅**。
+> 「云端可下发」列的含义：**现在全部 188 项都是 ✅**。
 > - **✅** = 有具名字段（第 4 节那 33 项），或可经 `overrides` 下发（其余 157 项）。
 > - 键名列就是 `overrides` 用的键名，与 TOML 逐字一致。
 > - 表中标 **—** 的项是历史遗留标记（写本表时还没有 `overrides` 通道），一律按 ✅ 理解。
@@ -444,7 +472,6 @@ Mod 端以本地 TOML 的**声明类型**为准（全部 190 项只有四种类�
 | `apiKey` | 字符串 | `""` | — | ✅ |
 | `model` | 字符串 | `""` | — | ✅ |
 | `enableCustomPrompt` | 布尔 | `false` | `true`/`false` | — |
-| `useOriginalVerityChatChain` | 布尔 | `true` | `true`/`false` | — |
 | `bilingualSpeechSubtitles` | 布尔 | `false` | `true`/`false` | — |
 | `bilingualSecondPass` | 布尔 | `true` | `true`/`false` | — |
 | `overheadOnlyChat` | 布尔 | `false` | `true`/`false` | — |
@@ -606,6 +633,8 @@ Mod 端以本地 TOML 的**声明类型**为准（全部 190 项只有四种类�
 
 | 键 | 类型 | 默认 | 取值/范围 | 云端可下发 |
 |---|---|---|---|:--:|
+| `localToolsEnabled` | 布尔 | `true` | `true`/`false` | — |
+| `worldEditEnabled` | 布尔 | `true` | `true`/`false` | — |
 | `memoryEnabled` | 布尔 | `true` | `true`/`false` | — |
 | `memoryRetrievalEnabled` | 布尔 | `true` | `true`/`false` | — |
 | `memoryRetrievalTopN` | 整数 | `6` | `1~20` | — |
@@ -633,6 +662,7 @@ Mod 端以本地 TOML 的**声明类型**为准（全部 190 项只有四种类�
 | 键 | 类型 | 默认 | 取值/范围 | 云端可下发 |
 |---|---|---|---|:--:|
 | `allowVerityDemonTransformation` | 布尔 | `true` | `true`/`false` | — |
+| `verityDemonAwakening` | 布尔 | `true` | `true`/`false` | — |
 | `allowVerityGift` | 布尔 | `true` | `true`/`false` | — |
 | `allowVerityKick` | 布尔 | `true` | `true`/`false` | — |
 | `crossSavePursuit` | 布尔 | `false` | `true`/`false` | — |
@@ -777,7 +807,7 @@ Mod 端以本地 TOML 的**声明类型**为准（全部 190 项只有四种类�
 Mod 端在 `CloudOverrides.apply()` 中直接跳过整组并记一条日志，
 `CloudOverridesTest.webSearchSettingsAreLocalOnly()` 断言保护。
 
-> 因此「190 项都在覆盖通道索引里」不等于「190 项都能被云端改」：
+> 因此「188 项都在覆盖通道索引里」不等于「188 项都能被云端改」：
 > `cloud.*` 7 项 + `webSearch*` 9 项由本机/安全规则保留。
 
 ### 9.2 建议禁止（本机文件系统路径）
@@ -814,7 +844,7 @@ Mod 端在 `CloudOverrides.apply()` 中直接跳过整组并记一条日志，
 `hud.*`（7 项）、`proactive_awareness.*`（18 项）、`ai_extensions.*` 中除密钥外的 13 项、
 `tts_route.kind`、`voice_language.display` / `speak`、
 `llm.bilingualSpeechSubtitles` / `bilingualSecondPass` / `overheadOnlyChat` / `chatStream` /
-`useOriginalVerityChatChain` / `enableVerityGrowth`、`localization.*`、`mmd.cameraHeight`。
+`enableVerityGrowth`、`localization.*`、`mmd.cameraHeight`。
 
 这一批覆盖了玩家最常调的「表现层」开关，且**不涉及密钥、路径与剧情**，适合作为第一批上线内容。
 
@@ -902,7 +932,7 @@ Mod 端对非法输入是**宽容**的（丢弃并记日志），云端必须**�
 
 ### 10.4 不要做的事
 
-- ❌ 不要因为「想统一体验」就把 190 项全量下发。这会让玩家本地设置全部失效，
+- ❌ 不要因为「想统一体验」就把 188 项全量下发。这会让玩家本地设置全部失效，
   而且一旦云端配置有问题，所有人都同时出问题。**只下发真正需要强制的键。**
 - ❌ 不要在响应里下发空串来表示「清空」。要撤销某个键，直接从 `overrides` 里删掉。
 - ❌ 不要在 `version` 上做回滚。Mod 端会忽略版本号变小的整份配置（第 2.3 节）。
@@ -979,7 +1009,7 @@ data.overrides
 
 | 用例 | 断言内容 |
 |---|---|
-| `everyConfigKeyIsReachable` | 规格树枚举 == `ModConfig` 字段枚举，总数 190，`cloud.*` 恰好 7 项 |
+| `everyConfigKeyIsReachable` | 规格树枚举 == `ModConfig` 字段枚举，总数 188，`cloud.*` 恰好 7 项 |
 | `coercionFollowsDeclaredType` | 布尔/整数/小数/字符串四种类型的转换与拒绝 |
 | `flattenPrefersFlatForm` | 嵌套、点分、两者并存时点分优先 |
 | `outOfRangeValuesAreRejected` | 越界丢弃、边界值接受 |

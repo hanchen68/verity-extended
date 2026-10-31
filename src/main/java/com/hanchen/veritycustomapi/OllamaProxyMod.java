@@ -23,7 +23,7 @@ import org.apache.logging.log4j.Logger;
 @SuppressWarnings({"unused", "SpellCheckingInspection"})
 public class OllamaProxyMod {
     public static final String MOD_ID = "verity_extended";
-    private static final String FALLBACK_VERSION = "5.0";
+    private static final String FALLBACK_VERSION = "5.1";
     public static final Logger LOGGER = LogManager.getLogger();
 
     /** 实际加载的模组版本；独立测试未启动 Forge 时回退到当前发布版本。 */
@@ -166,6 +166,8 @@ public class OllamaProxyMod {
         VerityGrowthState.clearServer();
         com.hanchen.veritycustomapi.ride.RideGrace.clear();
         com.hanchen.veritycustomapi.ride.HeadPerchState.clear();
+        // 觉醒状态是「玩家 UUID -> 恶魔 UUID」的静态表，不清会跨存档残留
+        com.hanchen.veritycustomapi.combat.MonstrousManager.clear();
         // 下面这几处都是「static 表 + 玩家/实体 id 做 key」，不清会跨存档残留：
         // 实体 id 是每个存档从 0 开始计数的，新存档里的 id 5 会读到上个存档的状态。
         com.hanchen.veritycustomapi.ride.PerchRideState.clear();

@@ -165,4 +165,56 @@ public final class PromptInjections {
             return;
         }
     }
+
+    /**
+     * 本地工具（感知 / 采集 / 长任务）的能力说明。
+     *
+     * <p>和联网搜索同一个道理：光把工具塞进 tools 数组，模型大概率仍然按
+     * 「我是个游戏角色，看不到也碰不到世界」这个自我认知作答，工具在、但从不调用。
+     * 必须明确写出「你能看、能动手、这些情况该用」，而且要放在最前面强调。
+     *
+     * <p>文案里刻意写了「先看再答」——这是最容易被模型忽略的一环：
+     * 它会直接编一个「附近应该有铁矿」出来，而不是真的去 scan_area。
+     */
+    public static void injectLocalToolsGuidance(JsonObject bodyJson) {
+        if (!bodyJson.has("messages") || !bodyJson.get("messages").isJsonArray()) return;
+        // 总开关关掉时工具根本没注入，再说「你能动手」只会让模型编造「我已经挖了」。
+        if (!com.hanchen.veritycustomapi.config.ModConfig.localToolsEnabled()) return;
+
+        boolean canEditWorld = com.hanchen.veritycustomapi.config.ModConfig.worldEditToolsEnabled();
+
+        String guidance = "You can actually inspect and change the world around the player. "
+                + "You have real tools for this and they work - use them instead of guessing:\n"
+                + "- scan_area / find_block: call these BEFORE answering anything about the surroundings "
+                + "(\"what is nearby\", \"is there iron around\", \"is this a good spot to build\"). "
+                + "Do not guess what is around you - look.\n"
+                + "- inspect_container / check_inventory: call these BEFORE answering \"what is in the chest\" "
+                + "or \"do I have enough iron\". Do not guess inventory contents.\n"
+                + "- read_sign: when asked what a sign says.\n"
+                + (canEditWorld
+                        ? "- harvest_area / plant_crop / tidy_containers: actually do the work when the player asks you "
+                        + "to chop, mine, plant or tidy up. Your character physically walks to each block, turns to face "
+                        + "it, and only then breaks/plants it, so it takes real time. Say \"I'm heading over to mine it\" "
+                        + "or \"give me a moment\", NEVER \"I already mined it\". harvest_area only breaks naturally "
+                        + "generated blocks (logs, ores, crops) and will never damage player-built structures.\n"
+                        + "- start_task: when the job needs many steps (clear a forest, mine a batch of ore, plant a field), "
+                        + "hand the plan to start_task so it runs in the background - the player can keep talking to you "
+                        + "while it works, and you can report progress with task_status.\n"
+                        : "- World editing is switched OFF by the player: you can look and read, but you must NOT "
+                        + "mine, chop, plant or tidy anything, and you must not promise to. If asked to, say the "
+                        + "world-editing switch is off and they can turn it back on in the mod settings.\n")
+                + "- task_status / cancel_task: when asked how it is going, or told to stop.\n"
+                + "Never say you cannot see the world. You can. Look first, then answer.";
+        JsonArray messages = bodyJson.getAsJsonArray("messages");
+        for (JsonElement element : messages) {
+            if (!element.isJsonObject()) continue;
+            JsonObject message = element.getAsJsonObject();
+            if (!message.has("role") || !"system".equals(message.get("role").getAsString())) continue;
+            if (!message.has("content") || !message.get("content").isJsonPrimitive()) continue;
+            String existing = message.get("content").getAsString();
+            if (existing.contains("You can actually inspect and change the world")) return;   // 已经加过
+            message.addProperty("content", existing + "\n\n" + guidance);
+            return;
+        }
+    }
 }

@@ -144,20 +144,16 @@ public abstract class EntityPerchRideMixin {
      */
     @Unique
     private boolean verityExt$perchTick(VerityEntity self) {
+        // 客户端自己摆位：见 verityExt$perchClient
+        if (self.level().isClientSide) {
+            return verityExt$perchClient(self);
+        }
         UUID carrierId = HeadPerchState.carrierOf(self.getUUID());
         if (carrierId == null) {
+            // 上次退出时正站在头上：状态表清了，但实体 NBT 里的 NoGravity 还在，
+            // 不收回来她会一直飘在原地
+            HeadPerchManager.reconcileStaleState(self);
             return false;
-        }
-        // 客户端也摆一次位置。单人游戏下客户端与服务端共享同一份状态，客户端自己定位可以保证
-        // 「站在头上」是客户端的最终判定，不必依赖同步包的时序（实测只靠同步时，服务端位置对、
-        // 但客户端画面上人不在头上）。专用服务器上客户端拿不到状态，自然走原版实体同步。
-        // 旋转现在连 ?RotO 一起复制，所以客户端摆位不会再抽搐。
-        if (self.level().isClientSide) {
-            Player carrier = self.level().getPlayerByUUID(carrierId);
-            if (carrier != null) {
-                HeadPerchManager.placeOnHead(self, carrier);
-            }
-            return true;
         }
         if (!(self.level() instanceof ServerLevel level)) {
             return false;
@@ -179,6 +175,40 @@ public abstract class EntityPerchRideMixin {
     @Unique
     private static String fmt(double value) {
         return String.format("%.2f", value);
+    }
+
+    /**
+     * 客户端摆位。
+     *
+     * <p>优先用服务端同步下来的状态（{@link com.hanchen.veritycustomapi.ride.ClientPerchState}），
+     * 这样专用服务器上也能每 tick 直接贴到头顶，而不是等原版 3 tick 的位置插值——
+     * 玩家一跑，靠插值的 Verity 会明显「跟不上、往回拖」。
+     *
+     * <p>同步包还没到时回退到服务端状态表：单人游戏（集成服务器）两边同一个 JVM，
+     * 那张表就是权威，等于双保险。
+     */
+    @Unique
+    private boolean verityExt$perchClient(VerityEntity self) {
+        Player carrier = null;
+        Integer carrierEntityId = com.hanchen.veritycustomapi.ride.ClientPerchState.carrierOf(self.getId());
+        if (carrierEntityId != null) {
+            if (self.level().getEntity(carrierEntityId) instanceof Player player) {
+                carrier = player;
+            } else {
+                // 承载者不在客户端视野里（走远了/换维度），清掉这条，别每 tick 空转
+                com.hanchen.veritycustomapi.ride.ClientPerchState.set(self.getId(), -1);
+            }
+        } else {
+            UUID carrierId = HeadPerchState.carrierOf(self.getUUID());
+            if (carrierId != null) {
+                carrier = self.level().getPlayerByUUID(carrierId);
+            }
+        }
+        if (carrier == null) {
+            return false;
+        }
+        HeadPerchManager.placeOnHead(self, carrier);
+        return true;
     }
 
     /** Verity 被扛到肩上时让出坐骑关系：解除乘客/载具，恢复上台阶高度，且不向 AI 报告。 */

@@ -25,6 +25,7 @@ import varmite.verity.entity.verity.VerityEntity;
 @Mixin(value = SphereEntityRenderer.class, remap = false)
 public class SphereRendererTalkingStateMixin {
     private static final ThreadLocal<VerityEntity> VERITY_EXTENDED_ENTITY = new ThreadLocal<>();
+
     private static final ThreadLocal<Float> VERITY_EXTENDED_PARTIAL_TICK = new ThreadLocal<>();
 
     @Inject(
@@ -97,7 +98,12 @@ public class SphereRendererTalkingStateMixin {
             at = @At(
                     value = "INVOKE",
                     target = "Lvarmite/verity/entity/utils/SphereRenderHelper;renderEntityBillboard(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;Lnet/minecraft/resources/ResourceLocation;IDDDDDDFFIIIIFF)V"
-            )
+            ),
+            // 🔴 必须 require = 0：6.0.0 整活 demo（VBM 预览版）把绘制调用换成了 21 参重载，
+            // 找不到这个 18 参调用点时 Redirect 会抛 InjectionError，而 renderer 是在
+            // 注册渲染器时就被变换的 —— 直接把游戏崩在启动阶段（2026-10-31 实测）。
+            // 下面 verityExtended$applyAudioLevelVbm 负责那一版。
+            require = 0
     )
     private void verityExtended$applyAudioLevel(
             PoseStack poseStack,
@@ -129,39 +135,35 @@ public class SphereRendererTalkingStateMixin {
         float renderRoll = rollAngle;
         double renderY = entityY;
         if (entity != null) {
-            float level = VerityEntityTalkAnimator.getAudioLevel(entity.getId());
-            if (level >= 0.0F) {
-                float phase = Math.max(-1.0F, Math.min(1.0F, (stretchY - 1.0F) / 0.12F));
-                float amplitude = 0.015F + 0.165F * level;
-                renderStretchY = 1.0F + phase * amplitude;
-                renderStretchXZ = 1.0F + (1.0F - renderStretchY) * 0.5F;
-            }
             float growthScale = VerityGrowthState.getClientScale(entity);
             groundedYOffset = VerityGrowthState.getGroundedYOffset(entity);
-            if (jellyEnabled() && (entity.clientIsTalking || VerityEntityTalkAnimator.isTalking(entity.getId()))) {
-                float time = entity.tickCount + (partialTick == null ? 0.0F : partialTick);
-                double amplitude = jellyAmplitude();
-                double speed = jellySpeed();
-                double wave;
-                if (jellyChaos()) {
-                    // 鬼畜模式：三个不成比例的频率叠在一起，节奏被打散，看着像抽搐而不是呼吸
-                    speed *= 2.6D;
-                    amplitude *= 1.6D;
-                    wave = Math.sin(time * speed)
-                            + 0.65D * Math.sin(time * speed * 1.9D + 0.7D)
-                            + 0.45D * Math.sin(time * speed * 3.3D + 2.1D);
-                    renderRoll += (float) (Math.sin(time * speed * 0.8D) * 0.22D * (amplitude / 0.45D));
-                    renderY += Math.abs(Math.sin(time * speed * 1.3D)) * 0.09D * (amplitude / 0.45D);
-                } else {
-                    // 主弹 + 二次抖动，叠加后有果冻那种回弹的余韵
-                    wave = Math.sin(time * speed) + 0.35D * Math.sin(time * speed * 1.7D + 1.3D);
-                }
-                float jellyY = (float) (1.0D + wave * amplitude);
-                renderStretchY = jellyY;
-                renderStretchXZ = (float) (1.0D + (1.0D - jellyY) * jellySquash());
-            }
             renderStretchY *= growthScale;
             renderStretchXZ *= growthScale;
+
+            // 统一的「活着」动画：呼吸 / 走路 / 下落 / 落地 / 转向倾斜。
+            // 弹簧驱动（欠阻尼），所以落地会自己回弹、停下会晃两下，不需要为每个动作写曲线。
+            //
+            // 🔴 整段必须 try/catch：渲染线程里抛异常 = 这个实体这一帧画不出来，
+            // 玩家看到的就是「球体隐身」。任何异常都退回原版参数，宁可不动也不能消失。
+            try {
+                com.hanchen.veritycustomapi.client.BallAnimator.Pose alive =
+                        com.hanchen.veritycustomapi.client.BallAnimator.sample(
+                                entity,
+                                partialTick == null ? 0.0F : partialTick,
+                                viewerX, viewerY, viewerZ);
+                if (alive != null
+                        && Float.isFinite(alive.stretchY) && alive.stretchY > 0.1F
+                        && Float.isFinite(alive.stretchXZ) && alive.stretchXZ > 0.1F
+                        && Float.isFinite(alive.rollAdd)
+                        && Double.isFinite(alive.yOffset)) {
+                    renderStretchY *= alive.stretchY;
+                    renderStretchXZ *= alive.stretchXZ;
+                    renderRoll += alive.rollAdd;
+                    renderY += alive.yOffset;
+                }
+            } catch (Throwable ignored) {
+                // 动画出问题不能影响渲染本身
+            }
         }
         poseStack.pushPose();
         poseStack.translate(0.0D, groundedYOffset, 0.0D);
@@ -189,6 +191,50 @@ public class SphereRendererTalkingStateMixin {
                 bodyYaw
         );
         poseStack.popPose();
+    }
+
+    /**
+     * 6.0.0 整活 demo（VBM 预览版）的绘制调用：多了一个 float（压扁相关）和结尾的 F,I,F。
+     *
+     * <p>这里把前 12 个参数原样转给 18 参重载，多出来的三个（压扁/贴脸用的）不参与——
+     * 扩展的语音弹动、体型缩放、Q 弹、摸头缩放因此在这一版上仍然生效。
+     * 基础版没有这个调用点，{@code require = 0} 会让它安静跳过。
+     */
+    @Redirect(
+            method = "render(Lvarmite/verity/entity/verity/VerityEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lvarmite/verity/entity/utils/SphereRenderHelper;renderEntityBillboard(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;Lnet/minecraft/resources/ResourceLocation;IDDDDDDFFFIIIIFFFIF)V"
+            ),
+            require = 0
+    )
+    private void verityExtended$applyAudioLevelVbm(
+            PoseStack poseStack,
+            MultiBufferSource bufferSource,
+            ResourceLocation texture,
+            int packedLight,
+            double entityX,
+            double entityY,
+            double entityZ,
+            double viewerX,
+            double viewerY,
+            double viewerZ,
+            float stretchY,
+            float stretchXZ,
+            float flatExtra,
+            int red,
+            int green,
+            int blue,
+            int alpha,
+            float rollAngle,
+            float bodyYaw,
+            float extraFloat,
+            int extraInt,
+            float extraFloat2
+    ) {
+        verityExtended$applyAudioLevel(poseStack, bufferSource, texture, packedLight,
+                entityX, entityY, entityZ, viewerX, viewerY, viewerZ,
+                stretchY, stretchXZ, red, green, blue, alpha, rollAngle, bodyYaw);
     }
 
     /** Q弹总开关；配置没加载出来时保持原版手感。 */

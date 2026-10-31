@@ -98,6 +98,9 @@ public final class CrossSavePursuit {
         if (!(player.level() instanceof ServerLevel level)) return;
         for (VerityDemonEntity demon : level.getEntitiesOfClass(VerityDemonEntity.class,
                 player.getBoundingBox().inflate(64.0D))) {
+            // 战斗系统召唤的「护卫恶魔」不算跨存档追击的那只：给它打标记会让玩家
+            // 下次登录就触发「恶魔追着你」，完全不是玩家想要的效果
+            if (com.hanchen.veritycustomapi.combat.MonstrousManager.isGuardian(demon)) continue;
             demon.getPersistentData().putString(TAG, player.getUUID().toString());
             entry.demon = demon.getUUID().toString();
             return;

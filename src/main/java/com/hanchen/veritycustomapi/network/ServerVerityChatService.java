@@ -40,6 +40,9 @@ public final class ServerVerityChatService {
         ServerPlayer player = event.getPlayer();
         // 管理员临时禁言：直接拦掉，不回复也不扣额度
         if (ServerAdminState.isMuted(player.getUUID())) return true;
+        // 登记「当前对话的玩家」：代理层执行本地工具（扫描方块/采集/跑任务）时
+        // 只能靠这个知道该在谁身边做事——HTTP 请求体里没有玩家身份。
+        com.hanchen.veritycustomapi.ai.LocalToolContext.touch(player);
         VerityEntity verity = ServerVerityRegistry.findForPlayer(player);
         if (verity == null || !verity.isAlive()) return false;
         // 玩家说"下来"这类话：本地直接解除站头/骑乘，不转发 AI、不扣额度

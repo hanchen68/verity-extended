@@ -49,6 +49,10 @@ public final class VerityChatCommand {
                         .executes(context -> setCombatAssist(context.getSource(), false)))
                 .then(Commands.literal("status")
                         .executes(context -> reportCombatAssist(context.getSource())))
+                // /verity-combat test：立刻对附近最近的活体目标召唤一次恶魔替身。
+                // 用来把「触发链路」和「召唤链路」分开——测试时不用真等被打死。
+                .then(Commands.literal("test")
+                        .executes(context -> testAwaken(context.getSource())))
                 .executes(context -> reportCombatAssist(context.getSource())));
         // 清空上下文：/verity-context clear | restore | status
         // 用途是兜底「历史被污染导致上游 400」——最典型的就是
@@ -101,6 +105,52 @@ public final class VerityChatCommand {
     private static int reportCombatAssist(CommandSourceStack source) {
         boolean enabled = com.hanchen.veritycustomapi.combat.CombatAuraManager.combatAssistEnabled;
         source.sendSuccess(() -> Component.literal("自动护主：" + (enabled ? "开启" : "关闭")), false);
+
+        // 觉醒状态：开关 / 是否已召唤 / 冷却，排查「为什么没生效」时一眼能看出卡在哪
+        boolean awakening = com.hanchen.veritycustomapi.config.ModConfig.VERITY_DEMON_AWAKENING.get();
+        ServerPlayer player = source.getPlayer();
+        boolean active = player != null
+                && com.hanchen.veritycustomapi.combat.MonstrousManager.isAwakened(player.getUUID());
+        String state = !awakening ? "已关闭" : active ? "已召唤恶魔替身" : "待触发";
+        source.sendSuccess(() -> Component.literal("残血深渊觉醒：" + state
+                + "（触发条件：被最大生命 ≥200 的 Boss 打中，或血量 ≤40% 时被 ≥100 的精英打中）"), false);
+        return 1;
+    }
+
+    /** 处理 /verity-combat test：手动触发一次觉醒，用于排查「到底卡在哪一步」。 */
+    private static int testAwaken(CommandSourceStack source) {
+        ServerPlayer player = source.getPlayer();
+        if (player == null) {
+            source.sendFailure(Component.literal("这个指令只能由玩家执行"));
+            return 0;
+        }
+        varmite.verity.entity.verity.VerityEntity verity =                com.hanchen.veritycustomapi.network.ServerVerityRegistry.findForPlayer(player);
+        if (verity == null) {
+            source.sendFailure(Component.literal("§c找不到你的 Verity（同维度内没有活着的实体）"));
+            return 0;
+        }
+        net.minecraft.world.entity.LivingEntity target = player.level()
+                .getEntitiesOfClass(net.minecraft.world.entity.LivingEntity.class,
+                        player.getBoundingBox().inflate(16.0D),
+                        entity -> entity != player && entity != verity && entity.isAlive()
+                                && !(entity instanceof ServerPlayer))
+                .stream()
+                .min(java.util.Comparator.comparingDouble(player::distanceToSqr))
+                .orElse(null);
+        if (target == null) {
+            source.sendFailure(Component.literal("§c附近 16 格内没有可作为目标的活动实体，先放一只怪再试"));
+            return 0;
+        }
+        boolean ok = com.hanchen.veritycustomapi.combat.MonstrousManager
+                .transform(player, verity, target);
+        if (ok) {
+            source.sendSuccess(() -> Component.literal("§a觉醒已触发（测试）：恶魔已对 "
+                    + target.getName().getString() + " 召唤"), false);
+        } else {
+            source.sendSuccess(() -> Component.literal(
+                    "§c没有触发，看日志里的 [觉醒] 行——会写清是开关关了、拿不到主人 UUID、"
+                            + "还是已在冷却/已觉醒"), false);
+        }
         return 1;
     }
 

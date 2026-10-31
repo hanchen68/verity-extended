@@ -27,12 +27,22 @@ public final class HeadPerchManager {
     private static final double MAX_DISTANCE_SQR = 36.0D;
     private static final long MOUNT_REPORT_INTERVAL_TICKS = 20L;
 
+    /**
+     * 实体 NBT 标记：这只 Verity 正被我们挂在玩家头上。
+     *
+     * <p>用来解决「退出游戏时正站在头上」的残留：{@code HeadPerchState} 只是内存表，
+     * 关服时清空；但 {@code NoGravity} 是实体 NBT 字段，会跟着存档留下来。
+     * 下次进世界状态表里没有它，就再也不会有人把重力还回去——Verity 会一直飘在原地。
+     */
+    private static final String PERCH_TAG = "verity_ext_perched";
+
     private HeadPerchManager() {
     }
 
     public enum RefuseReason {
         DISABLED("头上陪伴功能没开启哦"),
         SHOULDER("我现在正被扛在肩上呢，先让我下来吧"),
+        FLAT("我现在被压成一张饼了，站不住……等我鼓回来再说"),
         DEMON("我现在是恶魔形态，没法站到你头上"),
         PLEADING("别、别过来……我现在不想靠近你"),
         NOT_OWNER("我只站主人的头上"),
@@ -107,7 +117,11 @@ public final class HeadPerchManager {
         }
 
         HeadPerchState.perch(verity.getUUID(), player.getUUID());
+        // 打上持久标记，退出游戏后靠它把残留的重力关掉状态收回来
+        verity.getPersistentData().putBoolean(PERCH_TAG, true);
         placeOnHead(verity, player);
+        // 通知客户端自己摆位：专用服务器上只靠位置同步会滞后 3 tick，跑起来像跟不上
+        com.hanchen.veritycustomapi.network.HeadPerchNetwork.broadcastPerch(verity.getId(), player.getId());
         com.hanchen.veritycustomapi.OllamaProxyMod.LOGGER.info(
                 "【站头】已站上 {}（不占乘客位，由每帧定位跟随）", player.getScoreboardName());
         feedback(player, "● Verity 跳到了你头上，再按一次即可下来", ChatFormatting.GREEN);
@@ -148,6 +162,8 @@ public final class HeadPerchManager {
         HeadPerchState.release(verity.getUUID());
         verity.setNoGravity(false);
         verity.noPhysics = false;
+        verity.getPersistentData().remove(PERCH_TAG);
+        com.hanchen.veritycustomapi.network.HeadPerchNetwork.broadcastPerch(verity.getId(), -1);
         if (player != null) {
             feedback(player, message, ChatFormatting.GREEN);
         }
@@ -163,10 +179,30 @@ public final class HeadPerchManager {
         HeadPerchState.release(verity.getUUID());
         verity.setNoGravity(false);
         verity.noPhysics = false;
+        verity.getPersistentData().remove(PERCH_TAG);
+        com.hanchen.veritycustomapi.network.HeadPerchNetwork.broadcastPerch(verity.getId(), -1);
         // 静默解除原来是完全不记日志的，出了问题只能靠猜；现在记一笔，
         // 区分「玩家按 H 主动下来」和「系统被动解除」
         com.hanchen.veritycustomapi.OllamaProxyMod.LOGGER.info(
                 "【站头】被动解除（实体消失/死亡/换维度）：verity={}", verity.getId());
+    }
+
+    /**
+     * 自愈：上次退出时正站在头上，状态表已经没了，但实体 NBT 里的 {@code NoGravity} 还在。
+     *
+     * <p>表现是「进世界后 Verity 悬在原地，不掉下来也不跟着走」。这里只认我们自己打的
+     * {@link #PERCH_TAG}，不会去动玩家用命令给实体设的 NoGravity。
+     */
+    public static void reconcileStaleState(VerityEntity verity) {
+        if (verity == null) return;
+        if (!verity.isNoGravity()) return;
+        if (!verity.getPersistentData().getBoolean(PERCH_TAG)) return;
+        verity.setNoGravity(false);
+        verity.noPhysics = false;
+        verity.setDeltaMovement(Vec3.ZERO);
+        verity.getPersistentData().remove(PERCH_TAG);
+        com.hanchen.veritycustomapi.OllamaProxyMod.LOGGER.info(
+                "【站头】清理上次退出残留的重力关闭状态：verity={}", verity.getId());
     }
 
     /** 成功站上之后才向 AI 报告；并登记回复扫描。 */
@@ -204,6 +240,8 @@ public final class HeadPerchManager {
 
     private static RefuseReason evaluate(VerityEntity verity, ServerPlayer player) {
         if (VerityShoulderCarry.isCarried(verity)) return RefuseReason.SHOULDER;
+        // VBM 预览版：被压成饼的时候别把她挂到头上（只有这一版有 isFlat）
+        if (com.hanchen.veritycustomapi.compat.VbmCompat.isFlat(verity)) return RefuseReason.FLAT;
         if (verity.isMonstrous()) return RefuseReason.DEMON;
         if (verity.pleadingTimer >= 0) return RefuseReason.PLEADING;
         if (Boolean.TRUE.equals(ModConfig.SERVER_VERITY_RIDE_OWNER_ONLY.get())) {

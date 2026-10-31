@@ -20,7 +20,8 @@ import java.util.function.Supplier;
 
 /** 骑乘类请求的通道，按键和右键都发这里，判定统一在服务端做。 */
 public final class HeadPerchNetwork {
-    private static final String PROTOCOL = "2";
+    /** 协议版本：3 = 增加「站头状态同步」下行包（2 时代没有，旧客户端会解不出 id 1）。 */
+    private static final String PROTOCOL = "3";
     private static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(OllamaProxyMod.MOD_ID, "head_perch"),
             () -> PROTOCOL, PROTOCOL::equals, PROTOCOL::equals);
@@ -35,7 +36,55 @@ public final class HeadPerchNetwork {
                 HeadPerchPayload::write, HeadPerchPayload::read,
                 HeadPerchNetwork::handlePayload,
                 Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(1, PerchSyncPayload.class,
+                PerchSyncPayload::write, PerchSyncPayload::read,
+                HeadPerchNetwork::handlePerchSync,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(2, GuardianSyncPayload.class,
+                GuardianSyncPayload::write, GuardianSyncPayload::read,
+                HeadPerchNetwork::handleGuardianSync,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
         registered = true;
+    }
+
+    /**
+     * 广播站头状态：{@code carrierId < 0} 表示下来了。
+     *
+     * <p>失败不该影响站头本身（单人/通道还没注册时会抛），所以整体吞异常。
+     */
+    public static void broadcastPerch(int verityId, int carrierId) {
+        try {
+            if (!registered) return;
+            CHANNEL.send(PacketDistributor.ALL.noArg(), new PerchSyncPayload(verityId, carrierId));
+        } catch (Throwable ignored) {
+            // 同步只是让客户端跟手；丢了就退回「按位置同步跟随」
+        }
+    }
+
+    /** 广播「这只实体是/不是替身」。失败不影响召唤本身。 */
+    public static void broadcastGuardian(int entityId, boolean guardian) {
+        try {
+            if (!registered) return;
+            CHANNEL.send(PacketDistributor.ALL.noArg(), new GuardianSyncPayload(entityId, guardian));
+        } catch (Throwable ignored) {
+            // 丢了就退回「按自定义名判断」的兜底
+        }
+    }
+
+    private static void handleGuardianSync(GuardianSyncPayload payload, Supplier<NetworkEvent.Context> supplier) {
+        NetworkEvent.Context context = supplier.get();
+        context.enqueueWork(() ->
+                com.hanchen.veritycustomapi.combat.GuardianRegistry
+                        .set(payload.entityId(), payload.guardian()));
+        context.setPacketHandled(true);
+    }
+
+    private static void handlePerchSync(PerchSyncPayload payload, Supplier<NetworkEvent.Context> supplier) {
+        NetworkEvent.Context context = supplier.get();
+        context.enqueueWork(() ->
+                com.hanchen.veritycustomapi.ride.ClientPerchState
+                        .set(payload.verityId(), payload.carrierId()));
+        context.setPacketHandled(true);
     }
 
     public static void sendToggle() {

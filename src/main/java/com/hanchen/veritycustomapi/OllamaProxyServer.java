@@ -520,6 +520,16 @@ public class OllamaProxyServer {
                     return;
                 }
 
+                // 本地工具（感知世界 / 采集 / 长任务）和 web_search 是同一个道理：
+                // 必须抢在 processResponse 之前拦下，否则 tool_calls 会被透传给 Verity，
+                // 而原版根本不认识这些工具名，玩家只会看到「工具没有响应」。
+                String localToolAnswer = answerLocalToolBeforeProcess(result.body(), processedRequestBody,
+                        explicitBuildingRequest, routes, billingRequestId, pendingSettlements);
+                if (localToolAnswer != null) {
+                    result = new AttemptResult(result.route(), 200, localToolAnswer,
+                            null, result.settlements());
+                }
+
                 // 联网搜索必须抢在 processResponse 之前：processResponse 一看到 tool_calls
                 // 就「原样透传给 Verity」，而 Verity 不认识我们注入的 web_search，
                 // 会把调用丢掉——玩家看到的就是「工具没有响应」。
@@ -1099,6 +1109,7 @@ public class OllamaProxyServer {
             applyInjection("玩家状态", () -> injectPlayerStateContext(bodyJson));
             applyInjection("联网搜索预告发", () -> injectWebSearchContext(bodyJson));
             applyInjection("联网搜索工具", () -> injectWebSearchTool(bodyJson));
+            applyInjection("本地工具", () -> injectLocalTools(bodyJson));
             applyInjection("建造协议", () -> injectBuildingContext(bodyJson));
             applyInjection("双语字幕", () -> injectBilingualSpeechRequirement(bodyJson));
             applyInjection("视觉技能", () -> injectCameraSkillRule(bodyJson));
@@ -1607,8 +1618,239 @@ public class OllamaProxyServer {
             }
         }
 
+        /**
+         * 注入本地工具：感知世界、采集劳作、长任务。
+         *
+         * <p>和联网搜索不同，这批工具**不受搜索开关影响**——它们不产生任何外部请求，
+         * 纯粹读写玩家自己的存档，开着永远安全。
+         *
+         * <p>注入是幂等的：同一份请求体重复处理时不会把工具清单撑大。
+         */
+        private void injectLocalTools(JsonObject bodyJson) {
+            // 总开关关掉：schema 和引导都不注入。留一半（有引导没工具 / 有工具不能用）
+            // 只会让模型编出「我已经挖好了」这种话。
+            if (!com.hanchen.veritycustomapi.config.ModConfig.localToolsEnabled()) return;
+            if (!bodyJson.has("tools")) {
+                bodyJson.add("tools", new JsonArray());
+            }
+            if (!bodyJson.get("tools").isJsonArray()) return;
+            JsonArray tools = bodyJson.getAsJsonArray("tools");
+
+            for (JsonElement element : tools) {
+                if (element.isJsonObject()
+                        && com.hanchen.veritycustomapi.ai.LocalTools
+                                .isLocalTool(toolNameOf(element.getAsJsonObject()))) {
+                    return;
+                }
+            }
+
+            int before = tools.size();
+            com.hanchen.veritycustomapi.ai.LocalTools.injectSchemas(tools);
+            LOGGER.debug("[本地工具] 已注入 {} 个（工具总数 {}）", tools.size() - before, tools.size());
+
+            // 光有工具不够：模型不认为「自己能看到世界」时，工具在也从不调用。
+            // 和联网搜索一样，必须显式告诉它「你能看、能动手、先看再答」。
+            com.hanchen.veritycustomapi.proxy.PromptInjections.injectLocalToolsGuidance(bodyJson);
+        }
+
         /** 一次 web_search 工具调用的关键信息。 */
         private record WebSearchCall(String id, String query, JsonObject toolCall) {
+        }
+
+        // ==================================================================
+        // 本地工具：感知世界 / 采集 / 长任务
+        //
+        // 和 web_search 走同一套「拦截 → 本地执行 → 回填 → 二次请求」，
+        // 区别只是执行体换成了 LocalTools，而且二次请求里要把**整组**本地工具都摘掉
+        // （模型看到工具还在就会一直点名，每轮多烧一次额度）。
+        // ==================================================================
+
+        /** 一次本地工具调用的关键信息。 */
+        private record LocalToolCall(String id, String tool, JsonObject args, JsonObject toolCall) {
+        }
+
+        /**
+         * 从响应里挑出**所有**本地工具调用。
+         *
+         * <p>为什么是「所有」而不是第一个：模型经常在一条回复里并发调用多个工具
+         * （「把树砍了，顺便挖点铁」→ {@code harvest_area} × 2）。只执行第一个的话，
+         * 另一半请求会静默消失——玩家看到的是一半的活干完了，另一半它当没听见。
+         *
+         * <p>刻意排除 {@code web_search}：它有自己的通道（要真联网、有独立的兜底话术），
+         * 两条路混在一起会让错误处理变得含混。
+         */
+        private List<LocalToolCall> findLocalToolCalls(String response) {
+            List<LocalToolCall> found = new ArrayList<>();
+            try {
+                JsonObject root = GSON.fromJson(response, JsonObject.class);
+                if (root == null || !root.has("choices") || !root.get("choices").isJsonArray()) return found;
+                JsonArray choices = root.getAsJsonArray("choices");
+                if (choices.isEmpty()) return found;
+                JsonObject message = choices.get(0).getAsJsonObject().getAsJsonObject("message");
+                if (message == null || !message.has("tool_calls")
+                        || !message.get("tool_calls").isJsonArray()) return found;
+
+                for (JsonElement element : message.getAsJsonArray("tool_calls")) {
+                    if (!element.isJsonObject()) continue;
+                    JsonObject call = element.getAsJsonObject();
+                    JsonObject function = call.has("function") && call.get("function").isJsonObject()
+                            ? call.getAsJsonObject("function") : null;
+                    if (function == null) continue;
+                    String name = toolNameOf(call);
+                    if (!com.hanchen.veritycustomapi.ai.LocalTools.isLocalTool(name)) continue;
+
+                    JsonObject args = new JsonObject();
+                    if (function.has("arguments")) {
+                        JsonElement rawArgs = function.get("arguments");
+                        if (rawArgs.isJsonPrimitive()) {
+                            try {
+                                JsonElement parsed = JsonParser.parseString(rawArgs.getAsString());
+                                if (parsed.isJsonObject()) args = parsed.getAsJsonObject();
+                            } catch (Exception ignored) { Silent.ignore("OllamaProxyServer", ignored); }
+                        } else if (rawArgs.isJsonObject()) {
+                            // 少数上游直接给对象而不是字符串
+                            args = rawArgs.getAsJsonObject();
+                        }
+                    }
+                    String id = call.has("id") && call.get("id").isJsonPrimitive()
+                            ? call.get("id").getAsString() : "call_local";
+                    found.add(new LocalToolCall(id, name, args, call.deepCopy()));
+                }
+            } catch (Throwable error) {
+                LOGGER.warn("本地工具调用检测失败: {}", error.toString());
+            }
+            return found;
+        }
+
+        /** 本地工具最多允许几轮连续调用（scan → find → harvest 这种链式足够用）。 */
+        private static final int MAX_LOCAL_TOOL_ROUNDS = 4;
+
+        /**
+         * 本地工具拦截：执行 → 回填 → 让模型带着结果继续答，**支持多轮链式调用**。
+         *
+         * <p>为什么必须多轮：实测（2026-10-28）模型经常先 scan_area、再 find_block、
+         * 最后 harvest_area。只支持一轮时，第二轮的调用会被当成「幻觉」拦掉，
+         * 退化成把原始数据直接甩给玩家——这就是玩家看到的「输出不该输出的东西」。
+         *
+         * <p>没命中任何本地工具时返回 {@code null}，调用方继续走原来的流程。
+         */
+        private String answerLocalToolBeforeProcess(String rawResponse, String processedRequestBody,
+                                                    boolean explicitBuildingRequest,
+                                                    List<ConfigManager.ChatRoute> routes,
+                                                    String billingRequestId,
+                                                    List<BillingSettlement> pendingSettlements) {
+            JsonObject body;
+            try {
+                body = GSON.fromJson(processedRequestBody, JsonObject.class);
+            } catch (Throwable error) {
+                return null;
+            }
+            if (body == null) return null;
+
+            String response = rawResponse;
+            boolean anyExecuted = false;
+
+            for (int round = 0; round < MAX_LOCAL_TOOL_ROUNDS; round++) {
+                List<LocalToolCall> calls = findLocalToolCalls(response);
+                if (calls.isEmpty()) break;   // 模型收敛了，这一轮的 response 就是最终回复
+
+                anyExecuted = true;
+                List<String> results = new ArrayList<>();
+                for (LocalToolCall call : calls) {
+                    String result = executeLocalToolCall(call);
+                    LOGGER.info("[本地工具] 第 {} 轮 {} 结果 {} 字符: {}", round + 1, call.tool(), result.length(),
+                            result.length() > 120 ? result.substring(0, 120) + "…" : result);
+                    results.add(result);
+                }
+
+                AttemptResult next = executeLocalToolFollowUp(body, calls, results, routes,
+                        BillingService.requestId());
+                if (next == null || next.status() >= 400 || next.error() != null) {
+                    if (next != null) {
+                        releaseSettlements(new ArrayList<>(next.settlements()), "local_tool_follow_up_failed");
+                    }
+                    LOGGER.warn("[本地工具] 第 {} 轮二次请求失败，直接回执行结果", round + 1);
+                    return buildOpenAIResponse(String.join("\n", results));
+                }
+                pendingSettlements.addAll(next.settlements());
+                response = next.body();
+            }
+
+            if (!anyExecuted) return null;
+
+            if (!findLocalToolCalls(response).isEmpty()) {
+                // 轮数用尽还在调：不再执行，但也不能把 tool_calls 透传给 Verity
+                LOGGER.warn("[本地工具] 达到 {} 轮上限仍在调用，强制收尾", MAX_LOCAL_TOOL_ROUNDS);
+                return buildOpenAIResponse("这件事要做的步骤有点多，我先停在这里。要我继续吗？");
+            }
+            return response;
+        }
+
+        /** 执行一次工具调用（含玩家上下文解析）。 */
+        private String executeLocalToolCall(LocalToolCall call) {
+            try {
+                net.minecraft.server.MinecraftServer server =
+                        net.minecraftforge.server.ServerLifecycleHooks.getCurrentServer();
+                net.minecraft.server.level.ServerPlayer player =
+                        com.hanchen.veritycustomapi.ai.LocalToolContext.current(server);
+                if (player == null) {
+                    // 代理可能比服务器先起来，或者玩家刚下线。给模型一句能读懂的话，
+                    // 别让它以为「工具坏了」然后反复重试。
+                    return "现在找不到正在对话的玩家（可能还没进世界或已经下线），这个动作没法执行。";
+                }
+                return com.hanchen.veritycustomapi.ai.LocalTools.execute(player, call.tool(), call.args());
+            } catch (Throwable error) {
+                LOGGER.warn("[本地工具] 执行异常 {}: {}", call.tool(), error.toString());
+                return "执行 " + call.tool() + " 时出错了。";
+            }
+        }
+
+        /**
+         * 组装带本地工具执行结果的 messages 重发。
+         *
+         * <p>🔴 这里**不能**把工具从 tools 里摘掉。实测（2026-10-27）摘掉之后模型会继续
+         * 点名调用——它看到历史里有 tool_calls，但 tools 里找不到定义，就产生幻觉调用，
+         * 被我们的循环守卫拦下后退化成「把原始结果直接甩给玩家」，
+         * 玩家看到的就是一大段 `半径 10 格内共 3980 个方块…` 这种数据 dump。
+         *
+         * <p>正确做法是保留工具、在 tool 结果里明确写「已经执行完了，现在用自然语言回答」。
+         * 模型对这条指令的服从度远高于「工具消失」这种隐式信号。
+         */
+        private AttemptResult executeLocalToolFollowUp(JsonObject body, List<LocalToolCall> calls,
+                                                       List<String> results, List<ConfigManager.ChatRoute> routes,
+                                                       String billingRequestId) {
+            try {
+                if (body == null || !body.has("messages") || !body.get("messages").isJsonArray()) {
+                    return null;
+                }
+
+                JsonArray messages = body.getAsJsonArray("messages");
+                JsonObject assistantEcho = new JsonObject();
+                assistantEcho.addProperty("role", "assistant");
+                assistantEcho.add("content", JsonNull.INSTANCE);
+                JsonArray echoedCalls = new JsonArray();
+                for (LocalToolCall call : calls) {
+                    echoedCalls.add(call.toolCall());
+                }
+                assistantEcho.add("tool_calls", echoedCalls);
+                messages.add(assistantEcho);
+
+                // 🔴 每个 tool_call 都必须有一条对应的 tool 消息，少一条上游直接 400。
+                for (int i = 0; i < calls.size(); i++) {
+                    LocalToolCall call = calls.get(i);
+                    String result = i < results.size() ? results.get(i) : "失败：没有拿到执行结果。";
+                    JsonObject toolResult = new JsonObject();
+                    toolResult.addProperty("role", "tool");
+                    toolResult.addProperty("tool_call_id", call.id());
+                    toolResult.addProperty("content", result
+                            + "\n\n[工具已执行完毕。请直接用自然语言把结果讲给玩家听，不要再调用任何工具。]");
+                    messages.add(toolResult);
+                }
+                return executeWithFailover(routes, GSON.toJson(body), billingRequestId);
+            } catch (Throwable error) {
+                LOGGER.warn("本地工具二次请求组装失败: {}", error.toString());
+                return null;
+            }
         }
 
         /** 构造 {"type":"object","properties":{...},"required":["query"]} */
@@ -1771,6 +2013,16 @@ public class OllamaProxyServer {
                                 // 都不能透传（原版没有这个工具，只会被丢弃）。
                                 LOGGER.warn("【格式识别】仍有未处理的 web_search 调用，改为文本兜底");
                                 return buildOpenAIResponse("联网搜索这次没整理出结果，换个说法再试一次？");
+                            }
+                            // 🔴 同样的兜底要覆盖本地工具：正常路径下它们应该已经被
+                            // answerLocalToolBeforeProcess 执行并转成自然语言了。
+                            // 走到这里说明那一层没接住（例如并发轮次用尽、或请求走了别的分支），
+                            // 一旦透传给 Verity 就会变成「工具没有响应」——玩家看到的就是
+                            // 一条莫名其妙的报错，也就是「输出了不该输出的东西」。
+                            if (hasAnyLocalToolCall(messageObj.get("tool_calls"))) {
+                                LOGGER.warn("【格式识别】仍有未执行的本地工具调用，改为文本兜底: {}",
+                                        describeToolCalls(messageObj.get("tool_calls")));
+                                return buildOpenAIResponse("我刚想动手，但这次没接上。再说一遍好吗？");
                             }
                             LOGGER.info("【格式识别】OpenAI 工具调用响应，原样透传给 Verity: {}",
                                     describeToolCalls(messageObj.get("tool_calls")));
@@ -2145,6 +2397,23 @@ public class OllamaProxyServer {
                 if (element.isJsonObject() && name.equals(toolNameOf(element.getAsJsonObject()))) {
                     return true;
                 }
+            }
+            return false;
+        }
+
+        /**
+         * 是否还有**没被执行掉**的本地工具调用。
+         *
+         * <p>正常流程里本地工具在 {@code answerLocalToolBeforeProcess} 就已经执行完并转成
+         * 自然语言了。能走到透传这一步，说明那一层没接住——这种调用必须拦下，
+         * 否则原版 Verity 不认识工具名，只会丢弃并显示「工具没有响应」。
+         */
+        private boolean hasAnyLocalToolCall(JsonElement toolCalls) {
+            if (toolCalls == null || !toolCalls.isJsonArray()) return false;
+            for (JsonElement element : toolCalls.getAsJsonArray()) {
+                if (!element.isJsonObject()) continue;
+                String name = toolNameOf(element.getAsJsonObject());
+                if (com.hanchen.veritycustomapi.ai.LocalTools.isLocalTool(name)) return true;
             }
             return false;
         }

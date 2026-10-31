@@ -442,6 +442,7 @@ public final class VerityHorrorDirector {
     private static boolean hasLoadedDemon(Minecraft minecraft) {
         for (Entity entity : minecraft.level.entitiesForRendering()) {
             if (!entity.isAlive()) continue;
+            if (com.hanchen.veritycustomapi.combat.MonstrousManager.isGuardian(entity)) continue;
             ResourceLocation id = ForgeRegistries.ENTITY_TYPES.getKey(entity.getType());
             if (id != null && "verity".equals(id.getNamespace()) && id.getPath().contains("demon")) return true;
         }
@@ -605,6 +606,9 @@ public final class VerityHorrorDirector {
 
     private static boolean isActiveDemon(Entity entity) {
         if (entity == null || !entity.isAlive()) return false;
+        // 战斗系统召唤的替身不是「恐怖事件里那只恶魔」：它不追玩家、只打 Boss，
+        // 不能让它把恐怖等级推上去（2026-10-31 用户反馈：召唤后恐怖效果被拉满）
+        if (com.hanchen.veritycustomapi.combat.MonstrousManager.isGuardian(entity)) return false;
         if (entity instanceof Mob mob && mob.isNoAi()) return false;
         ResourceLocation id = ForgeRegistries.ENTITY_TYPES.getKey(entity.getType());
         if (id != null && "verity".equals(id.getNamespace()) && id.getPath().contains("demon")) return true;

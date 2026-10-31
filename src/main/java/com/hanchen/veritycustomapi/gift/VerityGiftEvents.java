@@ -30,6 +30,10 @@ public final class VerityGiftEvents {
     public static void onItemToss(ItemTossEvent event) {
         if (!(event.getPlayer() instanceof ServerPlayer player)) return;
         if (player.level().isClientSide()) return;
+        // VBM 预览版自带 GiftService：她会自己把掉在附近的东西捡起来当礼物（有自己的冷却与毒性判定）。
+        // 我们再拦一手会把物品直接取消掉、世界里什么都看不到，而且两边各算一次好感。
+        // 这一版让位给原版：潜行 + Q 丢下的东西会真的落地，由她来捡。
+        if (com.hanchen.veritycustomapi.compat.VerityStructureDetector.hasVbmMoodSystem()) return;
         if (!player.isShiftKeyDown()) return;
         if (!Boolean.TRUE.equals(ModConfig.ALLOW_VERITY_GIFT.get())) return;
 

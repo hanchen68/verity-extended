@@ -117,6 +117,7 @@ public final class VerityStructureDetector {
         runCommandTool = null;
         refinedMemorySystem = null;
         shoulderMountSystem = null;
+        vbmMoodSystem = null;
     }
 
     private static volatile Boolean runCommandTool;
@@ -162,7 +163,6 @@ public final class VerityStructureDetector {
     }
 
     private static volatile Boolean shoulderMountSystem;
-
     /**
      * 原版是否带「把 Verity 扛在肩上」这套机制；true 时扩展的站头/骑乘必须避让。
      * 该机制不占用乘客位，判定不出来就会出现两套定位同时生效。
@@ -176,6 +176,33 @@ public final class VerityStructureDetector {
             if (in != null) detected = hasMethod(in.readAllBytes(), SHOULDER_METHOD);
         } catch (Throwable ignored) { Silent.ignore("VerityStructureDetector", ignored); }
         shoulderMountSystem = detected;
+        return detected;
+    }
+
+    /**
+     * VBM（Verity Behavior Model）预览版的主事件类。
+     *
+     * <p>只有「6.0.0 整活 demo」那种构建才有：`varmite/verity/vbm/*` 一整套
+     * 心情带（MoodBand）/ 压力（StressService）/ 好感服务（KarmaService）/
+     * 压扁与充气（FlatService）/ 捡拾送礼（GiftService）。
+     */
+    public static final String VBM_RESOURCE = "varmite/verity/vbm/VbmEvents.class";
+
+    private static volatile Boolean vbmMoodSystem;
+
+    /**
+     * 是否装了带 VBM 的预览版。
+     *
+     * <p>true 时扩展要让出重叠能力：送礼交给原版 GiftService（它会自己捡地上的东西），
+     * 压扁状态下不参与站头/骑乘（视觉上是一张饼，挂上去很怪）。
+     * 心情与好感的提示词注入原版已经自己做（{@code MoodPrompts.directive}），扩展不能重复注入。
+     */
+    public static boolean hasVbmMoodSystem() {
+        Boolean cached = vbmMoodSystem;
+        if (cached != null) return cached;
+        boolean detected = hasResource(
+                VerityStructureDetector.class.getClassLoader(), VBM_RESOURCE);
+        vbmMoodSystem = detected;
         return detected;
     }
 }

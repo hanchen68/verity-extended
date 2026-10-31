@@ -66,9 +66,10 @@ public final class VeritySupportHandler {
 
         player.getPersistentData().putLong(LAST_HELP_TAG, now);
         player.addEffect(new MobEffectInstance(MobEffects.REGENERATION, REGEN_TICKS, 0));
-        // 当作 Verity 自己说的一句话发到聊天栏：格式和「狠话」一致（`<Verity> …`），
+        // 当作 Verity 自己说的一句话发到聊天栏：格式和原版回复一致（`<名字> …`），
         // 不加颜色——上色会让 Verity 看起来像系统提示，而不是在跟你说话。
-        player.sendSystemMessage(Component.literal("<Verity> 撑住，我在。"));
+        // 名字走原版配置，玩家把 Verity 改名后 TTS 和 HUD 气泡才认得出这句。
+        com.hanchen.veritycustomapi.compat.VeritySay.to(player, "撑住，我在。");
         OllamaProxyMod.LOGGER.info("Verity 给低血量玩家上了治疗: {}（{}/{}）",
                 player.getGameProfile().getName(),
                 String.format("%.1f", player.getHealth()),

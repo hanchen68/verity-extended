@@ -33,7 +33,12 @@ public abstract class LivingEntityPerchRideMixin {
     private void verityExt$skipAiWhilePerched(CallbackInfo ci) {
         LivingEntity selfLiving = (LivingEntity) (Object) this;
         if (!(selfLiving instanceof VerityEntity self)) return;
-        if (com.hanchen.veritycustomapi.ride.HeadPerchState.isPerched(self.getUUID())) {
+        // 服务端看状态表；客户端在专用服务器上拿不到服务端那张表，看同步下来的那张。
+        // 少了客户端这一半，客户端会自己跑 aiStep，和我们每 tick 的摆位互相打架（看起来像抽搐）。
+        boolean perched = com.hanchen.veritycustomapi.ride.HeadPerchState.isPerched(self.getUUID())
+                || (selfLiving.level() != null && selfLiving.level().isClientSide
+                        && com.hanchen.veritycustomapi.ride.ClientPerchState.isPerched(self.getId()));
+        if (perched) {
             self.setDeltaMovement(Vec3.ZERO);
             ci.cancel();
             return;

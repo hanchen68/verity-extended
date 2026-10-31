@@ -90,6 +90,12 @@ public class MixinPlugin implements IMixinConfigPlugin {
                         + "双语物品搜索兼容层已跳过；给物品功能改由 give_item_by_name 提供",
                         ITEM_SEARCH_METHOD);
             }
+            // VBM 预览版（6.0.0 整活 demo）：心情/压力/好感带/压扁这一整套由原版自己管
+            if (loader.getResource("varmite/verity/vbm/VbmEvents.class") != null) {
+                OllamaProxyMod.LOGGER.info("[MixinPlugin] 检测到 VBM 预览版（整活 demo）："
+                        + "心情提示词与好感注入由原版负责，扩展不再重复；"
+                        + "送礼让位给原版 GiftService，压扁状态下不参与站头/骑乘");
+            }
         } else {
             OllamaProxyMod.LOGGER.info("[MixinPlugin] 未检测到原版 Verity 模组，皮肤 Mixin 已禁用");
         }
@@ -196,6 +202,8 @@ public class MixinPlugin implements IMixinConfigPlugin {
                 || mixinClassName.contains("VerityDemonTransformationMixin")
                 || mixinClassName.contains("VerityServerSafetyMixin")
                 || mixinClassName.contains("VerityWorldStateRestoreMixin")
+                || mixinClassName.contains("VerityEntityCombatMixin")
+                || mixinClassName.contains("GuardianDemonSoundMixin")
                 || mixinClassName.contains("ServerVerityChatMixin")
                 || mixinClassName.contains("AiManagerPrivateChatMixin")
                 || mixinClassName.contains("VerityDemonMmdMixin")

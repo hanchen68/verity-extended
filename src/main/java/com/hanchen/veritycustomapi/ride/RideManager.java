@@ -35,6 +35,7 @@ public final class RideManager {
     public enum RefuseReason {
         DISABLED("骑乘功能没开启哦"),
         SHOULDER("我现在正被扛在肩上呢，先让我下来吧"),
+        FLAT("我现在被压成一张饼了，骑不了……等我鼓回来再说"),
         DEMON("我现在是恶魔形态，不能骑"),
         PLEADING("别、别过来……我现在不想被骑"),
         NOT_OWNER("我只让主人骑"),
@@ -62,6 +63,10 @@ public final class RideManager {
         }
         if (VerityShoulderCarry.isCarried(verity)) {
             return RefuseReason.SHOULDER;
+        }
+        // VBM 预览版：压扁状态下是一张饼，不能骑
+        if (com.hanchen.veritycustomapi.compat.VbmCompat.isFlat(verity)) {
+            return RefuseReason.FLAT;
         }
         if (verity.isMonstrous()) {
             return RefuseReason.DEMON;

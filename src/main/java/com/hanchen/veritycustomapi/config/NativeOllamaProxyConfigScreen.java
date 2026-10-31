@@ -1267,6 +1267,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private void buildCategories() {
         buildCategory("概览", "概览", this::overviewCategory);
         buildCategory("对话与记忆", "对话与记忆", this::conversationCategory);
+        buildCategory("世界交互", "世界交互", this::worldToolsCategory);
         buildCategory("多人游戏设置", "多人游戏设置", this::serverSettingsCategory);
         buildCategory("语音识别", "语音识别", this::speechRecognitionCategory);
         buildCategory("语音朗读", "语音朗读", this::speechSynthesisCategory);
@@ -1692,6 +1693,12 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 ModConfig.ALLOW_VERITY_DEMON_TRANSFORMATION::get, true,
                 ModConfig.ALLOW_VERITY_DEMON_TRANSFORMATION::set);
         info("变异说明", "关闭后只会阻止之后生成的恶魔，不会移除已经存在的恶魔");
+        toggle("残血深渊觉醒（召唤恶魔替身）",
+                ModConfig.VERITY_DEMON_AWAKENING::get, true,
+                ModConfig.VERITY_DEMON_AWAKENING::set);
+        info("觉醒说明", "你被精英怪（最大生命 ≥100）且血量 ≤40% 打到，或被 Boss（≥200）打中时，"
+                + "Verity 会召唤一只 500 血 / 20 攻的恶魔替你顶上去，并给你 3 秒抗性提升 5 级 + 瞬间治疗。"
+                + "恶魔单次最多吃 10 点伤害；你可以亲手把它杀掉，触发原版「解放了黑暗」剧情。");
         toggle("允许踢出或崩溃玩家",
                 () -> OriginalVerityConfigSync.getGeneralBoolean("canCrash", true), true,
                 v -> OriginalVerityConfigSync.queueGeneralBoolean("canCrash", v));
@@ -1704,6 +1711,35 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         toggle("允许杀死村民",
                 () -> OriginalVerityConfigSync.getGeneralBoolean("killVillagers", true), true,
                 v -> OriginalVerityConfigSync.queueGeneralBoolean("killVillagers", v));
+    }
+
+    /**
+     * 「世界交互」：本地工具的两把闸。
+     *
+     * <p>单独开一个侧栏分类，不要塞进「对话与记忆」——那里已经有 人设 / 记忆 / 搜索 三大段，
+     * 玩家找「AI 能不能动我的方块」时不会想到去对话设置里翻。
+     */
+    private void worldToolsCategory() {
+        category("世界交互", "Verity 能不能看、能不能动你的世界", "世界交互");
+
+        section("总开关");
+        toggle("允许 Verity 读写你的世界", ModConfig.AI_LOCAL_TOOLS_ENABLED::get, true,
+                ModConfig.AI_LOCAL_TOOLS_ENABLED::set);
+        info("说明", "关掉后这 11 个本地工具完全不注入模型，Verity 回到只能聊天的状态；"
+                + "开着才能扫描方块、找方块、读箱子、看背包、读告示牌。");
+
+        if (ModConfig.AI_LOCAL_TOOLS_ENABLED.get()) {
+            section("改动世界");
+            toggle("允许采集 / 种植 / 整理", ModConfig.AI_WORLD_EDIT_ENABLED::get, true,
+                    ModConfig.AI_WORLD_EDIT_ENABLED::set);
+            info("关掉之后", "只保留只读能力，Verity 不会动任何方块，也不会再主动问「要我挖吗」。");
+        }
+
+        section("能力边界");
+        info("只读能力", "扫描周围方块、找最近的目标方块、读箱子/熔炉内容、看你的背包、读告示牌——都没有副作用。");
+        info("改动能力", "采集只认自然方块（原木 / 树叶 / 矿石 / 作物），种植只认耕地，"
+                + "整理只认箱子 / 木桶 / 潜影盒；范围 16 格、单次最多 128 个。");
+        info("长任务", "一句话拆成多步交给后台，每 tick 只做一步；单任务最多 200 步 / 10 分钟，你下线会自动取消。");
     }
 
     private void aiChatCategory() {

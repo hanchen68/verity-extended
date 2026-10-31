@@ -145,7 +145,13 @@ public class ModConfig {
     public static final ForgeConfigSpec.ConfigValue<String> WEB_SEARCH_CUSTOM_HEADERS;
     public static final ForgeConfigSpec.ConfigValue<String> WEB_SEARCH_CUSTOM_RESULTS;
     public static final ForgeConfigSpec.ConfigValue<String> WEB_SEARCH_CUSTOM_FIELDS;
+    /** 本地工具总开关：关掉后这 11 个工具完全不注入模型。 */
+    public static final ForgeConfigSpec.BooleanValue AI_LOCAL_TOOLS_ENABLED;
+    /** 允许本地工具改动世界（采集 / 种植 / 整理箱子）。 */
+    public static final ForgeConfigSpec.BooleanValue AI_WORLD_EDIT_ENABLED;
     public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_DEMON_TRANSFORMATION;
+    /** 残血深渊觉醒：主人快死时召唤恶魔替身。 */
+    public static final ForgeConfigSpec.BooleanValue VERITY_DEMON_AWAKENING;
     public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_GIFT;
     public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_KICK;
     public static final ForgeConfigSpec.BooleanValue CROSS_SAVE_PURSUIT;
@@ -609,6 +615,17 @@ public class ModConfig {
         builder.pop();
 
         builder.push("ai_extensions");
+        // 本地工具（读写世界）的两个开关放在最前面：这是「AI 能碰我存档」的总闸，
+        // 找不到开关比功能不够用更让人不安。
+        AI_LOCAL_TOOLS_ENABLED = builder
+                .comment("让 Verity 能真正读写你的世界：扫描方块、读箱子、采集、种植、整理、跑长任务。",
+                        "关掉后这 11 个本地工具完全不注入模型，Verity 回到「只能聊天」的状态。")
+                .define("localToolsEnabled", true);
+        AI_WORLD_EDIT_ENABLED = builder
+                .comment("允许本地工具改动世界（采集 / 种植 / 整理箱子）。",
+                        "关掉后只保留只读能力（扫描、找方块、读容器、看背包、读告示牌），",
+                        "Verity 不会再动任何方块——但采集/种植/整理的请求会直接回一句「这个开关关着」。")
+                .define("worldEditEnabled", true);
         MEMORY_ENABLED = builder
                 .define("memoryEnabled", true);
         MEMORY_RETRIEVAL_ENABLED = builder
@@ -676,6 +693,11 @@ public class ModConfig {
         builder.push("gameplay_safety");
         ALLOW_VERITY_DEMON_TRANSFORMATION = builder
                 .define("allowVerityDemonTransformation", true);
+        VERITY_DEMON_AWAKENING = builder
+                .comment("残血深渊觉醒：主人被精英怪（最大生命 ≥100）且血量 ≤40% 时，或被 Boss（≥200）打到时，",
+                        "Verity 召唤一只 500 血 / 20 攻的恶魔替身顶上去，并给主人 3 秒抗性提升 5 级 + 瞬间治疗。",
+                        "恶魔单次最多吃 10 点伤害；玩家可以亲手把它杀掉，触发原版的「解放了黑暗」剧情。")
+                .define("verityDemonAwakening", true);
         ALLOW_VERITY_GIFT = builder
                 .comment("允许玩家潜行 + 丢弃物品（Q）对准 Verity 送礼：每次消耗 1 个，30 秒冷却，好感度 +1")
                 .define("allowVerityGift", true);
@@ -925,5 +947,29 @@ public class ModConfig {
 
         COMMON_SPEC = builder.build();
         CLIENT_SPEC = clientBuilder.build();
+    }
+
+    /**
+     * 本地工具总开关。
+     *
+     * <p>配置还没加载时按「开」处理：代理线程和自检入口可能早于配置就绪，
+     * 抛异常会让「默认行为」变成「全关」，那不是用户想要的。
+     */
+    public static boolean localToolsEnabled() {
+        try {
+            return AI_LOCAL_TOOLS_ENABLED.get();
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    /** 允许本地工具改动世界；总开关关掉时一并返回 false。 */
+    public static boolean worldEditToolsEnabled() {
+        if (!localToolsEnabled()) return false;
+        try {
+            return AI_WORLD_EDIT_ENABLED.get();
+        } catch (Throwable ignored) {
+            return true;
+        }
     }
 }

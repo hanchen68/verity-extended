@@ -66,6 +66,9 @@ public class VerityWanderGoal extends Goal {
         // （见 LivingEntityPerchRideMixin 对 travel 的接管），
         // 这时候再让 goal 去 moveTo，两边会抢同一个实体的位移。
         if (verity.isVehicle() || verity.getControllingPassenger() != null) return false;
+        // 🔴 正在采集中：导航器只有一个目标，溜达会把采集的 moveTo 覆盖掉，
+        // 表现是「它走到一半突然跑去别处，然后采集卡住」。
+        if (com.hanchen.veritycustomapi.behavior.VerityMiningJob.isBusyFor(verity)) return false;
         // 有活着的目标 = 在打架，别溜达
         if (verity.getTarget() != null && verity.getTarget().isAlive()) return false;
         if (verity instanceof VerityEntity self) {

@@ -14,7 +14,7 @@ public final class CloudProtocolTest {
     public static void main(String[] args) {
         // 版本号变更的「绊线」：改 build.gradle / FALLBACK_VERSION 时这里会失败，
         // 提醒同步确认云端协议（mod_version 上报）也要一起发布。
-        require("5.0".equals(CloudConfigFetcher.modVersion()), "cloud request mod version is stale");
+        require("5.1".equals(CloudConfigFetcher.modVersion()), "cloud request mod version is stale");
         // 配对失败时**必须**把服务端那句话带出来。曾经非 200 直接把 body 丢掉，
         // 玩家只看到「配对失败（HTTP 400）」，而真正的原因是「配对码格式无效」（长度不是 6 位）。
         require("配对码格式无效".equals(CloudConfigFetcher.extractServerMessage(

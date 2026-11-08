@@ -95,7 +95,8 @@ public final class CloudOverridesTest {
         // 2026-10-31 加 ai_extensions.localToolsEnabled（本地工具总开关）= 188
         // 2026-10-31 加 ai_extensions.worldEditEnabled（允许改动世界）= 189
         // 2026-10-31 加 gameplay_safety.verityDemonAwakening（残血深渊觉醒）= 190
-        require(overridable.size() == 190, "配置项总数变了（期望 190，实际 " + overridable.size() + "）");
+        // 2026-11-08 加 story.storyModeEnabled（剧情模式，归档默认关闭）= 191
+        require(overridable.size() == 191, "配置项总数变了（期望 191，实际 " + overridable.size() + "）");
 
         // cloud.* 是唯一被硬禁的一段，其余全部可下发
         int forbidden = 0;

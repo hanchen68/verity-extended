@@ -9,6 +9,19 @@ public final class BilingualSpeechTextTest {
     }
 
     public static void main(String[] args) throws Exception {
+        // 朗读语言判定：双语说话的是英文，必须按英文算。
+        // 曾经传 ZH，导致「朗读语言=中文」时 needsTranslation(ZH,ZH)=false，
+        // 那句英文被直接送进中文音色 —— 玩家听到的就是「双语语音时好时坏」。
+        assertTrue(com.hanchen.veritycustomapi.voice.VoiceTranslator.needsTranslation(
+                com.hanchen.veritycustomapi.voice.VoiceLanguage.EN,
+                com.hanchen.veritycustomapi.voice.VoiceLanguage.ZH));
+        assertFalse(com.hanchen.veritycustomapi.voice.VoiceTranslator.needsTranslation(
+                com.hanchen.veritycustomapi.voice.VoiceLanguage.EN,
+                com.hanchen.veritycustomapi.voice.VoiceLanguage.EN));
+        assertFalse(com.hanchen.veritycustomapi.voice.VoiceTranslator.needsTranslation(
+                com.hanchen.veritycustomapi.voice.VoiceLanguage.ZH,
+                com.hanchen.veritycustomapi.voice.VoiceLanguage.ZH));
+
         String encoded = BilingualSpeechText.encode("Hello, Verity.", "你好，Verity。 ");
         BilingualSpeechText.Parts bilingual = BilingualSpeechText.decode(encoded);
         assertEquals("Hello, Verity.", bilingual.english());

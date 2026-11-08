@@ -36,10 +36,14 @@ public class PlayTtsClientHandlerMixin {
             }
             // 扩展没接管（路线是原版、或当前没有可用路线）-> 把改写后的文本交回原版去念，
             // 否则这一句会连原版的声音一起消失
-            // 双语台词自带中文译文：阅读语言按中文算，交给「朗读语言」去决定要不要再转换，
-            // 否则 朗读语言=中文 时会把模型已经给出的译文再转换一遍，白花一次调用
+            //
+            // 🔴 双语模式这里必须传 EN，不能传 ZH。
+            // 双语约定是「聊天栏显示中文、朗读念英文」，而 spoken 取的是 parts.english()。
+            // 传 ZH 会让 VoiceTranslator.needsTranslation(ZH, ZH)=false，于是那句**英文**
+            // 被当成中文直接送进中文音色——念出来是「英文字母按中文发音」，玩家听到的就是
+            // 「双语模式语音不对/时好时坏」。传 EN 后，朗读语言=中文时才会正确地转一次。
             if (!TtsManager.speak(spoken, payload.entityId(),
-                    bilingual ? com.hanchen.veritycustomapi.voice.VoiceLanguage.ZH : null)) {
+                    bilingual ? com.hanchen.veritycustomapi.voice.VoiceLanguage.EN : null)) {
                 PlayTtsClientHandler.handlePacket(new PlayTtsPayload(payload.entityId(), spoken));
             }
             ci.cancel();

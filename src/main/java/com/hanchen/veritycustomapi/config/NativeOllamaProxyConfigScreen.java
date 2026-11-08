@@ -54,7 +54,7 @@ import org.lwjgl.glfw.GLFW;
 
 public class NativeOllamaProxyConfigScreen extends Screen {
     /** 卡片圆角半径。4 是「看得出是圆的、又不占地方」的平衡点。 */
-    private static final int CARD_RADIUS = 5;
+    private static final int CARD_RADIUS = 0;
 
     private static final int ACCENT = VerityUiTheme.ACCENT;
     private static final int ACCENT_SOFT = VerityUiTheme.ACCENT_SOFT;
@@ -67,11 +67,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private static final int SEPARATOR = VerityUiTheme.ROW_DIVIDER;
     /** 分组标题色：比正文弱、比说明文字略亮。 */
     private static final int SECTION_TITLE = VerityUiTheme.SECTION_TITLE;
-    private static final int ROW_HEIGHT = 28;
+    private static final int ROW_HEIGHT = 26;
     /** 折行后每行占的高度：MC 默认字体 9px 高，留 1px 行距。 */
     private static final int LINE_HEIGHT = 10;
     /** 分组头在普通行高之外多出的顶部留白：让相邻两组之间有呼吸感。 */
-    private static final int SECTION_GAP = 8;
+    private static final int SECTION_GAP = 6;
     /** 换行符。写成常量是为了避免在源码里出现转义序列，被工具链反复吃掉。 */
     private static final String NEWLINE = "\n";
     private static final ExecutorService CAMERA_TEST_POOL = Executors.newSingleThreadExecutor(runnable -> {
@@ -82,9 +82,15 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private static final AtomicBoolean CAMERA_TEST_RUNNING = new AtomicBoolean();
 
     private final Screen parent;
+
+    /** 外层界面；切换菜单时新界面用它当父屏，避免返回绕回设置。 */
+    public Screen parentScreenRef() {
+        return parent;
+    }
     private final List<Category> categories = new ArrayList<>();
     private final List<ValueRow> values = new ArrayList<>();
     private int categoryIndex;
+    private final int[] rememberedPages = {0,1,2,6,13,11};
     private double scrollOffset;
     /** 侧栏分类按钮（保留引用，放不下时靠滚动调整它们的 Y 与可见性）。 */
     private final List<Button> sidebarButtons = new ArrayList<>();
@@ -138,6 +144,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     private final Map<String, Boolean> collapsedSections = new HashMap<>();
     /** 摄像头"测试"按钮最近一次的结果文本；null 表示还没测过。 */
     private String cameraTestResult;
+    private boolean cameraTestOk;
+    /** 上一次「世界交互」页看到的自主状态签名；用于判断要不要重建。 */
+    private String lastAutonomySignature = "";
     private String pairingCode = "";
     /** 入场动画起点：构造时锁定，之后 resize 不重播。 */
     private final long openedAt = net.minecraft.Util.getMillis();
@@ -165,6 +174,13 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         this.parent = parent;
     }
 
+    /** Open a specific existing settings page and return to the guide on close. */
+    public static NativeOllamaProxyConfigScreen openPage(Screen parent,int page) {
+        NativeOllamaProxyConfigScreen screen=new NativeOllamaProxyConfigScreen(parent);
+        screen.categoryIndex=Math.max(0,Math.min(14,page));
+        return screen;
+    }
+
     // ==================== Lifecycle ====================
 
     @Override
@@ -190,6 +206,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         if (statusMessageTimer > 0) {
             statusMessageTimer--;
         }
+        tickAutonomySync();
         if (width != layoutWidth || height != layoutHeight) {
             // 窗口尺寸变化但控件仍是旧坐标时，会出现侧栏/按钮溢出卡片。
             // resize() 正常会重建，这里再兜底一次，保证最迟下一 tick 回到正确布局。
@@ -428,11 +445,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private int getSidebarItemStep() {
-        return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarItemStep(height, categories.size());
+        return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarItemStep(height, ConfigNavigation.count());
     }
 
     private int getSidebarButtonHeight() {
-        return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarButtonHeight(height, categories.size());
+        return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarButtonHeight(height, ConfigNavigation.count());
     }
 
     private int getSidebarViewport() {
@@ -440,7 +457,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private int getSidebarContentHeight() {
-        return categories.size() * getSidebarItemStep();
+        return ConfigNavigation.count() * getSidebarItemStep();
     }
 
     private double getMaxSidebarScroll() {
@@ -470,20 +487,27 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarWidth(width, height);
     }
 
+    /** Title screen: no world to preserve, so the window spans the whole screen. */
+    private boolean fullWindow() {
+        return com.hanchen.veritycustomapi.config.VerityMenuContext.fullScreenWindow(minecraft);
+    }
+
     private int getSidebarLeft() {
-        return com.hanchen.veritycustomapi.config.ConfigLayout.sidebarLeft(width, height);
+        return fullWindow() ? 0 : com.hanchen.veritycustomapi.config.ConfigLayout.sidebarLeft(width, height);
     }
 
     private int getPanelRight() {
-        return com.hanchen.veritycustomapi.config.ConfigLayout.panelRight(width, height);
+        return fullWindow() ? width : com.hanchen.veritycustomapi.config.ConfigLayout.panelRight(width, height);
     }
 
     private int getContentLeft() {
-        return com.hanchen.veritycustomapi.config.ConfigLayout.contentLeft(width, height);
+        if (!fullWindow()) return com.hanchen.veritycustomapi.config.ConfigLayout.contentLeft(width, height);
+        return getSidebarWidth() + (usesPagedNavigation() ? 0 : 12);
     }
 
     private int getContentWidth() {
-        return com.hanchen.veritycustomapi.config.ConfigLayout.contentWidth(width, height);
+        if (!fullWindow()) return com.hanchen.veritycustomapi.config.ConfigLayout.contentWidth(width, height);
+        return Math.max(0, getPanelRight() - getContentLeft());
     }
 
     /** 当前分类内容是否超出可视区域（只依赖行高，可安全用于布局判断）。 */
@@ -497,11 +521,14 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private int getContentBottom() {
-        return com.hanchen.veritycustomapi.config.ConfigLayout.contentBottom(height);
+        return fullWindow()
+                ? height - 4 - 44
+                : com.hanchen.veritycustomapi.config.ConfigLayout.contentBottom(height);
     }
 
+    /** Content area follows the same window bounds as the chrome, so rows cannot escape the panel. */
     private int getVisibleRowsHeight() {
-        return com.hanchen.veritycustomapi.config.ConfigLayout.visibleRowsHeight(height);
+        return Math.max(0, getContentBottom() - getContentTop());
     }
 
     private int getLabelWidth(int rowWidth) {
@@ -559,34 +586,33 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         int sidebarWidth = getSidebarWidth();
         int sidebarButtonWidth = Math.max(64, sidebarWidth - 12);
 
+        int group=ConfigNavigation.group(categoryIndex);
         if (usesPagedNavigation()) {
-            addRenderableWidget(roundedButton(sidebarLeft + 4, 34, 24, 18,
-                    Component.literal("‹"), VerityUiTheme.BUTTON, VerityUiTheme.TEXT,
-                    button -> switchCategory((categoryIndex - 1 + categories.size()) % categories.size())));
-            addRenderableWidget(roundedButton(getPanelRight() - 28, 34, 24, 18,
-                    Component.literal("›"), VerityUiTheme.BUTTON, VerityUiTheme.TEXT,
-                    button -> switchCategory((categoryIndex + 1) % categories.size())));
+            addRenderableWidget(roundedButton(sidebarLeft+4,18,22,18,Component.literal("<"),VerityUiTheme.BUTTON,TEXT,
+                    button -> switchGroup((group+ConfigNavigation.count()-1)%ConfigNavigation.count())));
+            addRenderableWidget(roundedButton(getPanelRight()-26,18,22,18,Component.literal(">"),VerityUiTheme.BUTTON,TEXT,
+                    button -> switchGroup((group+1)%ConfigNavigation.count())));
         } else {
-            int itemStep = getSidebarItemStep();
-            int buttonHeight = getSidebarButtonHeight();
-            for (int i = 0; i < categories.size(); i++) {
-                int index = i;
-                String displayTitle = categories.get(i).sidebarTitle != null
-                        ? categories.get(i).sidebarTitle
-                        : categories.get(i).title;
-                String title = fitText(font, displayTitle, sidebarButtonWidth - 10);
-                int y = SIDEBAR_TOP + i * itemStep;
-                boolean active = index == categoryIndex;
-                Button button = roundedButton(sidebarLeft + 6, y, sidebarButtonWidth, buttonHeight,
-                        Component.literal(title),
-                        0x00000000,
-                        active ? VerityUiTheme.TEXT : VerityUiTheme.MUTED,
-                        ignored -> switchCategory(index));
-                sidebarButtons.add(button);
-                addRenderableWidget(button);
+            int step=getSidebarItemStep(), buttonHeight=getSidebarButtonHeight();
+            for(int i=0;i<ConfigNavigation.count();i++) {
+                final int index=i;
+                Button button=roundedButton(sidebarLeft+6,SIDEBAR_TOP+i*step,sidebarButtonWidth,buttonHeight,
+                        Component.literal(ConfigNavigation.title(i)),0,TEXT,ignored -> switchGroup(index));
+                sidebarButtons.add(button);addRenderableWidget(button);
             }
-            // 高度不足时靠滚动查看剩余分类，而不是把整个侧栏换成左右箭头
             applySidebarScroll();
+        }
+        int[] pages=ConfigNavigation.pages(group);
+        if(pages.length>1) {
+            int tabLeft=getContentLeft(), available=Math.max(1,getContentWidth());
+            int gap=3, tabWidth=Math.max(1,(available-gap*(pages.length-1))/pages.length);
+            for(int i=0;i<pages.length;i++) {
+                final int page=pages[i];
+                String label=(page==categoryIndex?"> ":"")+ConfigNavigation.tab(group,i);
+                addRenderableWidget(roundedButton(tabLeft+i*(tabWidth+gap),40,tabWidth,18,
+                        Component.literal(fitText(font,label,Math.max(1,tabWidth-6))),VerityUiTheme.BUTTON,TEXT,
+                        ignored -> switchCategory(page)));
+            }
         }
 
         // Content rows
@@ -600,7 +626,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             y += row.getHeight();
         }
 
-        addFooterWidgets(contentLeft, contentWidth);
+        addFooterWidgets(getSidebarLeft()+6, getPanelRight()-getSidebarLeft()-12);
         layoutWidth = width;
         layoutHeight = height;
     }
@@ -613,45 +639,12 @@ public class NativeOllamaProxyConfigScreen extends Screen {
      */
     private Button roundedButton(int x, int y, int width, int height, Component label,
                                  int background, int textColor, Button.OnPress onPress) {
-        return new Button(x, y, width, height, label, onPress, narration -> narration.get().copy()) {
-            @Override
-            protected void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-                boolean hovered = mouseX >= getX() && mouseX < getX() + this.width
-                        && mouseY >= getY() && mouseY < getY() + this.height;
-                // 三种底色三种悬停方式：
-                //   全透明（侧栏分类）→ 悬停给淡底；淡底 → 提不透明度；实色 → 提亮 RGB
-                int alpha = background >>> 24;
-                int fill;
-                if (alpha == 0) {
-                    fill = hovered ? VerityUiTheme.ROW_HOVER : 0;
-                } else if (!hovered) {
-                    fill = background;
-                } else if (alpha >= 0xE0) {
-                    fill = VerityUiDraw.brighten(background);
-                } else {
-                    fill = VerityUiDraw.raiseAlpha(background, 0x1A);
-                }
-                if ((fill >>> 24) != 0) {
-                    VerityUiDraw.fillRounded(graphics, getX(), getY(),
-                            getX() + this.width, getY() + this.height, 4, fill);
-                }
-                // 🔴 只在「真的有一层底色」时描边；透明按钮（侧栏分类）绝不能勾边，
-                // 否则每一项都变成灰框。旧判断 (background>>>24) < 0xC0 把 alpha=0 也算进去了。
-                if ((fill >>> 24) >= 0x60) {
-                    VerityUiDraw.strokeRounded(graphics, getX(), getY(),
-                            getX() + this.width, getY() + this.height, 4,
-                            VerityUiTheme.CONTROL_BORDER);
-                }
-                graphics.drawCenteredString(font, getMessage(),
-                        getX() + this.width / 2,
-                        getY() + (this.height - 8) / 2, textColor);
-            }
-        };
+        return VerityUiWidgets.roundedButton(font,x,y,width,height,label,background,textColor,onPress);
     }
 
     private void addFooterWidgets(int left, int contentWidth) {
         int gap = isUltraCompactLayout() ? 3 : 6;
-        int bottom = height - 28;
+        int bottom = com.hanchen.veritycustomapi.config.VerityWindowLayout.panelBottom(height) - 26;
 
         int narrowButtonWidth = Math.max(28, (contentWidth - gap * 2) / 3);
         int saveWidth = isUltraCompactLayout() ? narrowButtonWidth : isCompactLayout() ? 58 : 76;
@@ -674,17 +667,17 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
         // Action buttons: right-aligned
         int actionTotal = saveWidth + cancelWidth + resetWidth + gap * 2;
-        int actionLeft = Math.max(left, right - actionTotal);
+        int actionLeft = left;
 
         addRenderableWidget(roundedButton(actionLeft, bottom, resetWidth, 20,
                 Component.literal(isCompactLayout() ? "重置" : "重置当前分类"),
                 VerityUiTheme.BUTTON_DANGER, VerityUiTheme.DANGER,
                 button -> confirmResetCategory()));
-        actionLeft += resetWidth + gap;
+        actionLeft = Math.max(left+resetWidth+gap,right-saveWidth-cancelWidth-gap);
 
         addRenderableWidget(roundedButton(actionLeft, bottom, saveWidth, 20,
                 Component.literal("保存"),
-                VerityUiTheme.CONTROL_ON, 0xFF0A1216,
+                VerityUiTheme.CONTROL_ON, VerityUiTheme.TEXT,
                 button -> saveAndClose()));
         actionLeft += saveWidth + gap;
 
@@ -696,10 +689,15 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
     // ==================== Navigation ====================
 
+    private void switchGroup(int group) {
+        switchCategory(rememberedPages[group]);
+    }
+
     private void switchCategory(int nextCategory) {
         cacheWidgetValues();
         int target = clamp(nextCategory, 0, Math.max(0, categories.size() - 1));
         categoryIndex = target;
+        rememberedPages[ConfigNavigation.group(target)]=target;
         scrollOffset = 0;
         statusMessage = "";
         statusMessageError = false;
@@ -760,6 +758,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 minecraft.execute(() -> {
                     if (minecraft.screen != this) return;
                     cameraTestResult = result;
+                    cameraTestOk = success;
                     status(success,
                             success
                                     ? (screenOnly ? "游戏画面测试成功" : "画面采集测试成功")
@@ -954,7 +953,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         ClientEventHandler.onConfigSaved();
         ConfigManager.saveCommonConfig();
         ConfigManager.saveClientConfig();
-        minecraft.setScreen(new ConfigHealthCheckScreen(parent));
+        minecraft.setScreen(parent); // Saving is not a request to run network checks.
     }
 
     // ==================== Render ====================
@@ -978,9 +977,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         long now = net.minecraft.Util.getMillis();
         // 入场：约 120ms 从下方 8px 滑到位置。只包 UI，不移动背景；
         // 动画期间按钮的点击框仍在最终位置，持续时间很短，不影响操作。
-        double enter = VerityUiAnimation.easeOutCubic(
-                VerityUiAnimation.clamp01((now - openedAt) / 120.0D));
-        int enterOffset = (int) Math.round((1.0D - enter) * 8.0D);
+        int enterOffset = 0; // Static geometry: drawn controls always match their hit targets.
         graphics.pose().pushPose();
         if (enterOffset != 0) {
             graphics.pose().translate(0.0F, enterOffset, 0.0F);
@@ -993,46 +990,42 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         int contentTop = getContentTop();
         int contentBottom = getContentBottom();
 
-        // 背景是世界本身（30% 淡幕），所以面板不能是一整块实心板——
-        // 拆成「侧栏卡片 + 内容卡片」两张，中间留缝让世界透出来。
-        int panelTop = 12;
-        if (usesPagedNavigation()) {
-            // 极窄屏没有侧栏，整块一张卡片
-            drawCard(graphics, sidebarLeft, panelTop, getPanelRight(), contentBottom);
-        } else {
-            drawCard(graphics, sidebarLeft, panelTop, sidebarLeft + sidebarWidth, contentBottom);
-            drawCard(graphics, contentLeft - 6, panelTop, getPanelRight(), contentBottom);
-            // 内容区标题栏：圆角抬升条，让分类标题与说明有归属，而不是浮在卡片顶上
-            VerityUiDraw.raised(graphics, contentLeft - 5, panelTop + 1,
-                    getPanelRight() - 1, contentTop - 8, CARD_RADIUS);
-        }
+        // Opaque content, inset so the world stays visible around the window.
+        boolean fullWindow = fullWindow();
+        int panelTop = fullWindow ? 4 : com.hanchen.veritycustomapi.config.VerityWindowLayout.panelTop(height);
+        int panelBottom = fullWindow ? height - 4 : com.hanchen.veritycustomapi.config.VerityWindowLayout.panelBottom(height);
+        // One settings window, with a fixed category list and a recessed scrolling options area.
+        drawCard(graphics, sidebarLeft, panelTop, getPanelRight(), panelBottom);
         if (!usesPagedNavigation()) {
-            graphics.drawString(font, "Verity 扩展增强", sidebarLeft + 10, 22, TEXT);
-            graphics.drawString(font, "版本 " + OllamaProxyMod.version(), sidebarLeft + 10, 32, MUTED);
+            graphics.fill(sidebarLeft+2,panelTop+2,sidebarLeft+sidebarWidth,panelBottom-2,VerityUiTheme.SIDEBAR);
+            graphics.fill(sidebarLeft+sidebarWidth,panelTop+1,sidebarLeft+sidebarWidth+1,contentBottom-1,VerityUiTheme.BORDER);
+        }
+        graphics.fill(contentLeft-3,contentTop-4,getPanelRight()-2,panelBottom-2,VerityUiTheme.CONTROL_FIELD);
+        graphics.fill(contentLeft-3,contentTop-5,getPanelRight()-2,contentTop-4,VerityUiTheme.BORDER);
+        if (!usesPagedNavigation()) {
+            graphics.drawString(font, "Verity 扩展增强", sidebarLeft + 10, panelTop + 6, TEXT);
+            graphics.drawString(font, "设置", sidebarLeft + 10, panelTop + 17, MUTED);
         }
 
         if (!categories.isEmpty()) {
             Category category = categories.get(categoryIndex);
-            int titleWidth = usesPagedNavigation() ? Math.max(36, contentWidth - 64) : contentWidth;
-            int titleLeft = usesPagedNavigation()
-                    ? contentLeft + (contentWidth - font.width(fitText(font, category.title, titleWidth))) / 2
-                    : contentLeft;
-            // 切页时标题从右侧 6px 滑入，和侧栏高亮滑动形成同一方向的动作
-            double titleT = VerityUiAnimation.easeOutCubic(
-                    VerityUiAnimation.clamp01((now - categorySwitchAt) / 90.0D));
-            int titleSlide = (int) Math.round((1.0D - titleT) * 6.0D);
-            graphics.drawString(font, fitText(font, category.title, titleWidth),
-                    titleLeft + titleSlide, 20, TEXT);
-            if (!usesPagedNavigation() && !category.description.isBlank()) {
-                graphics.drawString(font, fitText(font, category.description, contentWidth),
-                        contentLeft + titleSlide, 34, MUTED);
+            int group=ConfigNavigation.group(categoryIndex);
+            String heading=ConfigNavigation.title(group);
+            int headingX=usesPagedNavigation()?getSidebarLeft()+32:contentLeft;
+            graphics.drawString(font,fitText(font,heading,Math.max(20,contentWidth-40)),headingX,panelTop+6,TEXT);
+            // A short header underline confirms navigation without moving any content or hit boxes.
+            if(!VerityUiAnimation.reducedMotion() && now-categorySwitchAt<150) {
+                double p=VerityUiAnimation.progress(categorySwitchAt,now,150);
+                int length=(int)Math.round(Math.min(96,Math.max(1,contentWidth-8))*p);
+                graphics.fill(contentLeft,37,contentLeft+length,38,ACCENT);
             }
+
         }
 
         if (!usesPagedNavigation()) {
             int itemStep = getSidebarItemStep();
             int buttonHeight = getSidebarButtonHeight();
-            int targetY = SIDEBAR_TOP + categoryIndex * itemStep - (int) Math.round(sidebarScroll);
+            int targetY = SIDEBAR_TOP + ConfigNavigation.group(categoryIndex) * itemStep - (int) Math.round(sidebarScroll);
             // 侧栏是导航：选中块直接跟到目标行，不做滑动，避免点一下还要等它滑过去
             sidebarHighlightY = targetY;
             int activeY = targetY;
@@ -1077,7 +1070,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         double maxScroll = getMaxScroll();
         if (maxScroll > 0) {
             int visibleHeight = getVisibleRowsHeight();
-            int scrollBarX = contentLeft + contentWidth - 3;
+            int scrollBarX = getPanelRight() - 6;
             int scrollBarHeight = Math.max(20, (int)(visibleHeight * (double)visibleHeight / getRowsHeight(rows)));
             int scrollBarY = contentTop + (int)(scrollOffset * (visibleHeight - scrollBarHeight) / maxScroll);
             graphics.fill(scrollBarX, contentTop, scrollBarX + 2, contentBottom, SEPARATOR);
@@ -1090,11 +1083,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             // 原来画在按钮同一行、宽度还要减 260，稍长一点的提示就会被截断。
             String text = fitText(font, statusMessage, Math.max(80, contentWidth));
             // 最后 0.5 秒淡出；前半段保持纯色，避免刚出现就发灰
-            int statusAlpha = statusMessageTimer >= 10
-                    ? 255 : Math.max(0, statusMessageTimer * 255 / 10);
+            int statusAlpha = 255; // Feedback stays fully legible until it expires.
             graphics.drawString(font, text,
                     contentLeft + Math.max(0, (contentWidth - font.width(text)) / 2),
-                    height - 40, VerityUiDraw.withAlpha(statusMessageError ? DANGER : SUCCESS, statusAlpha));
+                    com.hanchen.veritycustomapi.config.VerityWindowLayout.panelBottom(height) - 38,
+                    VerityUiDraw.withAlpha(statusMessageError ? DANGER : SUCCESS, statusAlpha));
         }
 
         super.render(graphics, mouseX, mouseY, partialTick);
@@ -1283,7 +1276,20 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private void overviewCategory() {
-        category("概览", "各项功能是否已配置好", "概览");
+        category("概览", "各项服务是否可以使用", "概览");
+        action("切换新手 / 完整菜单", "仅改变菜单，不修改已有授权与服务配置", () -> {
+            cacheWidgetValues();
+            minecraft.setScreen(new SettingsExperienceScreen(this));
+        }, "选择");
+        // 剧情模式已归档，默认关闭；入口随开关出现，避免占着常用页面。
+        if (com.hanchen.veritycustomapi.story.StoryService.enabled()) {
+            action("剧情模式 · 未关闭的工单", "原创序章与第一章；独立存档进度，无需云端账户", () -> {
+                cacheWidgetValues();
+                minecraft.setScreen(new com.hanchen.veritycustomapi.story.StoryTerminalScreen(this));
+            }, "剧情终端");
+        }
+        action("首次配置引导", "重新查看连接和语音设置", () -> minecraft.setScreen(new com.hanchen.veritycustomapi.client.VerityWelcomeScreen(this)), "打开");
+        action("服务真实测试", "发送真实请求，确认对话、语音输出、语音输入是否可用", () -> minecraft.setScreen(new ConfigHealthCheckScreen(this, false)), "测试");
         statusCategory();
     }
 
@@ -1292,40 +1298,40 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private void serverSettingsCategory() {
-        category("多人游戏设置", "多人聊天、权限和 Verity 回复显示范围", "多人游戏设置");
+        category("多人游戏设置", "多人游戏里的聊天与权限", "多人游戏设置");
         // 「处理方式 / 服务器职责」两条是架构说明，对配服的人没有操作价值，删掉只留去哪配。
         section("AI 对话 API");
-        info("配置位置", "服务端 verity-common.toml → GeneralSettings.AISettings 里填 API 地址、模型和密钥");
+        info("配置位置", "在服务端的 verity-common.toml 中填写对话服务的地址、模型和密钥。");
 
         section("对话触发方式");
-        toggle("必须使用 /v 指令才能对话",
+        toggle("只能用 /v 指令对话",
                 ModConfig.SERVER_VERITY_REQUIRE_COMMAND::get, true,
                 ModConfig.SERVER_VERITY_REQUIRE_COMMAND::set);
-        info("开启后", "只有 /v 私聊或 /v! 公开指令会触发 Verity，普通聊天只发送给其他玩家");
-        info("关闭后", "普通聊天也会触发 Verity，不建议多人服务器使用");
-        info("单人游戏", "单人游戏不受本开关限制，直接打字就能对话，无需 /v");
+        info("开启后", "只有 /v 私聊或 /v! 公开对话会触发同伴，普通聊天只发给其他玩家。");
+        info("关闭后", "普通聊天也会触发同伴，不建议在多人服务器使用。");
+        info("单人游戏", "单人游戏不受此开关限制，直接打字即可对话。");
 
         section("公开 Verity 对话");
         toggle("允许玩家使用 /v! 公开回答",
                 ModConfig.SERVER_VERITY_ALLOW_PUBLIC_CHAT::get, true,
                 ModConfig.SERVER_VERITY_ALLOW_PUBLIC_CHAT::set);
-        info("开启后", "玩家可将自己客户端 API 生成的回答广播给全服，并显示 @玩家名");
-        info("关闭后", "/v! 会被服务器拒绝；/v 私聊仍然可用");
-        info("API 位置", "服务器不提供 AI API，每位玩家都使用自己的客户端 API");
+        info("开启后", "玩家可以把回答广播给全服，并显示 @玩家名。");
+        info("关闭后", "/v! 会被拒绝，/v 私聊仍可用。");
+        info("使用谁的 API", "服务器不提供对话服务，每位玩家使用自己的设置。");
     }
 
     private void speechRecognitionCategory() {
-        category("语音识别", "识别模式、离线模型与在线服务", "语音识别");
+        category("语音识别", "语音输入的方式与模型", "语音识别");
         sttCategory();
     }
 
     private void speechSynthesisCategory() {
-        category("语音朗读", "朗读路线、音色、语速、双语与语言", "语音朗读");
+        category("语音朗读", "音色、语速、双语与语言", "语音朗读");
         ttsCategory();
     }
 
     private void appearanceCategory() {
-        category("外观与资源", "更换皮肤、管理资源", "外观与资源");
+        category("外观与资源", "皮肤、动作与资源", "外观与资源");
         skinCategory();
         jellyCategory();
     }
@@ -1336,14 +1342,14 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         toggle("Q 弹形变",
                 ModConfig.VERITY_JELLY_ENABLED::get, false,
                 ModConfig.VERITY_JELLY_ENABLED::set);
-        info("Q 弹形变", "打开后 Verity 说话时整个人会明显一弹一弹：纵向拉长时横向收窄，压扁时变胖，比原版夸张很多；"
+        info("Q 弹形变", "调整说话时的弹动幅度与挤压；"
                 + "关闭则完全恢复原版手感。只在 Verity 说话时生效，不影响走路和其它动画");
         if (ModConfig.VERITY_JELLY_ENABLED.get()) {
             toggle("鬼畜模式",
                     ModConfig.VERITY_JELLY_CHAOS::get, false,
                     ModConfig.VERITY_JELLY_CHAOS::set);
-            info("鬼畜模式", "在 Q 弹的基础上幅度 ×1.6、速度 ×2.6，再把三个不成比例的频率叠在一起，"
-                    + "配上左右甩头和原地弹跳，看起来像在抽搐而不是呼吸");
+            info("鬼畜模式", "额外放大幅度与速度，"
+                    + "加入甩头和弹跳");
             decimal("弹动幅度", ModConfig.VERITY_JELLY_AMPLITUDE.get(), 0.45D, 0.05D, 1.0D,
                     ModConfig.VERITY_JELLY_AMPLITUDE::set);
             info("弹动幅度", "纵向拉伸/压扁的最大比例；0.05 几乎不动，0.45 已经很明显，1.0 会夸张到变形");
@@ -1357,67 +1363,67 @@ public class NativeOllamaProxyConfigScreen extends Screen {
     }
 
     private void verityBehaviorCategory() {
-        category("原版 Verity", "原版玩法、善恶值与危险操作", "原版 Verity");
+        category("原版 Verity", "原版玩法、善恶值与高风险选项", "原版 Verity");
         originalVerityCategory();
     }
 
     private void proactiveAwarenessCategory() {
-        category("主动感知", "设置 Verity 在哪些游戏事件中回应", "主动感知");
+        category("主动感知", "选择同伴会主动回应的事件", "主动感知");
         awarenessCategory();
     }
 
     private void cameraVisionCategory() {
-        category("摄像头视觉", "让 Verity 看到你的摄像头画面与游戏内画面", "摄像头视觉");
+        category("摄像头视觉", "让同伴看到摄像头或游戏画面", "摄像头视觉");
         cameraVisionSection();
     }
 
     private void buildingCategory() {
-        category("AI 建造", "建造方式、速度与规模上限", "AI 建造");
+        category("AI 建造", "建造方式、速度与范围", "AI 建造");
         aiBuildingCategory();
     }
 
     private void cloudAccountCategory() {
-        category("云端与账户", "云端授权、同步与用量", "云端与账户");
+        category("云端与账户", "账户连接、同步与额度", "云端与账户");
         cloudCategory();
     }
 
     private void mmdCategory() {
-        category("MMD 动画", "让 Demon Mode 跟着音乐跳舞，并同步镜头", "MMD 动画");
-        section("内置 PMX 模型（新增功能）");
+        category("MMD 动画", "让模型跟随音乐跳舞并同步镜头", "MMD 动画");
+        section("PMX 模型");
         toggle("启用内置 PMX 模型", ModConfig.ENABLE_BUILTIN_PMX::get, false,
                 ModConfig.ENABLE_BUILTIN_PMX::set);
         text("PMX 模型目录或路径（可选）", ModConfig.BUILTIN_PMX_MODEL.get(), "留空自动检测",
                 ModConfig.BUILTIN_PMX_MODEL::set);
-        info("模型路径", "支持 config/verity_extended/pmx/<目录名>/ 下任意 .pmx/.pmd 文件，也支持项目内绝对路径；留空时自动检测第一个有效模型；关闭后完全使用原版模型");
+        info("模型路径", "可以填模型文件或文件夹；留空会自动查找。关闭后使用原版模型。");
         action("重新加载 PMX 模型", "读取当前配置的内置 PMX 模型，失败时自动回退原版",
                 () -> {
                     com.hanchen.veritycustomapi.pmx.BuiltinPmxModelManager.get().reload();
                     statusOk("PMX 模型缓存已重置；下一次渲染时重新加载", 60);
                 }, "重新加载");
-        info("兼容说明", "这是新增旁路功能，不会修改原有 Geckolib、MMD/VMD 或皮肤渲染路径");
+        info("兼容性", "不会影响原有的模型、舞蹈和皮肤。");
 
         com.hanchen.veritycustomapi.mmd.MmdPlaybackManager.get().scanAndLoad();
         java.util.Map<String, com.hanchen.veritycustomapi.mmd.MmdDanceProject> projects =
                 com.hanchen.veritycustomapi.mmd.MmdPlaybackManager.get().listProjects();
         section("开始使用");
-        info("舞蹈项目", "将动作、镜头和音乐放入 config/verity_extended/mmd/<项目名>，重新扫描后按 N 选择播放");
-        advancedSection("进阶玩法");
-        info("manifest.json", "项目文件夹里放 manifest.json 可改显示名称、模型缩放、循环方式；"
+        info("舞蹈项目", "把动作、镜头和音乐放进 config/verity_extended/mmd/<项目名>，重新扫描后按 N 选择。");
+        advancedSection("更多设置");
+        info("manifest.json", "放入项目文件夹可以修改显示名称、模型缩放和循环方式。"
                 + "一个项目也能放多个动作文件，播放时自动分给附近多个 Demon Mode");
         advancedSection("镜头设置");
         decimal("镜头高度（方块）", ModConfig.MMD_CAMERA_HEIGHT.get(), 2.4D, -16.0D, 32.0D,
                 ModConfig.MMD_CAMERA_HEIGHT::set);
-        info("调整建议", "镜头偏低就调高、偏高就调低，默认 2.4 格，保存后立即生效");
+        info("调整建议", "镜头偏低就调高，偏高就调低。默认 2.4 格，保存后立即生效。");
         advancedSection("恶魔行为");
         toggle("自动生成恶魔", ModConfig.AI_DEMON_AUTO_SPAWN::get, true,
                 ModConfig.AI_DEMON_AUTO_SPAWN::set);
-        info("生成规则", "播放 MMD 时如果世界内没有恶魔，会让服务器在玩家正前方自动生成一只");
+        info("生成规则", "播放舞蹈时若附近没有恶魔，会自动生成一只。");
         // 原来这里有个「恶魔友好模式」开关，但它配了没人读（业务代码只看 FRIENDLY_MODE），
         // 点了没有任何效果，反而让人以为已经关掉了攻击行为。删掉并指向真正的开关。
-        info("关闭恶魔攻击", "要关掉恶魔的追击/破门/抓玻璃，请到「高级与诊断 → 游戏体验」打开「友好模式」");
+        info("不想被打", "想关掉恶魔的追击和破坏，请到「高级与诊断」打开「友好模式」。");
         integer("生成请求超时（毫秒）", ModConfig.AI_DEMON_SPAWN_RETRY_MS.get(), 8000, 2000, 30000,
                 ModConfig.AI_DEMON_SPAWN_RETRY_MS::set);
-        info("超时建议", "8 秒默认；联机卡顿时建议调大，单机高延迟请保持默认");
+        info("超时", "默认 8 秒。联机卡顿时可以调大。");
         advancedSection("项目列表（共 " + projects.size() + " 个）");
         if (projects.isEmpty()) {
             listItem("暂无项目", "还没有识别到舞蹈项目，按上面「三步开始」放入文件后重新扫描");
@@ -1435,15 +1441,15 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                     int n = com.hanchen.veritycustomapi.mmd.MmdPlaybackManager.get().listProjects().size();
                     statusOk("扫描完成，共 " + n + " 个舞蹈项目", 60);
                 }, "重新扫描");
-        info("命令用法", "/verity-mmd play <文件夹名> 播放整个项目；散装的 VMD 文件名同样可用");
+        info("命令", "/verity-mmd play <文件夹名> 播放整个项目，也可以直接填 VMD 文件名。");
     }
 
     private void interfaceCategory() {
-        category("界面与记录", "游戏内 HUD、快捷指令、对话记录与日记", "界面与记录");
+        category("界面与记录", "屏幕显示、快捷指令与对话记录", "界面与记录");
 
         section("游戏内 HUD");
         toggle("显示对话气泡", ModConfig.HUD_ENABLED::get, true, ModConfig.HUD_ENABLED::set);
-        info("对话气泡", "Verity 说话时在屏幕右下角显示台词（圆形表情头像 + 文字）；按 K 打开快捷指令面板");
+        info("对话气泡", "同伴说话时在右下角显示台词和头像。按 K 打开快捷指令。");
         if (ModConfig.HUD_ENABLED.get()) {
             toggle("显示表情头像", ModConfig.HUD_PORTRAIT::get, true, ModConfig.HUD_PORTRAIT::set);
             integer("气泡停留（秒）", ModConfig.HUD_DIALOGUE_SECONDS.get(), 12, 3, 60,
@@ -1452,26 +1458,30 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
         section("沉浸式对话");
         toggle("沉浸式对话模式", ModConfig.IMMERSIVE_CHAT::get, false, ModConfig.IMMERSIVE_CHAT::set);
-        info("沉浸式说明", "开启后原版聊天栏不再显示任何内容（含其它玩家与指令反馈），"
+        info("沉浸式对话", "聊天栏会隐藏所有消息（包括其他玩家和指令反馈）,"
                 + "平时只看右下角气泡；按 T 打开聊天框时，全部聊天记录会照常显示");
         if (ModConfig.IMMERSIVE_CHAT.get() && !ModConfig.HUD_ENABLED.get()) {
-            info("注意", "对话气泡当前是关闭的，此时不会隐藏聊天栏，否则你没有地方能看到消息");
+            info("注意", "对话气泡也关着时，不会隐藏聊天栏，否则你就看不到消息了。");
         }
         toggle("显示状态角标", ModConfig.HUD_STATUS::get, false, ModConfig.HUD_STATUS::set);
-        info("状态角标", "左上角显示好感成长、记忆条数、今日对话次数与剩余额度");
+        info("状态角标", "左上角显示好感、记忆数量、今日对话次数和剩余额度。");
         toggle("导航箭头", ModConfig.HUD_NAV_ARROW::get, true, ModConfig.HUD_NAV_ARROW::set);
-        info("导航箭头", "指定导航目标后，准星下方会出现指向箭头与距离");
+        info("导航箭头", "设定目标后，准星下方会显示方向和距离。");
+
+        section("常用入口");
+        action("快捷指令", "跟随、到身边及常用对话", () -> minecraft.setScreen(new com.hanchen.veritycustomapi.client.QuickCommandScreen()), "打开");
+        action("对话记录与日记", "浏览、导出与云端备份", () -> minecraft.setScreen(new com.hanchen.veritycustomapi.client.ConversationLogScreen(this)), "打开");
 
         section("移动与提醒");
-        info("跟随与导航", "按 K 打开快捷指令面板，点「跟我来 / 到我身边」就行；"
+        info("跟随与导航", "按 K 打开快捷指令，点「跟我来」或「到我身边」。"
                 + "也可以直接输 /verity-ai follow、come、stop、goto <x> <y> <z>");
         toggle("启用定时提醒", ModConfig.REMINDER_ENABLED::get, true, ModConfig.REMINDER_ENABLED::set);
-        info("定时提醒", "直接说「20 分钟后提醒我收菜」，或输入 /verity-ai remind 20 收菜");
+        info("定时提醒", "可以说「20 分钟后提醒我收菜」，也可以输入 /verity-ai remind 20 收菜。");
 
         advancedSection("上下文与记录");
         toggle("背包摘要写入对话", ModConfig.INVENTORY_CONTEXT_ENABLED::get, true,
                 ModConfig.INVENTORY_CONTEXT_ENABLED::set);
-        info("背包摘要", "把背包物品统计写进提示词，Verity 才能回答「我还有多少木头」这类问题");
+        info("背包摘要", "让同伴知道你带了什么，才能回答「我还有多少木头」这类问题。");
         if (ModConfig.INVENTORY_CONTEXT_ENABLED.get()) {
             integer("最多列出物品数", ModConfig.INVENTORY_MAX_TYPES.get(), 12, 3, 40,
                     ModConfig.INVENTORY_MAX_TYPES::set);
@@ -1481,15 +1491,67 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             integer("最多保留条数", ModConfig.CHAT_LOG_MAX_ENTRIES.get(), 500, 50, 5000,
                     ModConfig.CHAT_LOG_MAX_ENTRIES::set);
         }
-        action("查看对话记录与日记", "浏览最近的对话、导出文本，或生成一篇日记",
-                () -> minecraft.setScreen(
-                        new com.hanchen.veritycustomapi.client.ConversationLogScreen(this)), "打开");
+
     }
 
     private void systemCategory() {
-        category("高级与诊断", "高级选项与故障排查", "高级与诊断");
+        category("高级与诊断", "连接选项与问题排查", "高级与诊断");
         advancedCategory();
         debugCategory();
+        advancedSection("归档功能");
+        toggle("启用剧情模式（未关闭的工单）", ModConfig.STORY_MODE_ENABLED::get, false, ModConfig.STORY_MODE_ENABLED::set);
+        info("说明", "序章与第一章小样，默认关闭。开启后才有剧情入口、HUD 与右键对话；"
+                + "完全离线，不调用 AI 或付费语音，不影响普通伙伴功能。保存后需重进世界生效。");
+        advancedSection("运行诊断");
+        toggle("记录运行状态", ModConfig.DEBUG_RUNTIME_METRICS::get, false, ModConfig.DEBUG_RUNTIME_METRICS::set);
+        integer("记录间隔（秒）", ModConfig.DEBUG_RUNTIME_METRICS_INTERVAL_SECONDS.get(), 60, 5, 3600,
+                ModConfig.DEBUG_RUNTIME_METRICS_INTERVAL_SECONDS::set);
+        legacyPairingSection();
+    }
+
+    /**
+     * 旧授权方式（配对码）：**仍可用，但只在这里出现**。
+     *
+     * <p>为什么搬走：账户页是玩家唯一会主动打开的地方，配对码摆在那儿等于告诉新玩家
+     * 「要先搞一个六位码」。现在的默认授权是「连接账户」（浏览器登录 + 设备码 全程在游戏内完成），
+     * 配对码只留给两种情况：手上有旧码的老玩家、以及浏览器登录走不通的环境。
+     *
+     * <p><b>只隐藏不停用</b>：控件、校验、兑换流程与以前完全一致。
+     */
+    private void legacyPairingSection() {
+        advancedSection("旧授权方式：配对码（一般不用）");
+        String currentKey = ConfigManager.getCloudApiKey();
+        boolean authorized = currentKey != null && !currentKey.isBlank();
+        if (authorized) {
+            info("登录状态", "已连接 (" + maskKey(currentKey) + ")");
+        }
+        info("什么是配对码", "旧版授权方式：在 verity.xrstudio.cn 登录后生成 6 位码，粘贴到下面。"
+                + "新版推荐直接用「账户 → 连接账户」，无需配对码。");
+        text("配对码", pairingCode, "", v -> pairingCode = v);
+        action("提交配对码", "用配对码完成账户连接（旧方式）", this::exchangePairingCode, "连接");
+        if (authorized) {
+            action("断开当前账户", "断开后设置恢复为本机配置；可用上面任一方式重新连接", () -> {
+                // 🔴 顺序不能乱：
+                // 1) 资源回退要拿**旧 key** 去查哪些私有资源是当前账号的，必须在清除凭据之前；
+                // 2) 必须先 CloudConfigManager.stop() 再保存——
+                //    stop() 会清掉内存里的云端配置与覆盖（clearCloudConfig → CloudOverrides.clear），
+                //    让所有 getter 立刻回到本地值。少了这一步，界面显示「未授权」，
+                //    但运行时还在用云端下发的值、本地改了也会被覆盖抢回去，
+                //    玩家看到的就是「授权清掉了，设置却还是云端那套、改不动」。
+                PairingResourceFallback.apply(currentKey);
+                CloudConfigManager.stop();
+                CloudCredentialStore.getInstance().clearAuthorization();
+                ModConfig.CLOUD_API_KEY.set("");
+                ModConfig.CLOUD_ENABLE.set(false);
+                ConfigManager.saveCommonConfig();
+                pairingCode = "";
+                // 停掉线程后要同步各子系统的运行时状态（TTS/STT/代理/皮肤都缓存了云端线路）
+                ClientEventHandler.onConfigSaved();
+                refreshCurrentCategory();
+                com.hanchen.veritycustomapi.cloud.CloudServiceLore.onDisconnected(minecraft.player);
+                statusOk("已断开账户，设置已恢复为本机配置", 240);
+            }, "断开连接");
+        }
     }
 
     private void buildCategory(String title, String sidebarTitle, Runnable builder) {
@@ -1519,7 +1581,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         boolean sttUnavailable = ConfigManager.isBuiltinRouteTemporarilyUnavailable("stt");
         boolean ttsUnavailable = ConfigManager.isBuiltinRouteTemporarilyUnavailable("tts");
         boolean chatUnavailable = ConfigManager.isBuiltinRouteTemporarilyUnavailable("chat");
-        info("语音识别", !ConfigManager.isEnableVoiceInput() ? "已关闭"
+        info("语音输入", !ConfigManager.isEnableVoiceInput() ? "已关闭"
                 : sttUnavailable ? "暂时不可用" : sttAvailable ? "已配置" : "需要设置");
         if (ConfigManager.getRecognitionMode() == ConfigManager.RecognitionMode.LOCAL
                 && (!voskStatus.contains("可用") || (voskLibStatus != null && voskLibStatus.contains("未包含")))) {
@@ -1530,18 +1592,18 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 || !ConfigManager.snapshotTtsRoutes().isEmpty();
         info("语音朗读", !ConfigManager.isEnableTts() ? "已关闭"
                 : ttsUnavailable ? "暂时不可用" : ttsReady ? "已配置" : "需要设置");
-        info("AI 对话", chatUnavailable ? "暂时不可用"
+        info("对话服务", chatUnavailable ? "暂时不可用"
                 : ConfigManager.snapshotChatRoutes().isEmpty() ? "需要设置" : "已配置");
-        info("云端服务", ConfigManager.isCloudEnabled()
-                ? ConfigManager.isCloudConfigLoaded() ? "已同步" : "同步中…"
+        info("账户连接", ConfigManager.isCloudEnabled()
+                ? ConfigManager.isCloudConfigLoaded() ? "已同步" : "正在同步…"
                 : "已关闭");
         if (chatUnavailable || sttUnavailable || ttsUnavailable) {
-            warning("云端线路", "部分内置线路暂时不可用（当前没有健康线路），会保留最近一次有效配置并自动重试", WARNING);
+            warning("内置线路", "部分内置线路暂时不可用；会继续使用上次可用的配置并自动重试。", WARNING);
         }
 
         if (ConfigManager.isCloudEnabled()) {
             if (ConfigManager.isCloudAuthFailed()) {
-                warning("授权失效", "云端配置密钥已失效，请重新授权（当前仍使用最近一次有效配置）", DANGER);
+                warning("登录已失效", "请重新连接账户。当前仍使用上次同步的配置。", DANGER);
             }
             double remaining = ConfigManager.getCreditsRemainingExact();
             if (remaining < 0) {
@@ -1561,52 +1623,57 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         String currentKey = ConfigManager.getCloudApiKey();
         boolean authorized = currentKey != null && !currentKey.isBlank();
 
-        section("账号授权");
+        // 🔴 「连接账户」是这一页唯一的主操作，直接做成整行大按钮放最上面。
+        // 不再藏在「账户与服务」这种同名的灰色小按钮里——玩家打开账户页
+        // 第一眼要能看到「怎么连上」，而不是在一列灰按钮里找。
+        primaryAction(authorized ? "配置服务与 API" : "连接账户",
+                authorized ? "选择内置模型、音色，或填写自定义 API"
+                           : "连接后先选择服务，再按需测试",
+                () -> {
+                    cacheWidgetValues();
+                    minecraft.setScreen(authorized ? new PlayerServiceConfigScreen(this)
+                            : new InGameCloudSetupScreen(this));
+                });
+
         if (authorized) {
-            info("授权状态", "已授权 (" + maskKey(currentKey) + ")");
-            action("重新授权", "清除当前授权并关闭云端开关，之后可输入新配对码", () -> {
-                // 🔴 顺序不能乱：
-                // 1) 资源回退要拿**旧 key** 去查哪些私有资源是当前账号的，必须在清除凭据之前；
-                // 2) 必须先 CloudConfigManager.stop() 再保存——
-                //    stop() 会清掉内存里的云端配置与覆盖（clearCloudConfig → CloudOverrides.clear），
-                //    让所有 getter 立刻回到本地值。少了这一步，界面显示「未授权」，
-                //    但运行时还在用云端下发的值、本地改了也会被覆盖抢回去，
-                //    玩家看到的就是「授权清掉了，设置却还是云端那套、改不动」。
-                PairingResourceFallback.apply(currentKey);
-                CloudConfigManager.stop();
-                CloudCredentialStore.getInstance().clearAuthorization();
-                ModConfig.CLOUD_API_KEY.set("");
-                ModConfig.CLOUD_ENABLE.set(false);
-                ConfigManager.saveCommonConfig();
-                pairingCode = "";
-                // 停掉线程后要同步各子系统的运行时状态（TTS/STT/代理/皮肤都缓存了云端线路）
-                ClientEventHandler.onConfigSaved();
-                refreshCurrentCategory();
-                statusOk("已清除授权，云端设置已全部退回本地", 240);
-            }, "清除授权");
+            info("登录状态", "已连接 (" + maskKey(currentKey) + ")");
+            info("服务条款", com.hanchen.veritycustomapi.cloud.CloudServiceLore.termsLine());
+            // 「现在到底能不能用」必须直接给结论，不能让玩家自己从一堆状态里推断。
+            String blocker = com.hanchen.veritycustomapi.cloud.CloudReadiness.describe(currentKey);
+            info("连接状态", blocker);
         } else {
-            info("获取配对码", "打开 verity.xrstudio.cn，登录后生成配对码");
-            // 用 warning 而不是 info：info 里带标点的长句会被判成「说明」收进悬停浮层，
-            // 而「必须点按钮」正是最该直接看到的一句。
-            warning("注意", "配对码粘贴到下面后，必须点右侧「授权」按钮；只填不点不会生效", WARNING);
-            text("配对码", pairingCode, "", v -> pairingCode = v);
-            action("提交配对码", "粘贴配对码后点右侧按钮完成授权", this::exchangePairingCode, "授权");
+            info("怎么选", "想省事就用「账户连接」，跟着浏览器提示点两下即可；"
+                    + "想全部自己配好再进游戏，就用下面的配对码。两种方式效果一样。");
         }
+
+        // 🔴 老用户习惯「网页先配好 → 拿 6 位配对码 → 游戏里填一下」。
+        // 这条路径一直存在，只是之前挪进了默认折叠的高级诊断，老用户找不到，
+        // 以为被取消了，才会觉得「新版不会用」。这里放回账户页并写明用途。
+        action("用配对码连接（老方式）",
+                "先在网页把设置全部配好，再回到这里填 6 位配对码",
+                () -> minecraft.setScreen(new InGameCloudSetupScreen(this, InGameCloudSetupScreen.Route.PAIR)),
+                "填入配对码");
+
+        // Builtin choices and custom APIs now share the primary editor; no duplicate entry.
+
+        // 旧授权方式已整体移到「高级诊断 → 旧授权方式」。
+        // 账户页是玩家唯一会主动打开的地方，这里只保留「怎么连上」这一条主线，
+        // 不放任何旧流程的痕迹，免得新玩家以为要先搞一个六位码。
 
         section("云端设置");
         toggle("启用云端配置", ModConfig.CLOUD_ENABLE::get, false, ModConfig.CLOUD_ENABLE::set);
         if (authorized && !ModConfig.CLOUD_ENABLE.get()) {
-            info("当前状态", "已授权，但云端开关是关闭的；打开上面的开关并保存后才会同步云端配置");
+            info("当前状态", "已连接，但云端配置未开启。打开上面的开关并保存后才会同步。");
         }
-        info("同步状态", ConfigManager.isCloudConfigLoaded() ? "云端配置已生效" : "等待云端配置");
+        info("同步状态", ConfigManager.isCloudConfigLoaded() ? "已同步" : "正在同步…");
         // 原来这里有一整组「本地改动与云端的关系」（规则 / 生效时机 / 当前状态），
         // 三行全是说明、没有可操作的控件，纯占地方。只在**真的有本地覆盖**时才提两行。
         int pinnedCount = CloudOverrides.pinnedCount();
         if (pinnedCount > 0) {
-            info("本地接管", "已有 " + pinnedCount + " 项由本地接管，云端下发同值不再覆盖");
-            action("交还云端接管", "清掉本地覆盖记录，这些配置项重新跟随云端下发", () -> {
+            info("本机设置", "有 " + pinnedCount + " 项使用本机设置，不会被云端值覆盖。");
+            action("改用云端设置", "让这些项重新跟随云端配置", () -> {
                 int released = CloudOverrides.releasePins();
-                statusOk("已交还 " + released + " 项给云端，保存后重新拉取会按云端生效", 80);
+                statusOk("已恢复 " + released + " 项云端设置；保存后会重新同步", 80);
                 refreshCurrentCategory();
             }, "全部交还");
         }
@@ -1619,28 +1686,37 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         text("原版朗读音色", OriginalVerityConfigSync.getVoiceValue("voice", "Daniel"), "Daniel",
                 v -> OriginalVerityConfigSync.queueVoiceString("voice", v));
 
+        section("骑乘与站头");
+        if (minecraft == null || minecraft.getCurrentServer() == null || minecraft.hasSingleplayerServer()) {
+            toggle("允许骑乘球形态", ModConfig.SERVER_VERITY_BALL_RIDE::get, true, ModConfig.SERVER_VERITY_BALL_RIDE::set);
+            toggle("仅主人可骑乘", ModConfig.SERVER_VERITY_RIDE_OWNER_ONLY::get, true, ModConfig.SERVER_VERITY_RIDE_OWNER_ONLY::set);
+            toggle("允许站在头顶", ModConfig.SERVER_VERITY_HEAD_PERCH::get, true, ModConfig.SERVER_VERITY_HEAD_PERCH::set);
+        } else {
+            info("骑乘权限", "由服务器配置；可在控制设置中查看操作按键。");
+        }
+        action("查看操作按键", "骑乘、站头、第二视角等按键可在原版控制设置中修改",
+                () -> minecraft.setScreen(new net.minecraft.client.gui.screens.controls.ControlsScreen(this, minecraft.options)), "打开");
+
         section("互动");
         toggle("闲置时自己四处走动", ModConfig.VERITY_WANDER_ENABLED::get, true,
                 ModConfig.VERITY_WANDER_ENABLED::set);
-        info("四处走动", "闲着的时候会绕着你慢慢溜达，看起来更像活的。"
-                + "跟随中、打架中、说话中都不会乱跑；想让它老实站着就关掉");
+        info("四处走动", "没事时在附近散步。跟随、战斗和说话时不会走开。");
         toggle("血量过低时主动帮忙", ModConfig.VERITY_HELP_ENABLED::get, true,
                 ModConfig.VERITY_HELP_ENABLED::set);
-        info("护主", "你的血量掉到一半以下、Verity 又在附近时，会给你一个 8 秒的治疗；"
-                + "30 秒最多一次，不消耗物品和额度");
+        info("护主", "你血量低于一半且同伴在附近时，会为你治疗 8 秒；30 秒最多一次，不消耗物品和额度。");
         toggle("允许给 Verity 送礼", ModConfig.ALLOW_VERITY_GIFT::get, true,
                 ModConfig.ALLOW_VERITY_GIFT::set);
-        info("送礼方式", "潜行 + 丢弃物品（Q），准星对着 Verity；每次消耗 1 个，30 秒冷却，好感度 +1");
+        info("送礼方式", "对准同伴，潜行时丢出物品。每次消耗 1 个，30 秒冷却。");
         toggle("允许踢 Verity", ModConfig.ALLOW_VERITY_KICK::get, true,
                 ModConfig.ALLOW_VERITY_KICK::set);
-        info("踢的方式", "潜行 + 左键：不造成伤害，只把 Verity 推开并让 Verity 回应，10 秒冷却");
+        info("踢的方式", "潜行时左键推开同伴，不会造成伤害。10 秒冷却。");
         toggle("跨存档追击（实验性）", ModConfig.CROSS_SAVE_PURSUIT::get, false,
                 ModConfig.CROSS_SAVE_PURSUIT::set);
-        info("跨存档追击", "Verity 恶魔化后会记住你：删除存档/新建世界仍会追来。"
+        info("跨存档追击", "变成恶魔后可能追到其他存档。"
                 + "击败追击恶魔即可解除；不会锁退出按钮或删除存档");
         integer("每日好感上限", ModConfig.DAILY_KARMA_GAIN_CAP.get(), 3, 0, 20,
                 ModConfig.DAILY_KARMA_GAIN_CAP::set);
-        info("好感上限", "喂食、送礼和 Verity 自己在对话中加的好感共用这个每日额度；0 表示不限制");
+        info("每日上限", "喂食、送礼和对话中的好感共用这个每日上限。0 表示不限制。");
 
         section("恐怖增强");
         toggle("启用分层恐怖导演", ModConfig.HORROR_ENABLED::get, true, ModConfig.HORROR_ENABLED::set);
@@ -1661,14 +1737,14 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 ModConfig.HORROR_ANOMALY_TEXT::set);
         decimal("日常异常频率", ModConfig.HORROR_ANOMALY_FREQUENCY.get(), 1.0D, 0.0D, 3.0D,
                 ModConfig.HORROR_ANOMALY_FREQUENCY::set);
-        info("触发规律", "普通 Verity 在附近时，夜晚、地下、低亮度和独处会提高概率；每次仍有长冷却");
-        info("安全边界", "仅影响本地声音和画面，不生成额外敌人、不破坏方块、不修改世界规则");
+        info("触发规律", "夜晚、地下、光线暗或独自一人时更容易出现，并且有较长冷却。");
+        info("安全边界", "只影响声音和画面，不会生成敌人、破坏方块或改变世界规则。");
 
         Minecraft mc = Minecraft.getInstance();
         boolean remoteServer = mc != null && mc.getCurrentServer() != null && !mc.hasSingleplayerServer();
         if (remoteServer) {
             section("多人服务器限制");
-            info("当前环境", "远程多人服务器，无法修改服务器权威设置");
+            info("当前环境", "你在远程服务器上，这些设置由服务器管理。");
             return;
         }
 
@@ -1692,13 +1768,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         toggle("允许 Verity 变异",
                 ModConfig.ALLOW_VERITY_DEMON_TRANSFORMATION::get, true,
                 ModConfig.ALLOW_VERITY_DEMON_TRANSFORMATION::set);
-        info("变异说明", "关闭后只会阻止之后生成的恶魔，不会移除已经存在的恶魔");
+        info("变异说明", "关闭后不会再生成新的恶魔，已有的不会消失。");
         toggle("残血深渊觉醒（召唤恶魔替身）",
                 ModConfig.VERITY_DEMON_AWAKENING::get, true,
                 ModConfig.VERITY_DEMON_AWAKENING::set);
-        info("觉醒说明", "你被精英怪（最大生命 ≥100）且血量 ≤40% 打到，或被 Boss（≥200）打中时，"
-                + "Verity 会召唤一只 500 血 / 20 攻的恶魔替你顶上去，并给你 3 秒抗性提升 5 级 + 瞬间治疗。"
-                + "恶魔单次最多吃 10 点伤害；你可以亲手把它杀掉，触发原版「解放了黑暗」剧情。");
+        info("觉醒说明", "你被强力敌人打到且血量低于 40% 时，同伴会召唤一只恶魔保护你，并短暂提升你的防御和恢复。");
         toggle("允许踢出或崩溃玩家",
                 () -> OriginalVerityConfigSync.getGeneralBoolean("canCrash", true), true,
                 v -> OriginalVerityConfigSync.queueGeneralBoolean("canCrash", v));
@@ -1720,30 +1794,57 @@ public class NativeOllamaProxyConfigScreen extends Screen {
      * 玩家找「AI 能不能动我的方块」时不会想到去对话设置里翻。
      */
     private void worldToolsCategory() {
-        category("世界交互", "Verity 能不能看、能不能动你的世界", "世界交互");
+        category("世界交互", "同伴的自主行动与工具权限", "世界交互");
 
-        section("总开关");
+        // 请求一次真实状态：菜单原本只有「开启/关闭」两个盲按钮，点完去聊天栏看结果，
+        // 界面并不知道当前开没开、在做什么，玩家会反复点、反复扣额度。
+        requestAutonomyState();
+        AutonomySnapshot autonomy = currentAutonomy();
+
+        section("自主伙伴");
+        if (autonomy == null) {
+            warning("当前状态", "未连接或附近没有属于你的同伴", WARNING);
+            action("刷新状态", "重新读取同伴的自主状态", this::requestAutonomyState, "刷新");
+        } else if (!autonomy.enabled()) {
+            warning("当前状态", "已关闭 · 同伴不会主动行动", MUTED);
+            action("开启自主", "会使用模型额度，并可能改动世界；开启后记住，下次进游戏不用重开",
+                    () -> toggleAutonomy(false), "开启");
+        } else if (autonomy.suspended()) {
+            warning("当前状态", "已暂停 · " + autonomy.describe(), WARNING);
+            action("恢复自主", "继续进行自主行动", () -> sendExistingCommand("verity-autonomy resume"), "恢复");
+        } else {
+            warning("当前状态", "运行中 · " + autonomy.describe(), SUCCESS);
+            action("关闭自主", "停止同伴自己行动，不再产生额度消耗",
+                    () -> toggleAutonomy(true), "关闭");
+        }
+        info("开关会记住", "开启/关闭会写进这只同伴的存档，下次进世界自动沿用；换存档需要重新设置。");
+
+        advancedSection("更多伙伴控制");
+        action("查看状态", "在聊天栏打印完整目标与诊断", () -> sendExistingCommand("verity-autonomy status"), "查看");
+        action("暂停", "立刻停下当前动作，保留开关", () -> sendExistingCommand("verity-autonomy stop"), "暂停");
+        action("继续", "解除暂停并回到陪伴计划", () -> sendExistingCommand("verity-autonomy resume"), "继续");
+        action("留在这里", "让同伴守在当前位置", () -> sendExistingCommand("verity-autonomy hold"), "守点");
+
+        section("工具权限");
         toggle("允许 Verity 读写你的世界", ModConfig.AI_LOCAL_TOOLS_ENABLED::get, true,
                 ModConfig.AI_LOCAL_TOOLS_ENABLED::set);
-        info("说明", "关掉后这 11 个本地工具完全不注入模型，Verity 回到只能聊天的状态；"
-                + "开着才能扫描方块、找方块、读箱子、看背包、读告示牌。");
+        info("工具权限", "决定同伴能不能查看和使用你的世界。自主行动需要另外开启。");
 
         if (ModConfig.AI_LOCAL_TOOLS_ENABLED.get()) {
             section("改动世界");
             toggle("允许采集 / 种植 / 整理", ModConfig.AI_WORLD_EDIT_ENABLED::get, true,
                     ModConfig.AI_WORLD_EDIT_ENABLED::set);
-            info("关掉之后", "只保留只读能力，Verity 不会动任何方块，也不会再主动问「要我挖吗」。");
+            info("改动权限", "决定同伴能不能采集、种植和整理箱子。");
         }
 
-        section("能力边界");
-        info("只读能力", "扫描周围方块、找最近的目标方块、读箱子/熔炉内容、看你的背包、读告示牌——都没有副作用。");
-        info("改动能力", "采集只认自然方块（原木 / 树叶 / 矿石 / 作物），种植只认耕地，"
-                + "整理只认箱子 / 木桶 / 潜影盒；范围 16 格、单次最多 128 个。");
-        info("长任务", "一句话拆成多步交给后台，每 tick 只做一步；单任务最多 200 步 / 10 分钟，你下线会自动取消。");
+        advancedSection("能做什么");
+        info("查看", "附近方块、最近的资源、箱子与熔炉内容、你的背包和告示牌。只读，不会改动。");
+        info("动手", "可以采集自然方块、在耕地上种植、整理箱子、木桶和潜影盒。范围 16 格，单次最多 128 个。");
+        info("较长的任务", "会把一句指令分成多步执行；单个任务最多 10 分钟，你退出游戏时会停止。");
     }
 
     private void aiChatCategory() {
-        category("对话与记忆", "对话服务、人设、记忆与搜索", "对话与记忆");
+        category("对话与记忆", "对话、人设、记忆和联网搜索", "对话与记忆");
         cloudManagedWarning("对话服务、密钥、模型和超时",
                 ModConfig.TARGET_API_URL.get(), ModConfig.TARGET_API_KEY.get(), ModConfig.TARGET_MODEL.get());
         section("使用方式");
@@ -1788,62 +1889,55 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             // 单行框装不下长人设（换行会被 EditBox 过滤掉），长文本建议走「外部自定义文件」。
             text("自定义人设（覆盖预设）", ModConfig.CUSTOM_PERSONA.get(), "",
                     ModConfig.CUSTOM_PERSONA::set);
-            info("填写建议", "这里填一句话描述就会覆盖上面的预设；"
-                    + "人设很长（要分段、带换行）时改用预设里的「外部自定义文件」，单行框存不下换行");
+            info("填写建议", "这里填一句话就会替换上面的预设。人设很长、需要分段时，请选用预设里的「外部自定义文件」。");
             // 让人设「到底生效了没有」一眼可见：以前只能靠翻日志里的一行注入记录
-            info("当前生效人设", describeEffectivePersona());
+            info("当前使用的人设", describeEffectivePersona());
             if (isRemoteServerSession()) {
-                warning("多人游戏", "连服务器时 AI 请求由服务端代理处理，人设要用服务端的 config/verity_extended-common.toml "
-                        + "（或让管理员用 /verity-admin 配置）才会生效；这里改的只影响你自己开的单人世界。", WARNING);
+                warning("多人游戏", "连接服务器时，人设由服务端设置；这里只影响你自己的单人世界。", WARNING);
             }
         }
         section("记忆");
         toggle("启用长期记忆", ModConfig.MEMORY_ENABLED::get, true, ModConfig.MEMORY_ENABLED::set);
         if (ModConfig.MEMORY_ENABLED.get()) {
-            action("管理当前世界记忆", "查看和管理当前世界保存的记忆",
+            action("管理当前世界记忆", "查看、编辑或删除这个世界保存的记忆",
                     () -> minecraft.setScreen(new MemoryManagementScreen(this)), "打开");
             toggle("对话时自动检索记忆", ModConfig.MEMORY_RETRIEVAL_ENABLED::get, true,
                     ModConfig.MEMORY_RETRIEVAL_ENABLED::set);
-            info("检索说明", "把与当前话题最相关的几条记忆直接写进提示词，避免模型忘了翻记忆");
+            info("提示方式", "对话时会自动带上最相关的几条记忆，不需要它自己去翻。");
             if (ModConfig.MEMORY_RETRIEVAL_ENABLED.get()) {
-                integer("每次注入条数", ModConfig.MEMORY_RETRIEVAL_TOP_N.get(), 6, 1, 20,
+                integer("每次带上几条", ModConfig.MEMORY_RETRIEVAL_TOP_N.get(), 6, 1, 20,
                         ModConfig.MEMORY_RETRIEVAL_TOP_N::set);
                 integer("记忆衰减半衰期（天）", ModConfig.MEMORY_DECAY_DAYS.get(), 30, 1, 365,
                         ModConfig.MEMORY_DECAY_DAYS::set);
-                info("衰减说明", "越久没用到的记忆权重越低，数值越大越耐时间冲刷");
+                info("遗忘速度", "越久没用到的记忆越容易被忽略。数值越大，保留得越久。");
             }
             toggle("自动记住对话内容", ModConfig.MEMORY_AUTO_WRITE_ENABLED::get, false,
                     ModConfig.MEMORY_AUTO_WRITE_ENABLED::set);
-            info("自动记忆", "对话结束后额外请求一次模型做摘要并写入记忆，会产生少量额外用量");
+            info("自动记忆", "对话后会多请求一次模型来整理记忆，会产生少量额外用量。");
             if (ModConfig.MEMORY_AUTO_WRITE_ENABLED.get()) {
                 integer("自动记忆最小间隔（秒）", ModConfig.MEMORY_AUTO_WRITE_MIN_INTERVAL_SECONDS.get(), 120, 30, 3600,
                         ModConfig.MEMORY_AUTO_WRITE_MIN_INTERVAL_SECONDS::set);
-                info("间隔说明", "两次自动记忆之间的最短间隔，避免每句话都多请求一次");
+                info("间隔", "两次自动记忆之间至少等待这么久，避免每句话都多一次请求。");
             }
             toggle("记忆按玩家隔离", ModConfig.MEMORY_PER_PLAYER::get, true, ModConfig.MEMORY_PER_PLAYER::set);
-            info("隔离说明", "多人共用一个世界时，自动写入的记忆只对本人可见；原版工具手写的记忆仍为公共");
+            info("隔离说明", "多人共用世界时，自动记下的内容只对自己可见。");
         }
         section("搜索");
         toggle("启用联网搜索", ModConfig.WEB_SEARCH_ENABLED::get, false, ModConfig.WEB_SEARCH_ENABLED::set);
         if (ModConfig.WEB_SEARCH_ENABLED.get()) {
             toggle("每轮都搜索", ModConfig.WEB_SEARCH_ALWAYS::get, false,
                     ModConfig.WEB_SEARCH_ALWAYS::set);
-            info("触发方式", "默认只在话里出现「搜索/最新/今天」这类信号时才搜，漏判就会觉得没反应；"
-                    + "打开上面的开关则每轮都搜，更稳但每句话多一次请求");
+            info("什么时候搜索", "默认只在提到搜索、最新消息时联网。打开上面的开关后每轮都搜索，但每句话都会多一次请求。");
             choice("搜索服务", ModConfig.WEB_SEARCH_PROVIDER.get(), "TAVILY",
                     new String[]{"Tavily", "Brave Search", "DeepSeek", "自定义 API"},
                     new String[]{"TAVILY", "BRAVE", "DEEPSEEK", "CUSTOM"},
                     ModConfig.WEB_SEARCH_PROVIDER::set);
-            info("切换方式", "点一下按顺序循环：Tavily → Brave → DeepSeek → 自定义 API；"
-                    + "选到「自定义 API」会多出 5 个输入项");
             boolean customSearch = "CUSTOM".equalsIgnoreCase(ModConfig.WEB_SEARCH_PROVIDER.get());
             text("搜索访问密钥", ModConfig.WEB_SEARCH_API_KEY.get(), "", ModConfig.WEB_SEARCH_API_KEY::set);
             if (!customSearch) {
-                info("密钥说明", "Tavily 与 Brave 需填各自的 API Key；"
-                        + "DeepSeek 直接填 DeepSeek 平台的 API Key（与对话用的是同一个即可）");
+                info("密钥说明", "Tavily 和 Brave 要填各自平台的密钥；DeepSeek 用对话服务的密钥即可。");
             } else {
-                info("自定义说明", "把任意返回 JSON 的搜索接口接进来：地址、请求体模板、"
-                        + "结果路径、字段映射都可配。密钥可留空（本机或免鉴权服务）。");
+                info("自定义说明", "任何返回 JSON 的搜索接口都可以接入，地址和字段都能自己填。");
                 text("接口地址", ModConfig.WEB_SEARCH_CUSTOM_URL.get(), "",
                         ModConfig.WEB_SEARCH_CUSTOM_URL::set);
                 text("请求体模板", ModConfig.WEB_SEARCH_CUSTOM_BODY.get(),
@@ -1857,11 +1951,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 text("字段映射", ModConfig.WEB_SEARCH_CUSTOM_FIELDS.get(),
                         "title=title,content=summary|snippet,url=url",
                         ModConfig.WEB_SEARCH_CUSTOM_FIELDS::set);
-                info("占位符", "请求体与请求头里可用 {query} 搜索词、{count} 条数、{key} 密钥，"
-                        + "替换时会自动做 JSON 转义");
-                info("结果路径示例", "results / data.results / web.pages；留空表示响应本身就是数组");
-                info("字段映射示例", "title=title,content=summary|snippet,url=url"
-                        + "——竖线表示回退顺序，取第一个非空字段");
+                info("占位符", "请求体和请求头里可以写 {query}（搜索词）、{count}（条数）、{key}（密钥）。");
+                info("结果路径", "结果在响应里的位置，例如 results 或 data.results。留空表示响应本身是列表。");
+                info("字段映射", "用竖线表示备选，例如 content=summary|snippet，会取第一个有值的字段。");
             }
         }
     }
@@ -1870,17 +1962,22 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         section("游戏体验");
         toggle("友好模式（友好对话且禁止恶魔变异）",
                 () -> ModConfig.FRIENDLY_MODE.get(), false, ModConfig.FRIENDLY_MODE::set);
-        info("生效范围", "开启后使用友好、积极的对话语气，并阻止之后生成恶魔实体；不会移除已经存在的恶魔");
+        info("生效范围", "对话会更友好，也不会再生成新的恶魔；已经存在的恶魔不会消失。");
         // 「自定义人设」输入框已搬到「对话与记忆 → 人设」：它和「人设预设」是一回事，
         // 拆在高级与诊断页会让玩家只改预设、根本找不到这个框。
-        section("自定义对话服务");
+        // 云端接管时这些输入会被忽略：收进「本机备用」并默认折叠，避免和账户页重复填写。
+        boolean cloudActive = ModConfig.CLOUD_ENABLE.get() && !ConfigManager.getCloudApiKey().isBlank();
+        advancedSection(cloudActive ? "本机备用对话服务（云端已接管）" : "本机对话服务");
+        if (cloudActive) {
+            info("何时使用", "仅当云端没有可用的对话服务时才会用到；平时改这里不会生效。");
+        }
         choice("服务商", ModConfig.LLM_API_PROVIDER.get(), "CUSTOM_OPENAI",
                 names(ApiProviderEnum.values()), values(ApiProviderEnum.values()), ModConfig.LLM_API_PROVIDER::set);
         text("服务地址", ModConfig.TARGET_API_URL.get(), "", ModConfig.TARGET_API_URL::set);
         text("访问密钥", ModConfig.TARGET_API_KEY.get(), "", ModConfig.TARGET_API_KEY::set);
         text("模型", ModConfig.TARGET_MODEL.get(), "", ModConfig.TARGET_MODEL::set);
         integer("请求超时（秒）", ModConfig.REQUEST_TIMEOUT.get(), 30, 5, 300, ModConfig.REQUEST_TIMEOUT::set);
-        section("自定义语音识别协议");
+        advancedSection("语音识别协议（一般不用改）");
         integer("录音设备采样率", ModConfig.SAMPLE_RATE.get(), 16000, 8000, 48000, ModConfig.SAMPLE_RATE::set);
         choice("请求体格式", ModConfig.SPEECH_REQUEST_FORMAT.get(), "multipart",
                 new String[]{"Multipart", "JSON", "URL 编码"},
@@ -1902,10 +1999,20 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 ModConfig.SPEECH_API_URL.get(), ModConfig.SPEECH_API_KEY.get(), ModConfig.SPEECH_API_MODEL.get());
         section("主设置");
         toggle("启用语音识别", ModConfig.ENABLE_VOICE_INPUT::get, true, ModConfig.ENABLE_VOICE_INPUT::set);
-        toggle("使用内置识别服务", ModConfig.ENABLE_BUILTIN_STT_APIS::get, false,
-                ModConfig.ENABLE_BUILTIN_STT_APIS::set);
-        info("内置识别", "开启=用云端下发的识别线路，不用自己填地址密钥，消耗账号额度；"
-                + "关闭=用下面自己配的在线服务或本地离线模型");
+        // 🔴 显示与写入必须用「真正生效」的来源。
+        // 云端连接后 isEnableBuiltinSttApis() 读的是云端 builtin_api.enableSttApis（云端下发 true），
+        // 而这里原来绑定本机 TOML（默认 false）——菜单显示与运行状态相反，
+        // 玩家点开关只改本机值、下一轮同步又被云端覆盖，看起来就是「这个开关毫无意义」。
+        if (builtinSttManagedByCloud()) {
+            warning("内置识别", builtinSwitchStatus(ConfigManager.isEnableBuiltinSttApis()),
+                    ConfigManager.isEnableBuiltinSttApis() ? SUCCESS : WARNING);
+            info("为什么改不了", "当前由账户设置决定。请到「连接与维护 → 账户 → 服务来源与自定义 API」切换来源。");
+        } else {
+            toggle("使用内置识别服务", ModConfig.ENABLE_BUILTIN_STT_APIS::get, false,
+                    ModConfig.ENABLE_BUILTIN_STT_APIS::set);
+            info("内置识别", "使用平台提供的语音识别，不用自己填地址和密钥，会消耗账户额度。"
+                    + "关闭=用下面自己配的在线服务或本地离线模型");
+        }
         boolean localMode = offlineEnabled && "local".equalsIgnoreCase(ModConfig.RECOGNITION_MODE.get());
         if (offlineEnabled) {
             choice("识别模式", ModConfig.RECOGNITION_MODE.get(), "local",
@@ -1921,8 +2028,12 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         } else if (!offlineEnabled) {
             info("识别模式", "在线识别");
         }
-        if (!localMode && !ModConfig.ENABLE_BUILTIN_STT_APIS.get()) {
-            advancedSection("自定义在线识别");
+        if (!localMode && !ConfigManager.isEnableBuiltinSttApis()) {
+            boolean cloudActive = ModConfig.CLOUD_ENABLE.get() && !ConfigManager.getCloudApiKey().isBlank();
+            advancedSection(cloudActive ? "本机备用语音识别（云端已接管）" : "自定义在线识别");
+            if (cloudActive) {
+                info("何时使用", "仅当云端没有可用的识别服务时才会用到。");
+            }
             choice("服务商", ModConfig.STT_API_PROVIDER.get(), "CUSTOM_OPENAI",
                     names(SttApiProviderEnum.values()), values(SttApiProviderEnum.values()), ModConfig.STT_API_PROVIDER::set);
             text("服务地址", ModConfig.SPEECH_API_URL.get(), "", ModConfig.SPEECH_API_URL::set);
@@ -1937,10 +2048,17 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 ModConfig.TTS_API_URL.get(), ModConfig.TTS_API_KEY.get(), ModConfig.TTS_API_MODEL.get());
         section("主设置");
         toggle("启用语音朗读", ModConfig.ENABLE_TTS::get, true, ModConfig.ENABLE_TTS::set);
-        toggle("使用内置朗读服务", ModConfig.ENABLE_BUILTIN_TTS_APIS::get, false,
-                ModConfig.ENABLE_BUILTIN_TTS_APIS::set);
-        info("内置朗读", "开启=用云端下发的朗读线路和音色（含克隆音色），不用自己填地址密钥，消耗账号额度；"
-                + "关闭=用下面自己配的在线服务或本地离线模型");
+        // 同 STT：云端接管时读的是云端开关，本机 TOML 的值不参与运行，别让开关说谎。
+        if (builtinTtsManagedByCloud()) {
+            warning("内置朗读", builtinSwitchStatus(ConfigManager.isEnableBuiltinTtsApis()),
+                    ConfigManager.isEnableBuiltinTtsApis() ? SUCCESS : WARNING);
+            info("为什么改不了", "当前由账户设置决定。请到「连接与维护 → 账户 → 服务来源与自定义 API」切换来源。");
+        } else {
+            toggle("使用内置朗读服务", ModConfig.ENABLE_BUILTIN_TTS_APIS::get, false,
+                    ModConfig.ENABLE_BUILTIN_TTS_APIS::set);
+            info("内置朗读", "使用平台提供的音色和朗读服务（含克隆音色），不用自己填地址和密钥，会消耗账户额度。"
+                    + "关闭=用下面自己配的在线服务或本地离线模型");
+        }
         boolean localMode = offlineEnabled && "local".equalsIgnoreCase(ModConfig.TTS_MODE.get());
         if (offlineEnabled) {
             choice("语音模式", ModConfig.TTS_MODE.get(), "online",
@@ -1954,7 +2072,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             section("本地朗读");
             text("模型文件夹", ModConfig.TTS_MODEL_PATH.get(), "./config/tts-model", ModConfig.TTS_MODEL_PATH::set);
             integer("输出采样率", ModConfig.TTS_SAMPLE_RATE.get(), 22050, 8000, 48000, ModConfig.TTS_SAMPLE_RATE::set);
-        } else if (ModConfig.ENABLE_BUILTIN_TTS_APIS.get()) {
+        } else if (ConfigManager.isEnableBuiltinTtsApis()) {
             section("内置朗读");
             CloudConfig.MimoVoice[] voices = ConfigManager.getMimoVoices();
             String selectedVoice = ConfigManager.loadMimoVoice();
@@ -1973,15 +2091,25 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                     String label = name + (clone ? "（克隆）" : "（内置）") + (selected ? " · 已选择" : "");
                     action(label, clone ? "使用账号克隆音色，会消耗对应额度" : "使用 MiMo 内置音色", () -> {
                         ConfigManager.saveMimoVoice(voice.id, clone);
-                        ModConfig.ENABLE_BUILTIN_TTS_APIS.set(true);
-                        statusOk("已选择音色：" + name, 120);
+                        // 云端接管时这个本机键不参与运行，别写它、也别谎称已切换来源；
+                        // 只提示音色已保存，来源仍在账户页控制。
+                        if (!builtinTtsManagedByCloud()) {
+                            ModConfig.ENABLE_BUILTIN_TTS_APIS.set(true);
+                        }
+                        statusOk(builtinTtsManagedByCloud()
+                                ? "已选择音色：" + name + "（内置来源由账户设置决定）"
+                                : "已选择音色：" + name, 120);
                         refreshCurrentCategory();
                     }, selected ? "当前" : "选择");
                 }
                 action("刷新云端音色", "重新同步账号可用音色", this::refreshMimoVoices, "刷新");
             }
         } else {
-            advancedSection("自定义在线朗读");
+            boolean cloudActive2 = ModConfig.CLOUD_ENABLE.get() && !ConfigManager.getCloudApiKey().isBlank();
+            advancedSection(cloudActive2 ? "本机备用语音朗读（云端已接管）" : "自定义在线朗读");
+            if (cloudActive2) {
+                info("何时使用", "仅当云端没有可用的朗读服务时才会用到。");
+            }
             choice("服务商", ModConfig.TTS_API_PROVIDER.get(), "CUSTOM_OPENAI",
                     names(TtsApiProviderEnum.values()), values(TtsApiProviderEnum.values()), ModConfig.TTS_API_PROVIDER::set);
             text("服务地址", ModConfig.TTS_API_URL.get(), "", ModConfig.TTS_API_URL::set);
@@ -1997,12 +2125,12 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         section("双语朗读");
         toggle("英文朗读与中文字幕", ModConfig.BILINGUAL_SPEECH_SUBTITLES::get, false,
                 ModConfig.BILINGUAL_SPEECH_SUBTITLES::set);
-        info("双语模式", "让 Verity 说英文、照英文配音；中文译文由系统生成，聊天栏以 [译] 显示，头顶不再重复。"
+        info("双语模式", "同伴说英文，中文译文显示在聊天栏；头顶不重复显示。"
                 + "想换配音语言，去「语音朗读」页的「朗读路线与语言」里改「配音语言」");
         toggle("双语二次翻译兜底", ModConfig.BILINGUAL_SECOND_PASS::get, false,
                 ModConfig.BILINGUAL_SECOND_PASS::set);
-        info("二次翻译", "开启：模型没在同一次回复里给出中文时，系统再调用一次模型补翻译（中文更稳，但每条回复会多等几秒）；关闭：回复最快，模型没给中文时只显示英文");
-        section("语音朗读高级");
+        info("二次翻译", "开启后，模型没给出中文时会再翻译一次，更稳定但会多等几秒。关闭则速度更快。");
+        advancedSection("朗读高级设置");
         toggle("实时语音播报（MiMo）", () -> ModConfig.TTS_STREAM.get(), true, ModConfig.TTS_STREAM::set);
         toggle("同时启用原版朗读", () -> !ModConfig.DISABLE_ORIGINAL_TTS.get(), false,
                 enabled -> ModConfig.DISABLE_ORIGINAL_TTS.set(!enabled));
@@ -2011,7 +2139,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 new String[]{"自动", "原版朗读", "本地离线模型", "网络端点"},
                 new String[]{"auto", "native", "local", "endpoint"},
                 ModConfig.TTS_ROUTE_KIND::set);
-        info("路线", "自动 = 跟随上面的语音模式（老配置不变）；"
+        info("路线", "自动会跟随上面的语音模式。"
                 + "原版 = 完全交给原版朗读，扩展不接管（会顺带把原版 TTS 打开）；"
                 + "本地 = 只用离线模型，不可用时交还原版（不会偷偷改用要花钱的端点）；"
                 + "端点 = 联网合成，不可用时退回本地，再不行交还原版");
@@ -2023,13 +2151,13 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                 new String[]{"照原文念", "简体中文", "English", "日本語", "한국어"},
                 new String[]{"follow", "zh", "en", "ja", "ko"},
                 ModConfig.VOICE_SPEAK_LANGUAGE::set);
-        info("配音语言", "看和念可以各选各的。选了与阅读语言不同的配音语言时，"
+        info("配音语言", "显示语言和朗读语言可以不同。"
                 + "配音前先把台词转换过去；转不动就照原文念，不会因此没声音");
         if (!"follow".equalsIgnoreCase(ModConfig.VOICE_SPEAK_LANGUAGE.get())) {
             text("配音转换服务", ModConfig.VOICE_TRANSLATE_URL.get(), "", ModConfig.VOICE_TRANSLATE_URL::set);
             text("配音转换密钥", ModConfig.VOICE_TRANSLATE_API_KEY.get(), "", ModConfig.VOICE_TRANSLATE_API_KEY::set);
             text("配音转换模型", ModConfig.VOICE_TRANSLATE_MODEL.get(), "", ModConfig.VOICE_TRANSLATE_MODEL::set);
-            info("配音转换线路", "三项都不填就借用对话服务的主线路。"
+            info("翻译服务", "三项都留空时会使用对话服务。"
                     + "想给配音单独配一个便宜、响应快的模型时再填，免得每句台词都去占用主对话模型");
         }
     }
@@ -2062,15 +2190,15 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             warning("云端未启用", "请到「云端与账户」页开启后使用", WARNING);
         } else {
             info("保存方式", "云端皮肤按账号保存，可在资源中心统一管理");
-            action("打开资源中心", "查看、下载、应用和管理云端皮肤", () -> minecraft.setScreen(new ResourceCenterScreen(this)), "打开");
-            action("上传与隐私管理", "在网页资源中心完成", com.hanchen.veritycustomapi.resource.ResourceUploadClient::openWebsite, "打开");
+            action("打开资源中心", "浏览、下载和应用云端皮肤管理", () -> minecraft.setScreen(new ResourceCenterScreen(this)), "打开");
+            action("上传与隐私管理", "在网页打开资源中心", com.hanchen.veritycustomapi.resource.ResourceUploadClient::openWebsite, "打开");
         }
 
         // ===== 本地皮肤 =====
         section("本地皮肤");
         java.util.List<String> availableSkins = skinMgr.getAvailableSkins();
         if (availableSkins.isEmpty()) {
-            info("本地皮肤", "还没有本地皮肤，请放入皮肤文件或从云端下载");
+            info("本地皮肤", "还没有本地皮肤。可以放入皮肤文件，或从云端下载。");
         }
         for (String name : availableSkins) {
             boolean isActive = name.equals(activeSkin);
@@ -2092,10 +2220,10 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
         // ===== 原版个性化（直接调用原版实现）=====
         advancedSection("原版个性化");
-        info("说明", "直接调用原版 Verity 的个性化设置，预览图会跟随色相变化");
+        info("说明", "使用原版个性化设置，预览会随色相变化。");
         image("Verity 预览", 96);
         hueSlider("自定义颜色（色相）", OriginalVerityPersonalization.getHue());
-        info("色相说明", "0 = 原始颜色，1-360 = 色相偏移；拖动时上方预览会实时变化");
+        info("色相", "0 是原始颜色，1–360 是色相偏移。拖动时上方预览会实时变化。");
         text("自定义名称", OriginalVerityPersonalization.getCustomName(), "Verity",
                 OriginalVerityPersonalization::setCustomName);
         text("人格", OriginalVerityPersonalization.getPersonality(), "",
@@ -2116,8 +2244,8 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                     ModConfig.PROACTIVE_LOW_HEALTH_EVENT::set);
             toggle("分级提醒（50% / 25% / 10%）", ModConfig.PROACTIVE_HEALTH_TIERS::get, true,
                     ModConfig.PROACTIVE_HEALTH_TIERS::set);
-            info("分级说明", "开启后每档只提醒一次，血量回到 60% 以上才会重新提醒");
-            info("关闭分级", "关闭后只在血量低于 25% 时提醒一次，回到 35% 以上重新武装");
+            info("分级说明", "每档只提醒一次，血量回到 60% 以上才会重新提醒。");
+            info("关闭分级", "只在血量低于 25% 时提醒一次，回到 35% 以上才会再次提醒。");
 
             section("环境事件");
             toggle("昼夜交替", ModConfig.PROACTIVE_DAY_NIGHT_EVENT::get, false,
@@ -2136,19 +2264,19 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             advancedSection("节奏控制");
             integer("全局回应冷却（秒）", ModConfig.PROACTIVE_COOLDOWN_SECONDS.get(), 300, 30, 3600,
                     ModConfig.PROACTIVE_COOLDOWN_SECONDS::set);
-            info("冷却说明", "所有事件共用这个冷却，冷却期内不会重复打扰你");
+            info("冷却", "所有事件共用这个冷却时间，期间不会重复打扰你。");
             integer("战斗静默（秒）", ModConfig.PROACTIVE_COMBAT_SILENCE_SECONDS.get(), 15, 0, 120,
                     ModConfig.PROACTIVE_COMBAT_SILENCE_SECONDS::set);
-            info("战斗静默", "你出手攻击或挨打后的这段时间内不打扰，填 0 表示关闭");
+            info("战斗时安静", "战斗开始或受伤后的一段时间不会主动说话。填 0 关闭。");
             toggle("定时闲聊", ModConfig.PROACTIVE_IDLE_CHAT::get, false, ModConfig.PROACTIVE_IDLE_CHAT::set);
-            info("闲聊说明", "长时间没有事件时主动说一句，只在游戏进行中计时");
+            info("闲聊", "长时间没有事件时会主动说一句，只在游戏中计时。");
             if (ModConfig.PROACTIVE_IDLE_CHAT.get()) {
                 integer("闲聊间隔（分钟）", ModConfig.PROACTIVE_IDLE_INTERVAL_MINUTES.get(), 20, 5, 180,
                         ModConfig.PROACTIVE_IDLE_INTERVAL_MINUTES::set);
             }
             toggle("高优先级事件排队补发", ModConfig.PROACTIVE_DEFER_EVENTS::get, true,
                     ModConfig.PROACTIVE_DEFER_EVENTS::set);
-            info("排队说明", "上一句还没说完时，更重要的事件（如死亡）会等结束后补发，而不是直接丢掉");
+            info("排队说明", "上一句还没说完时，重要事件会等说完再提醒，不会直接丢掉。");
 
             if (!RuntimePlatform.isAndroidRuntime()) {
                 advancedSection("通知");
@@ -2179,7 +2307,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         } else if (devices.isEmpty()) {
             // 首次进入这一页时自动枚举一次；失败过就不再重复起进程
             com.hanchen.veritycustomapi.client.CameraDeviceService.requestOnce(this::refreshCurrentCategory);
-            info("尚未检测", "点下面的「检测摄像头」枚举设备");
+            info("尚未检测", "点下面的「检测摄像头」查看可用设备。");
         } else {
             java.util.List<String> labels = new java.util.ArrayList<>();
             java.util.List<String> values = new java.util.ArrayList<>();
@@ -2192,7 +2320,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             choice("摄像头设备", ModConfig.CAMERA_DEVICE_NAME.get(), "",
                     labels.toArray(new String[0]), values.toArray(new String[0]),
                     ModConfig.CAMERA_DEVICE_NAME::set);
-            info("说明", "有多台设备时，选能出画面的那台");
+            info("设备", "有多台摄像头时，选能看到画面的那台。");
         }
         action("检测摄像头", "重新枚举本机摄像头设备（约 1 秒）", () -> {
             com.hanchen.veritycustomapi.client.CameraDeviceService
@@ -2225,18 +2353,18 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         section("总开关");
         toggle("启用视觉能力", ModConfig.CAMERA_ENABLED::get, false, ModConfig.CAMERA_ENABLED::set);
         if (!ModConfig.CAMERA_ENABLED.get()) {
-            info("说明", "开启后 AI 可在需要时主动采集画面看你，无需按键；也可按 O 键立即看一眼");
+            info("说明", "开启后同伴可以在需要时主动查看画面，也可以按 O 立即查看。");
             return;
         }
-        info("快捷键", "游戏内按 O 键（可在「选项 → 控制」里改键）可立即让 Verity 看一眼当前画面");
-        info("所需条件", "对话服务需要支持看图（多模态）模型，例如 gpt-4o / qwen-vl / glm-4v 等");
+        info("快捷键", "按 O 可以立即让同伴看一眼当前画面，按键可在控制设置中修改。");
+        info("需要什么", "对话服务要支持看图，例如 gpt-4o、qwen-vl、glm-4v。");
 
         section("画面来源");
         choice("采集来源", ModConfig.CAMERA_SOURCE.get(), "camera",
                 new String[]{"摄像头 + 游戏画面", "只看真实摄像头", "只看游戏内画面"},
                 new String[]{"both", "camera", "screen"},
                 ModConfig.CAMERA_SOURCE::set);
-        info("说明", "游戏画面=当前屏幕截图（含 HUD 和打开的界面），让 AI 能看到你在游戏里的场景");
+        info("游戏画面", "截图会包含屏幕和打开的界面。");
         boolean useCamera = ConfigManager.isCameraSourceCamera();
         boolean useScreen = ConfigManager.isCameraSourceScreen();
 
@@ -2279,7 +2407,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             } else {
                 // 手机端只用 HTTP 快照，不显示后端与设备枚举
                 section("摄像头快照地址");
-                info("说明", "手机端通过局域网快照地址取画面，填手机端拍照 App 提供的 HTTP 图片地址");
+                info("手机画面", "填写手机拍照应用提供的图片地址。");
                 text("HTTP 快照地址", ModConfig.CAMERA_HTTP_URL.get(), "", ModConfig.CAMERA_HTTP_URL::set);
             }
         }
@@ -2297,9 +2425,9 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         integer("采集超时（毫秒）", ModConfig.CAMERA_CAPTURE_TIMEOUT_MS.get(), 6000, 1000, 30000, ModConfig.CAMERA_CAPTURE_TIMEOUT_MS::set);
 
         section("按需查看");
-        info("采集时机", "画面不会随每条对话自动附带，只有 AI 判断需要时才会调用");
+        info("什么时候看", "画面不会随每条消息附带，只在需要时查看。");
         toggle("允许 AI 主动调用视觉", ModConfig.CAMERA_SKILL_ENABLED::get, true, ModConfig.CAMERA_SKILL_ENABLED::set);
-        info("说明", "开启后会把视觉能力写进人设；AI 需要时会在回复里请求一张新画面");
+        info("说明", "开启后同伴知道自己能看图，需要时会主动请求画面。");
         toggle("主动事件附带画面", ModConfig.CAMERA_SEND_ON_PROACTIVE_EVENT::get, false, ModConfig.CAMERA_SEND_ON_PROACTIVE_EVENT::set);
 
         advancedSection("视觉模型");
@@ -2314,7 +2442,11 @@ public class NativeOllamaProxyConfigScreen extends Screen {
                     () -> startCameraTest(true), CAMERA_TEST_RUNNING.get() ? "测试中" : "开始测试");
         }
         if (cameraTestResult != null) {
-            info("上次测试结果", cameraTestResult);
+            // 🔴 必须用 warning 常驻显示，不能用 info：
+            // info 会把长句挂到上一行按钮的悬停提示里，玩家点完「测试采集」只看到一条失败状态，
+            // 真实原因（PowerShell 报错 / 超时 / 隐私权限）藏在鼠标悬停里，等于没有。
+            warning("上次测试结果", cameraTestResult,
+                    cameraTestOk ? VerityUiTheme.SUCCESS : VerityUiTheme.DANGER);
         }
     }
 
@@ -2362,7 +2494,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
     private void debugCategory() {
         section("游戏日志");
-        info("日志位置", "游戏目录/logs/latest.log");
+        info("日志位置", "游戏目录下的 logs/latest.log");
         action("打开 latest.log", "用默认程序打开当前日志",
                 () -> openLogTarget(false), "打开");
         action("打开日志目录", "在文件管理器中打开 logs 目录",
@@ -2377,6 +2509,17 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             minecraft.keyboardHandler.setClipboard(result.target().toString());
             statusMessage += "，路径已复制";
         }
+    }
+
+    /** Use existing server-validated command handlers; never mutate server entities from this screen. */
+    private void sendExistingCommand(String command) {
+        if (minecraft == null || minecraft.player == null || minecraft.player.connection == null) {
+            statusFail("请先进入世界并靠近属于你的 Verity", 80);
+            return;
+        }
+        cacheWidgetValues();
+        minecraft.player.connection.sendCommand(command);
+        statusOk("指令已发送；执行结果见聊天记录", 80); // Do not discard the open screen or its unsaved drafts.
     }
 
     // ==================== Builder Helpers ====================
@@ -2394,7 +2537,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
     private void section(String title) {
         Category category = currentCategory();
-        category.rows.add(new SectionRow(title, "高级与诊断".equals(category.title)));
+        category.rows.add(new SectionRow(title, "高级与诊断".equals(category.title) || ConfigNavigation.collapsedByDefault(title)));
     }
 
     /** 高级参数与说明型分组默认收起，用户仍可点击标题展开。 */
@@ -2483,7 +2626,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
      * 本地一直为空时这些设置本来就来自云端，不必再提示。
      *
      * @param fields      这一组设置的文案
-     * @param localValues 该组对应的本地配置项；全为空则不提示
+     * @param localValues 该组对应的本机设置；全为空则不提示
      */
     private void cloudManagedWarning(String fields, String... localValues) {
         if (!ModConfig.CLOUD_ENABLE.get()) return;
@@ -2495,7 +2638,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             }
         }
         if (!localConfigured) return;
-        warning("云端已启用", fields + "会优先使用云端下发的值；在这里修改只会保存为本地备用配置", WARNING);
+        warning("云端已启用", fields + "以云端设置为准；这里修改只会作为本机备用。", WARNING);
     }
 
     private void action(String label, String hint, Runnable action) {
@@ -2504,6 +2647,20 @@ public class NativeOllamaProxyConfigScreen extends Screen {
 
     private void action(String label, String hint, Runnable action, String buttonText) {
         currentCategory().rows.add(new ActionRow(label, hint, action, buttonText));
+    }
+
+    /**
+     * 主操作：**整行宽的大按钮**，放在分类最上面。
+     *
+     * <p>为什么单独做一种行：右侧小按钮容易被当成普通条目略过。
+     * 「连接账户」是这一页唯一要做的事，必须是玩家打开就能点的东西，
+     * 而不是在一堆同名灰按钮里找。
+     *
+     * @param title    按钮上的主文案
+     * @param subtitle 按钮下方一行说明（可空）
+     */
+    private void primaryAction(String title, String subtitle, Runnable action) {
+        currentCategory().rows.add(new PrimaryActionRow(title, subtitle, action));
     }
 
     private void text(String label, String value, Consumer<String> saver) {
@@ -2530,6 +2687,124 @@ public class NativeOllamaProxyConfigScreen extends Screen {
         DoubleRow row = new DoubleRow(label, value, defaultValue, min, max, saver);
         currentCategory().rows.add(row);
         values.add(row);
+    }
+
+    /**
+     * 内置语音开关是否由云端决定。
+     *
+     * <p>{@code ConfigManager.isEnableBuiltin*Apis()} 的顺序是「云端 builtin_api 有值就用云端」，
+     * 本机 TOML 只是云端没下发时的兜底。所以云端一旦接管，本机开关既不显示真实状态，
+     * 改了也会被下一次同步盖回去——必须换成只读状态行，别让玩家以为它在起作用。
+     */
+    private static boolean builtinSttManagedByCloud() {
+        return builtinManagedByCloud(true);
+    }
+
+    private static boolean builtinTtsManagedByCloud() {
+        return builtinManagedByCloud(false);
+    }
+
+    private static boolean builtinManagedByCloud(boolean stt) {
+        if (!ConfigManager.isCloudEnabled()) return false;
+        com.hanchen.veritycustomapi.cloud.BuiltinApiConfig builtin =
+                ConfigManager.getCloudBuiltinApi();
+        if (builtin == null) return false;
+        return stt ? builtin.enableSttApis != null : builtin.enableTtsApis != null;
+    }
+
+    private static String builtinSwitchStatus(boolean enabled) {
+        return enabled ? "正在使用平台内置服务（账户设置）" : "未使用平台内置服务（账户设置）";
+    }
+
+    /** 菜单里的自主状态快照；{@code null} 表示还没收到服务端状态。 */
+    private record AutonomySnapshot(boolean enabled, boolean suspended, String intent, String goal, String note) {
+        String describe() {
+            StringBuilder text = new StringBuilder();
+            text.append(intentName(intent));
+            if (suspended) text.append("（已暂停）");
+            if (goal != null && !goal.isBlank()) text.append(" · ").append(goal);
+            if (note != null && !note.isBlank()) text.append(" · ").append(note);
+            return text.toString();
+        }
+
+        /** 服务端给的是枚举名，直接显示英文会和其它中文文案混在一起。 */
+        private static String intentName(String intent) {
+            if (intent == null) return "空闲";
+            return switch (intent) {
+                case "IDLE" -> "空闲";
+                case "WAIT" -> "等待中";
+                case "FOLLOW" -> "跟随中";
+                case "EXPLORE" -> "活动中";
+                case "GUARD" -> "警戒中";
+                case "MOVE_TO" -> "正在前往目标";
+                default -> "空闲";
+            };
+        }
+    }
+
+    /**
+     * 读取当前同伴的自主状态。
+     *
+     * <p>只读客户端缓存（由服务端下发），绝不在渲染线程发请求或查询服务端实体：
+     * 单人游戏时这仍然是一次主线程读 map；多人时数据来自数据包。
+     */
+    private AutonomySnapshot currentAutonomy() {
+        if (minecraft == null || minecraft.player == null || minecraft.level == null) return null;
+        for (var entity : minecraft.level.entitiesForRendering()) {
+            if (!(entity instanceof varmite.verity.entity.verity.VerityEntity verity)) continue;
+            var snapshot = com.hanchen.veritycustomapi.autonomy.ClientAutonomyState.get(verity.getId());
+            if (snapshot != null) {
+                return new AutonomySnapshot(snapshot.enabled(), snapshot.suspended(),
+                        snapshot.intent(), snapshot.goal(), snapshot.note());
+            }
+        }
+        return null;
+    }
+
+    /** 向服务端要一次最新状态；结果通过数据包回到 {@code ClientAutonomyState}。 */
+    private void requestAutonomyState() {
+        com.hanchen.veritycustomapi.network.AutonomyNetwork.request(-1);
+    }
+
+    /**
+     * 切换自主开关后立刻重新拉状态。
+     *
+     * <p>重新拉取而不是本地改值：真正的启用状态只在服务端，客户端自己翻转只会在
+     * 权限不足或实体不在线时显示一个假的「已开启」。
+     */
+    /**
+     * 按「当前是否已开启」下发相反的命令，然后重新拉状态。
+     *
+     * <p>不在本地翻转显示值：真正的启用状态只在服务端，客户端自己改只会在权限不足、
+     * 同伴不在加载范围等情况下显示一个假的「已开启」。
+     */
+    private void toggleAutonomy(boolean currentlyOn) {
+        if (minecraft == null || minecraft.player == null || minecraft.player.connection == null) {
+            statusFail("请先进入世界并靠近属于你的同伴", 80);
+            return;
+        }
+        cacheWidgetValues();
+        minecraft.player.connection.sendCommand(currentlyOn ? "verity-autonomy off" : "verity-autonomy on");
+        // 命令异步执行：先取一次（可能要等下一 tick），界面会在状态到达后自动重建
+        requestAutonomyState();
+        rebuildPending = true;
+        statusOk("指令已发送，正在读取最新状态…", 80);
+    }
+
+    /**
+     * 自主状态回流：只在「世界交互」页、且状态发生变化时重建，避免每 tick 重建整页。
+     *
+     * <p>为什么要比对签名：重建会清空滚动位置和控件焦点，状态没变却每 tick 重建，
+     * 玩家会发现列表一直往回弹。
+     */
+    private void tickAutonomySync() {
+        if (!"世界交互".equals(currentCategory().title)) return;
+        AutonomySnapshot now = currentAutonomy();
+        String signature = now == null ? "none" : now.enabled() + "|" + now.suspended() + "|"
+                + now.intent() + "|" + now.goal() + "|" + now.note();
+        if (signature.equals(lastAutonomySignature)) return;
+        lastAutonomySignature = signature;
+        rebuildPending = true;
     }
 
     private void toggle(String label, BooleanSupplier getter, Consumer<Boolean> saver) {
@@ -2700,10 +2975,7 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             int blockTop = top + SECTION_GAP;
             int blockBottom = top + getHeight() - 3;
             if (blockBottom <= blockTop) return;
-            VerityUiDraw.fillRounded(graphics, left, blockTop, left + rowWidth, blockBottom,
-                    3, VerityUiTheme.CARD_RAISED);
-            VerityUiDraw.fillRounded(graphics, left, blockTop, left + 3, blockBottom, 2, ACCENT);
-            graphics.fill(left + 3, blockTop, left + rowWidth, blockTop + 1, VerityUiTheme.ACCENT_SOFT);
+            graphics.fill(left+4,blockBottom-1,left+rowWidth-4,blockBottom,VerityUiTheme.SEPARATOR);
             boolean collapsed = !categories.isEmpty() && isCollapsed(categories.get(categoryIndex).title);
             // 文字在块内垂直居中：块高 23、字高 9 → 相对块顶 7
             int textY = blockTop + 7;
@@ -2926,6 +3198,52 @@ public class NativeOllamaProxyConfigScreen extends Screen {
             for (int i = 0; i < lines.size(); i++) {
                 graphics.drawString(font, lines.get(i), hintLeft, top + 7 + i * LINE_HEIGHT, MUTED);
             }
+        }
+    }
+
+    /**
+     * 整行宽的强调按钮：用于「这一页最重要的一件事」。
+     *
+     * <p>与 {@link ActionRow} 的区别只在视觉：没有左侧标签、按钮铺满整行、用强调色。
+     * 说明文字放在按钮下方单独一行，不挤在按钮里。
+     */
+    private class PrimaryActionRow extends Row {
+        private final String title;
+        private final String subtitle;
+        private final Runnable action;
+
+        PrimaryActionRow(String title, String subtitle, Runnable action) {
+            this.title = title;
+            this.subtitle = subtitle;
+            this.action = action;
+        }
+
+        private boolean hasSubtitle() {
+            return subtitle != null && !subtitle.isBlank();
+        }
+
+        @Override
+        int getHeight() {
+            // 按钮 26 + 说明 12（含间距）；没有说明就只留按钮
+            return hasSubtitle() ? 26 + 14 : 26 + 6;
+        }
+
+        @Override
+        void addWidgets(int left, int top, int rowWidth) {
+            if (!isRowVisible(top, getHeight())) return;
+            addRenderableWidget(roundedButton(left + 6, top + 2, rowWidth - 12, 26,
+                    Component.literal(title),
+                    // ACCENT 是浅黄底，必须配深色文字才读得清
+                    VerityUiTheme.ACCENT, VerityUiTheme.BACKGROUND,
+                    button -> action.run()));
+        }
+
+        @Override
+        void render(GuiGraphics graphics, int left, int top, int rowWidth) {
+            if (!isRowVisible(top, getHeight())) return;
+            if (!hasSubtitle()) return;
+            graphics.drawString(font, fitText(font, subtitle, rowWidth - 16),
+                    left + 8, top + 32, MUTED);
         }
     }
 

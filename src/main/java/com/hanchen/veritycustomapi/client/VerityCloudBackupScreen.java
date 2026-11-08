@@ -186,7 +186,7 @@ public final class VerityCloudBackupScreen extends Screen {
     }
 
     private int panelLeft() {
-        return Math.max(8, (width - Math.min(620, width - 16)) / 2);
+        return com.hanchen.veritycustomapi.config.VerityWindowLayout.panelLeft(width, height, 500);
     }
 
     private int panelRight() {

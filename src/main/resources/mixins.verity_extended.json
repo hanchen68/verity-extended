@@ -7,6 +7,7 @@
   "plugin": "com.hanchen.veritycustomapi.mixin.MixinPlugin",
   "mixins": [
     "AiApiMemoryIsolationMixin",
+    "AiManagerPrivateChatLegacyMixin",
     "AiManagerPrivateChatMixin",
     "AiManagerPrivateChatV2Mixin",
     "EntityPerchRideMixin",
@@ -29,6 +30,7 @@
   ],
   "client": [
     "CameraAccessor",
+    "CameraSecondSightMixin",
     "ChatHudRendererMixin",
     "GuardianDemonSoundMixin",
     "PatPatClientRendererMixin",

@@ -28,8 +28,8 @@ public final class MemoryManagementScreen extends Screen {
     private static final int MUTED = VerityUiTheme.MUTED;
     private static final int ACCENT = VerityUiTheme.ACCENT;
     private static final int DANGER = VerityUiTheme.DANGER;
-    private static final int ROW_HOVER = 0x332D3942;
-    private static final int ROW_SELECTED = 0x55314854;
+    private static final int ROW_HOVER = VerityUiTheme.ROW_HOVER;
+    private static final int ROW_SELECTED = VerityUiTheme.CARD_RAISED;
     private static final int ROW_HEIGHT = 30;
     private final Screen parent;
     private final List<Map.Entry<String, String>> entries = new ArrayList<>();
@@ -270,7 +270,7 @@ public final class MemoryManagementScreen extends Screen {
         com.hanchen.veritycustomapi.client.ScreenBackgrounds.draw(this, graphics);
         int left = getPanelLeft();
         int right = getPanelRight();
-        VerityUiDraw.card(graphics, left, 10, right, height - 8, 5);
+        VerityUiDraw.card(graphics, left, 8, right, height - 8, 5);
         graphics.drawString(font, "记忆", left + 12, 18, TEXT);
         graphics.drawString(font, font.plainSubstrByWidth(
                         "当前世界 · 最多保存 500 条 · 前缀决定分类（pref/fact/place/plan/temp）", right - left - 24),
@@ -339,7 +339,7 @@ public final class MemoryManagementScreen extends Screen {
     }
 
     private int getPanelLeft() {
-        return Math.max(8, (width - Math.min(760, width - 16)) / 2);
+        return com.hanchen.veritycustomapi.config.VerityWindowLayout.panelLeft(width, height, 640);
     }
 
     private int getPanelRight() {

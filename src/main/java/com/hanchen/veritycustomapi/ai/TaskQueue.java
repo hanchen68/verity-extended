@@ -13,6 +13,10 @@ import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 跨 tick 的持续任务队列。
@@ -86,8 +90,34 @@ public final class TaskQueue {
      * @param steps 步骤数组，每项形如 {@code {"tool":"harvest_area","args":{...}}}
      * @return 给模型看的执行结果文本
      */
-    public static synchronized String submit(ServerPlayer player, String goal, JsonArray steps) {
+    public static String submit(ServerPlayer player, String goal, JsonArray steps) {
         if (player == null) return "没有找到正在对话的玩家，任务无法提交。";
+        MinecraftServer server = player.getServer();
+        if (server == null || server.isStopped()) return "失败：服务器不可用，任务无法提交。";
+        if (server.isSameThread()) return submitOnServer(player, goal, steps);
+        // 不能持有 TaskQueue 锁等待主线程；主线程 tick/isBusy 也需要同一把锁。
+        JsonArray snapshot = steps == null ? null : steps.deepCopy();
+        CompletableFuture<String> pending = server.submit(() -> submitOnServer(player, goal, snapshot));
+        try {
+            return pending.get(15, TimeUnit.SECONDS);
+        } catch (InterruptedException interrupted) {
+            pending.cancel(false);
+            Thread.currentThread().interrupt();
+            return "失败：等待任务提交被中断；请先查询任务状态，不要重复提交。";
+        } catch (TimeoutException timeout) {
+            pending.cancel(false);
+            return "失败：等待任务提交超时；若已经开始执行，请先查询任务状态，不要重复提交。";
+        } catch (ExecutionException failure) {
+            OllamaProxyMod.LOGGER.warn("[任务] 主线程提交失败: {}", failure.getCause().toString());
+            return "失败：任务提交执行出错；请先查询任务状态。";
+        }
+    }
+
+    private static synchronized String submitOnServer(ServerPlayer player, String goal, JsonArray steps) {
+        if (player == null) return "没有找到正在对话的玩家，任务无法提交。";
+        MinecraftServer server = player.getServer();
+        if (server == null || !server.isSameThread() || server.isStopped()) return "失败：任务只能在运行中的服务端主线程提交。";
+        if (!player.isAlive() || server.getPlayerList().getPlayer(player.getUUID()) != player) return "失败：玩家已下线或死亡，任务没有提交。";
         if (steps == null || steps.isEmpty()) return "步骤为空，任务没有提交。";
         if (steps.size() > MAX_STEPS) {
             return "步骤太多了（" + steps.size() + " 步，上限 " + MAX_STEPS + "），请拆成几个更小的任务。";
@@ -159,6 +189,13 @@ public final class TaskQueue {
         return "任务已开始：" + task.goal + "，共 " + task.total + " 步。"
                 + "第一步已经做完：" + firstResult + " "
                 + "剩下的 " + (task.total - task.done) + " 步我在后台继续做，做完告诉你。";
+    }
+
+    /** 判断当前玩家是否仍有未结束的步骤，供自主行为避免抢占任务。 */
+    public static synchronized boolean isBusy(ServerPlayer player) {
+        if (player == null) return false;
+        Task task = TASKS.get(player.getUUID());
+        return task != null && task.state == State.RUNNING;
     }
 
     /** 查询进度。 */

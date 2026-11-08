@@ -14,7 +14,7 @@ public final class CloudProtocolTest {
     public static void main(String[] args) {
         // 版本号变更的「绊线」：改 build.gradle / FALLBACK_VERSION 时这里会失败，
         // 提醒同步确认云端协议（mod_version 上报）也要一起发布。
-        require("5.1".equals(CloudConfigFetcher.modVersion()), "cloud request mod version is stale");
+        require("5.3".equals(CloudConfigFetcher.modVersion()), "cloud request mod version is stale");
         // 配对失败时**必须**把服务端那句话带出来。曾经非 200 直接把 body 丢掉，
         // 玩家只看到「配对失败（HTTP 400）」，而真正的原因是「配对码格式无效」（长度不是 6 位）。
         require("配对码格式无效".equals(CloudConfigFetcher.extractServerMessage(
@@ -45,20 +45,8 @@ public final class CloudProtocolTest {
         require(billingConfig.billing.protocolVersion == 2
                         && Boolean.TRUE.equals(billingConfig.billing.preAuthorizationRequiredForPaidChat),
                 "billing protocol v2 was not parsed");
-        require("https://verity.xrstudio.cn/api/v1/credits/reserve".equals(
-                        CloudBillingClient.resolveEndpoint("https://verity.xrstudio.cn/api/v1/getconfig",
-                                "/api/v1/credits/reserve", "/credits/reserve")),
-                "relative billing endpoint was resolved incorrectly");
-        requireThrows(() -> CloudBillingClient.resolveEndpoint("https://verity.xrstudio.cn/api/v1/getconfig",
-                "https://evil.example/credits/deduct", "/credits/deduct"),
-                "cross-origin billing endpoint was accepted");
-        require(BillingService.fingerprint("account-a").equals(BillingService.fingerprint("account-a"))
-                        && !BillingService.fingerprint("account-a").equals(BillingService.fingerprint("account-b")),
-                "billing account fingerprint is unstable");
-        requireThrows(() -> BillingService.requireRequestId("short"), "short request id accepted");        require("request-12345678".equals(BillingService.requireRequestId("request-12345678")),
-                "valid request id rejected");
-        require(BillingService.pendingDelay(1) == 30000L && BillingService.pendingDelay(10) == 300000L,
-                "pending billing retry delay is invalid");
+        // 计费已整体交给云端：模组不再解析结算端点、生成账户指纹或重放待结算记录。
+        // 这里仅保留「协议字段仍能被解析」的断言，避免云端下发协议结构变化时无人察觉。
         RouteDto free = route("free", "free:0", 2);
         RouteDto paidHigh = route("paid", "paid:1", 9);
         RouteDto paidLow = route("paid", "paid:0", 1);
@@ -136,13 +124,7 @@ public final class CloudProtocolTest {
 
         require(UsageMeter.characters("A😀B") == 4, "TTS usage is not UTF-16 length");
 
-        JsonObject usage = new JsonObject();
-        usage.addProperty("characters", 4);
-        CloudBillingClient.DeductRequest request = new CloudBillingClient.DeductRequest(
-                "tts", "paid", "paid:0", "request-1", usage, false, "client-1");
-        JsonObject json = new Gson().toJsonTree(request).getAsJsonObject();
-        require(json.has("route_id") && json.has("request_id") && json.has("client_id"), "billing fields missing");
-
+        // 扣费请求体已随结算客户端一起移除（计费交给云端），此处不再构造。
         Gson gson = new Gson();
         require(gson.fromJson("{\"is_public\":0}", CloudSkin.class).isPublic == 0, "skin 0 flag failed");
         require(gson.fromJson("{\"is_public\":1}", CloudSkin.class).isPublic == 1, "skin 1 flag failed");
@@ -185,23 +167,7 @@ public final class CloudProtocolTest {
         require(UsageMeter.chat("{\"messages\":[{\"content\":\"hello\"}]}", "{}", "world", true) != null,
                 "free Chat usage estimation missing");
 
-        CloudBillingClient.DeductResult rateLimited = CloudBillingClient.DeductResult.failure(429, "limited", true);
-        CloudBillingClient.DeductResult networkFailure = CloudBillingClient.DeductResult.failure(0, "network", true);
-        CloudBillingClient.DeductResult unauthorized = CloudBillingClient.DeductResult.failure(401, "unauthorized", false);
-        CloudBillingClient.DeductResult insufficient = CloudBillingClient.DeductResult.failure(402, "insufficient", false);
-        require(BillingService.shouldRetry(rateLimited, 1), "429 was not retried");
-        require(BillingService.shouldRetry(networkFailure, 2), "network failure was not retried");
-        require(!BillingService.shouldRetry(rateLimited, 3), "retry limit exceeded");
-        require(!BillingService.shouldRetry(unauthorized, 1), "401 was retried");
-        require(!BillingService.shouldRetry(insufficient, 1), "402 was retried");
-        require(BillingService.retryDelayMillis(1, 429) > BillingService.retryDelayMillis(1, 500),
-                "429 backoff is not longer");
-
-        String trackedRequestId = "dedup-test-" + System.nanoTime();
-        require(BillingService.beginSubmission(trackedRequestId), "first billing submission rejected");
-        require(!BillingService.beginSubmission(trackedRequestId), "in-flight billing submission duplicated");
-        BillingService.markSucceeded(trackedRequestId);
-        require(!BillingService.beginSubmission(trackedRequestId), "successful billing submission duplicated");
+        // 本地重试策略与去重提交已移除：模组不再自己扣费，这两套机制随之作废。
 
         CloudConfig latest = gson.fromJson("{\"code\":0,\"data\":{\"version\":1,\"mimo\":{"
                 + "\"api_url\":\"https://api.xiaomimimo.com/v1/chat/completions\","
@@ -249,10 +215,7 @@ public final class CloudProtocolTest {
         require(MimoDirectProtocol.audioMime(new byte[]{1, 2, 3, 4}) == null,
                 "invalid clone sample was accepted");
 
-        require("route_real".equals(BillingService.requireRouteId("route_real")), "real route rejected");
-        requireThrows(() -> BillingService.requireRouteId("auto"), "auto route accepted for billing");
-        requireThrows(() -> BillingService.requireRouteId(" "), "blank route accepted for billing");
-
+        // 计费线路校验已移除：本地不再判定「哪条线路可以扣费」。
         AtomicInteger reloads = new AtomicInteger();
         CloudRuntimeReload.set(reloads::incrementAndGet);
         CloudRuntimeReload.notifyApplied();

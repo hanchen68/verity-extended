@@ -10,11 +10,9 @@ import com.google.gson.JsonParser;
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.NetworkSecurity;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
-import com.hanchen.veritycustomapi.cloud.BillingService;
 import com.hanchen.veritycustomapi.cloud.CloudConfigFetcher;
 import com.hanchen.veritycustomapi.cloud.MimoDirectProtocol;
 import com.hanchen.veritycustomapi.cloud.RouteHealthRegistry;
-import com.hanchen.veritycustomapi.cloud.UsageMeter;
 import com.hanchen.veritycustomapi.TtsApiProviderEnum;
 import com.hanchen.veritycustomapi.compat.RuntimePlatform;
 import com.hanchen.veritycustomapi.compat.ForgePaths;
@@ -134,6 +132,22 @@ public class OnlineTtsService {
     }
 
     private record QueuedAudio(byte[] data, int entityId, long sessionGeneration) {}
+
+    /**
+     * Enqueue already-synthesized audio for playback.
+     *
+     * <p>Why this exists: a live test has already paid for one synthesis. Calling
+     * {@link #speakAsync} afterwards synthesized the same sentence a second time, so the log showed
+     * two TTS requests (and two charges) for one test. Playback must reuse the bytes it already has.
+     *
+     * @return false when the queue rejected the audio, so the caller can report it instead of
+     *         claiming the sentence was played.
+     */
+    public static boolean playSynthesized(byte[] audio, String text) {
+        if (audio == null || audio.length < 10 || text == null || text.isEmpty()) return false;
+        ensurePlayerThread();
+        return PLAY_QUEUE.offer(new QueuedAudio(audio, -1, SESSION_GENERATION));
+    }
 
     private static final BlockingQueue<QueuedAudio> PLAY_QUEUE = new LinkedBlockingQueue<>(5);
     private static volatile boolean IS_PLAYING = false;
@@ -303,10 +317,7 @@ public class OnlineTtsService {
         Exception last = null;
         for (ConfigManager.TtsRoute route : ConfigManager.snapshotTtsRoutes()) {
             if (!ConfigManager.tryAcquireRoute("tts", route.tier(), route.id())) continue;
-            if ("paid".equals(route.tier()) && !ConfigManager.canUseCloudTier("paid")) {
-                OllamaProxyMod.LOGGER.warn("云端 TTS 额度不足，请前往积分中心充值");
-                return new byte[0];
-            }
+            // 额度由云端判定：本地不再因为 paid 档余额不足就直接返回空音频
             try {
                 byte[] audio = ConfigManager.withTtsRoute(route, () -> synthesizeCurrent(text));
                 if (audio.length == 0) {
@@ -330,13 +341,8 @@ public class OnlineTtsService {
         TtsApiProviderEnum provider = ConfigManager.getTtsApiProvider();
         String apiUrl = ConfigManager.getTtsApiUrl();
         String apiKey = ConfigManager.getTtsApiKey();
-        String billingRequestId = BillingService.requestId();
+        // 计费交给云端：不再生成本地计费 id，也不再按余额提前返回空音频
         ConfigManager.TtsRoute activeRoute = ConfigManager.currentTtsRoute();
-        String billingTier = activeRoute != null ? activeRoute.tier() : null;
-        if (billingTier != null && !ConfigManager.canUseCloudTier(billingTier)) {
-            OllamaProxyMod.LOGGER.warn("云端 TTS 额度不足，请前往积分中心充值");
-            return new byte[0];
-        }
         if (apiUrl == null || apiUrl.isBlank()) {
             OllamaProxyMod.LOGGER.warn("TTS接口地址未配置，跳过合成");
             return new byte[0];
@@ -351,7 +357,7 @@ public class OnlineTtsService {
         if (provider == TtsApiProviderEnum.MIMO_TTS && activeRoute != null
                 && activeRoute.id() != null && activeRoute.tier() != null
                 && apiKey != null && !apiKey.isBlank()) {
-            return synthesizeMimoDirect(text, billingRequestId,
+            return synthesizeMimoDirect(text,
                     new ConfigManager.MimoRuntimeConfig(apiUrl, apiKey,
                             ConfigManager.getTtsApiModel(), activeRoute.id(), activeRoute.tier()));
         }
@@ -428,10 +434,7 @@ public class OnlineTtsService {
             OllamaProxyMod.LOGGER.warn("TTS响应数据不是有效的音频格式，响应大小: {} 字节", body.length);
             return new byte[0];
         }
-        if (billingTier != null && activeRoute != null) {
-            BillingService.reportTts(billingRequestId, billingTier, activeRoute.id(),
-                    UsageMeter.characters(cleanText), false);
-        }
+        // 计费交给云端：不再上报 TTS 字符数
         return body;
     }
 
@@ -1597,7 +1600,7 @@ public class OnlineTtsService {
         }
     }
 
-    private static byte[] synthesizeMimoDirect(String text, String billingRequestId,
+    private static byte[] synthesizeMimoDirect(String text,
                                                ConfigManager.MimoRuntimeConfig config) {
         String cleanText = cleanText(text);
         if (cleanText.isEmpty()) return new byte[0];
@@ -1622,8 +1625,7 @@ public class OnlineTtsService {
                 ? synthesizeMimoCloneDirect(cleanText, voiceId, config.apiUrl(), config.apiKey())
                 : synthesizeMimoBuiltinDirect(cleanText, voiceId, config.apiUrl(), config.apiKey(), config.model());
         if (audio == null || audio.length == 0) return new byte[0];
-        BillingService.reportTts(billingRequestId, config.tier(), config.routeId(),
-                UsageMeter.characters(cleanText), isClone);
+        // 计费交给云端：不再上报 TTS 字符数
         return audio;
     }
 

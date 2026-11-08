@@ -21,6 +21,8 @@ public final class VerityStructureDetectorTest {
     private static final String AI_MANAGER = VerityStructureDetector.AI_MANAGER_RESOURCE;
     private static final String OLD_BUILD = "src/main/java/com/hanchen/veritycustomapi/verity-6.0.0-beta.9";
     private static final String NEW_BUILD = "src/main/java/com/hanchen/veritycustomapi/verity_ext-1.0.0（修改版）";
+    /** 当前实际依赖的正式版；用户跑的就是它，@ 回复必须在这里成立。 */
+    private static final String CURRENT_BUILD = "src/main/java/com/hanchen/veritycustomapi/verity-6.0.0";
 
     public static void main(String[] args) throws Exception {
         // 基本扫描行为
@@ -39,8 +41,14 @@ public final class VerityStructureDetectorTest {
         } else {
             require(!VerityStructureDetector.isNewReplyStructure(oldBytes),
                     "6.0.0-beta.9 不应被判定为新版结构");
-            require(VerityStructureDetector.hasMethod(oldBytes, "lambda$queryAI$4"),
-                    "6.0.0-beta.9 应存在旧入口 lambda$queryAI$4");
+            // 🔴 核心回归：只查 lambda$queryAI$4 是不行的。那个方法在 6.0.0 正式版里
+            // 只是 `aload_0; areturn`（把 ServerPlayer 当 Entity 返回），和发送回复无关；
+            // 按名字判定 → Mixin 注入空方法 → require=0 静默跳过 → 服务器里 @ 它不回 @ 这个人。
+            require(VerityStructureDetector.replyLambdaShape(oldBytes)
+                            == VerityStructureDetector.ReplyLambdaShape.V_BETA9,
+                    "6.0.0-beta.9 应被识别为 beta.9 形态的回复 lambda");
+            require(VerityStructureDetector.hasLegacyReplyMethod(oldBytes),
+                    "beta.9 应存在旧版回复链路（描述符 + 广播调用都在）");
             require(!hasResourceInBuild(OLD_BUILD, VerityStructureDetector.BUILTIN_PAT_RESOURCE),
                     "6.0.0-beta.9 不应有内置抚摸支持（varmite/verity/pat 包）");
             byte[] oldTools = readResource(OLD_BUILD, VerityStructureDetector.TOOLS_RESOURCE);
@@ -54,6 +62,35 @@ public final class VerityStructureDetectorTest {
             if (oldModEvents != null) {
                 require(!VerityStructureDetector.hasMethod(oldModEvents, VeritySpeechContext.MARKER),
                         "6.0.0-beta.9 不应有 SPEECH KARMA EVALUATION —— 旧版不能加语音上下文前缀");
+            }
+        }
+
+        // 当前正式版（用户实际运行）：必须是 6.0.0 形态，且与 Mixin 选择一致
+        byte[] currentBytes = readBuild(CURRENT_BUILD);
+        if (currentBytes == null) {
+            System.out.println("跳过：未找到 6.0.0 正式版构建目录");
+        } else {
+            require(!VerityStructureDetector.isNewReplyStructure(currentBytes),
+                    "6.0.0 正式版不是 sendReplyPart 结构");
+            require(VerityStructureDetector.replyLambdaShape(currentBytes)
+                            == VerityStructureDetector.ReplyLambdaShape.V600,
+                    "6.0.0 正式版应被识别为 V600 形态（广播 lambda 含 boolean+ServerLevel）；"
+                            + "识别错就会用错 Mixin，@ 回复静默失效");
+            require(VerityStructureDetector.containsBytes(
+                            currentBytes, VerityStructureDetector.REPLY_LAMBDA_DESC_600),
+                    "6.0.0 正式版应含 V600 描述符");
+            require(!VerityStructureDetector.containsBytes(
+                            currentBytes, VerityStructureDetector.REPLY_LAMBDA_DESC_BETA9),
+                    "6.0.0 正式版不应含 beta.9 描述符（两者必须可区分，否则 Mixin 会选错）");
+            // Mixin 必须按描述符匹配，不能写死 lambda 编号
+            for (String mixin : new String[]{
+                    "src/main/java/com/hanchen/veritycustomapi/mixin/AiManagerPrivateChatMixin.java",
+                    "src/main/java/com/hanchen/veritycustomapi/mixin/AiManagerPrivateChatLegacyMixin.java"}) {
+                String src = java.nio.file.Files.readString(java.nio.file.Path.of(mixin));
+                require(!src.contains("method = \"lambda$queryAI$"),
+                        mixin + " 不得写死 lambda 编号：编号随构建变化（6.0.0 是 $7、beta.9 是 $4）");
+                require(src.contains("REPLY_LAMBDA_DESC_"),
+                        mixin + " 必须用描述符选择注入目标");
             }
         }
 
@@ -201,8 +238,10 @@ public final class VerityStructureDetectorTest {
         }
         // 半透明界面必须走统一助手：它负责「世界里透出世界 / 主菜单按普通菜单背景」的分流，
         // 任何界面自己 fill 一个不透明底色都会把效果吃掉。
-        for (String screen : new String[]{"NativeOllamaProxyConfigScreen",
-                "QuickCommandScreen", "MmdPlaybackScreen"}) {
+        // 🔴 QuickCommandScreen 不在此列：它是按住式轮盘，刻意不画全屏遮罩
+        // （ConfigLayoutTest 里另有一条断言要求它不得调用 ScreenBackgrounds.draw），
+        // 把它列在这里会和那条规则直接冲突。
+        for (String screen : new String[]{"NativeOllamaProxyConfigScreen", "MmdPlaybackScreen"}) {
             byte[] bytes = readOwnClass("com/hanchen/veritycustomapi/client/" + screen + ".class");
             if (bytes == null) {
                 bytes = readOwnClass("com/hanchen/veritycustomapi/config/" + screen + ".class");

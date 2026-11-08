@@ -157,7 +157,7 @@
 
 | 路径 | 是什么 | 从哪来 |
 |---|---|---|
-| `src/main/java/com/hanchen/veritycustomapi/verity-6.0.0-beta.9/` | Verity JE 的类文件（编译时要对着它的 API） | Verity JE 的发行包 |
+| `src/main/java/com/hanchen/veritycustomapi/verity-6.0.0/` | Verity JE 的类文件（编译时要对着它的 API） | Verity JE 的发行包 |
 | `src/main/java/com/hanchen/veritycustomapi/PatPat-1.3.1+1.20.1+forge/` | PatPat 的类文件 | PatPat 的发行包 |
 | `lib/geckolib-forge-1.20.1-4.8.4.jar` | GeckoLib 4.8.4 | GeckoLib 官方发布 |
 

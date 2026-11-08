@@ -93,7 +93,7 @@ public final class CloudSnapshotStore {
         if (separator >= 0) {
             normalized = normalized.substring(separator + 1);
         }
-        return normalized.equals("apikey") || normalized.equals("authorization")
+        return normalized.endsWith("apikey") || normalized.equals("authorization")
                 || normalized.equals("accesstoken") || normalized.equals("secret");
     }
 

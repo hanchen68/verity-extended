@@ -17,11 +17,33 @@ public final class VerityStructureDetector {
     /** 原版 AiManager 的 class 资源路径。 */
     public static final String AI_MANAGER_RESOURCE = "varmite/verity/entity/llm/AiManager.class";
 
-    /** 6.2 起独立出来的回复发送方法；6.0/6.1 直接写在 lambda$queryAI$4 里。 */
+    /** 6.2 起独立出来的回复发送方法。 */
     public static final String NEW_REPLY_METHOD = "sendReplyPart";
 
-    /** 6.0/6.1 的回复发送入口（编译器产出的 lambda 名，序号可能随重构变化）。 */
-    public static final String LEGACY_REPLY_METHOD = "lambda$queryAI$4";
+    /**
+     * 6.0.0 正式版里「发 TTS + 广播聊天」的那个 lambda 的<b>描述符</b>。
+     *
+     * <p>🔴 用描述符而不是方法名：lambda 编号由编译器按出现顺序生成，
+     * 同一大版本的不同构建编号就不一样——实测 6.0.0 是 {@code lambda$queryAI$7}，
+     * 6.0.0-beta.9 却是 {@code lambda$queryAI$4}，而且两者<b>参数签名完全不同</b>。
+     * 写死名字意味着换个构建就静默失效（这正是 2026-11-07 那个
+     * 「服务器里 @ 它不会 @ 回那个人」的根因）。
+     *
+     * <p>Mixin 的方法选择器支持「只写描述符」，因此注入点也不再依赖编号。
+     */
+    public static final String REPLY_LAMBDA_DESC_600 =
+            "(ZLnet/minecraft/server/level/ServerLevel;Lnet/minecraft/server/level/ServerPlayer;"
+                    + "Ljava/lang/String;Lnet/minecraft/server/MinecraftServer;"
+                    + "Lvarmite/verity/entity/verity/VerityEntity;)V";
+
+    /** 6.0.0-beta.9 / 早期 6.1 的回复 lambda 描述符（参数顺序不同）。 */
+    public static final String REPLY_LAMBDA_DESC_BETA9 =
+            "(Lvarmite/verity/entity/verity/VerityEntity;Ljava/lang/String;"
+                    + "Lnet/minecraft/server/level/ServerPlayer;"
+                    + "Lnet/minecraft/server/MinecraftServer;)V";
+
+    /** 广播系统消息的 SRG 名；旧版回复 lambda 里一定引用它。 */
+    public static final String BROADCAST_METHOD_SRG = "m_240416_";
 
     /** 6.2 起原版自带整套抚摸支持；存在时扩展的兼容层必须让位，否则一次抚摸响应两次。 */
     public static final String BUILTIN_PAT_RESOURCE = "varmite/verity/pat/PatQuips.class";
@@ -91,9 +113,58 @@ public final class VerityStructureDetector {
         return hasMethod(aiManagerBytes, NEW_REPLY_METHOD);
     }
 
-    /** AiManager 里是否还有旧版回复入口；新旧都没有说明上游又重构了，私聊适配会静默失效。 */
+    /**
+     * 旧版回复 lambda 是哪种签名。
+     *
+     * <p>用描述符判断，不看 lambda 编号：编号随构建变化（6.0.0 是 $7、beta.9 是 $4），
+     * 而且两者参数顺序完全不同，必须用不同的 Mixin 处理器。
+     *
+     * @return 6.0.0 形态 / beta.9 形态 / 都没有
+     */
+    public enum ReplyLambdaShape {
+        /** 6.0.0 正式版：{@code (Z, ServerLevel, ServerPlayer, String, MinecraftServer, VerityEntity)} */
+        V600,
+        /** 6.0.0-beta.9 / 早期 6.1：{@code (VerityEntity, String, ServerPlayer, MinecraftServer)} */
+        V_BETA9,
+        /** 没有旧版 lambda（6.2+ 走 sendReplyPart，或上游又重构了） */
+        NONE
+    }
+
+    /** 判定 AiManager 里的旧版回复 lambda 形态。 */
+    public static ReplyLambdaShape replyLambdaShape(byte[] aiManagerBytes) {
+        if (aiManagerBytes == null) return ReplyLambdaShape.NONE;
+        // 必须同时存在广播调用：只有描述符、没有广播说明不是发送点
+        if (!containsBytes(aiManagerBytes, BROADCAST_METHOD_SRG)) return ReplyLambdaShape.NONE;
+        if (containsBytes(aiManagerBytes, REPLY_LAMBDA_DESC_600)) return ReplyLambdaShape.V600;
+        if (containsBytes(aiManagerBytes, REPLY_LAMBDA_DESC_BETA9)) return ReplyLambdaShape.V_BETA9;
+        return ReplyLambdaShape.NONE;
+    }
+
+    /**
+     * AiManager 里是否还有「旧版回复入口」。
+     *
+     * <p>🔴 不能只查方法名。{@code lambda$queryAI$4} 在 6.0.0 里确实存在，
+     * 但它只是一个 {@code aload_0; areturn} 的取值 lambda——按名字判定会把
+     * 「没有回复逻辑」误判成「有旧版入口」，Mixin 注入空方法后静默失效，
+     * 表现就是「服务器里 @ 它不会 @ 回那个人」。
+     */
     public static boolean hasLegacyReplyMethod(byte[] aiManagerBytes) {
-        return hasMethod(aiManagerBytes, LEGACY_REPLY_METHOD);
+        return replyLambdaShape(aiManagerBytes) != ReplyLambdaShape.NONE;
+    }
+
+    /** 纯字节包含判断，独立出来便于测试。 */
+    static boolean containsBytes(byte[] haystack, String needleText) {
+        if (haystack == null || needleText == null || needleText.isEmpty()) return false;
+        byte[] needle = needleText.getBytes(StandardCharsets.UTF_8);
+        if (needle.length > haystack.length) return false;
+        outer:
+        for (int i = 0; i + needle.length <= haystack.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) continue outer;
+            }
+            return true;
+        }
+        return false;
     }
 
     // 以下判定会被运行期多处查询，结果缓存一次。

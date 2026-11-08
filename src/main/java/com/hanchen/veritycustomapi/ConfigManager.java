@@ -1012,6 +1012,16 @@ public class ConfigManager {
         return isCloudEnabled() ? cloudBuiltinApi : null;
     }
 
+    /**
+     * 只读暴露云端下发的内置服务配置，供界面判断「这个开关到底由谁决定」。
+     *
+     * <p>返回的是同一份对象引用，调用方**只允许读取**，不要修改字段：
+     * 它同时被路由选择使用，改它等于在界面里偷偷改运行配置。
+     */
+    public static BuiltinApiConfig getCloudBuiltinApi() {
+        return builtinApi();
+    }
+
     private static String firstNonBlank(String value, String fallback) {
         return com.hanchen.veritycustomapi.config.ConfigText.firstNonBlank(value, fallback);
     }

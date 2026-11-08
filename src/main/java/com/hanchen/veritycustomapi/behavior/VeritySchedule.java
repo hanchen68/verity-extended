@@ -75,6 +75,10 @@ public final class VeritySchedule {
         try {
             var verity = com.hanchen.veritycustomapi.network.ServerVerityRegistry.findForPlayer(player);
             if (verity == null || !verity.isAlive()) return;
+            var autonomous = com.hanchen.veritycustomapi.autonomy.VerityAutonomy.state(verity);
+            if (autonomous.enabled || autonomous.suspended || autonomous.waitUntil > verity.level().getGameTime()
+                    || autonomous.plan != null) return;
+            if (VerityMiningJob.isBusyFor(verity) || verity.isPassenger() || verity.isVehicle()) return;
             if (verity.distanceToSqr(player) <= RETURN_HOME_DISTANCE_SQR) return;
             verity.getNavigation().moveTo(player, 1.0D);
         } catch (Throwable ignored) {

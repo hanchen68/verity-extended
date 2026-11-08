@@ -31,19 +31,19 @@ import java.util.Map;
  * 开着任何界面时整块不画，气泡钉在右下角躲开原版聊天栏。
  */
 public final class VerityHudOverlay {
-    private static final int PANEL_BG = 0xC0101316;
-    private static final int PANEL_BORDER = 0x80343B46;
-    private static final int TEXT = 0xFFF1F3F5;
-    private static final int MUTED = 0xFFA7AFBA;
-    private static final int ACCENT = 0xFF65DDE0;
-    private static final int ARROW = 0xFF65DDE0;
+    private static final int PANEL_BG = 0xFF282828;
+    private static final int PANEL_BORDER = 0xFF707070;
+    private static final int TEXT = 0xFFE0E0E0;
+    private static final int MUTED = 0xFFB0B0B0;
+    private static final int ACCENT = 0xFFFFFFA0;
+    private static final int ARROW = 0xFFFFFFA0;
 
     /** 头像绘制尺寸。 */
     private static final int PORTRAIT_DRAW = 48;
     /** 头像 UV 精度：只用于归一化坐标换算整数贴图坐标，与贴图像素数无关。 */
     private static final int PORTRAIT_UV = 1024;
     /** 圆形头像的描边色，用来掩盖逐行裁切产生的锯齿。 */
-    private static final int PORTRAIT_RING = 0xFF2B3138;
+    private static final int PORTRAIT_RING = 0xFF171717;
     private static final int BUBBLE_MAX_LINES = 4;
 
     /**
@@ -61,8 +61,6 @@ public final class VerityHudOverlay {
 
     /** 记忆条数不需要每帧统计，缓存几秒即可。 */
     private static final long MEMORY_CACHE_MS = 5000L;
-    /** 跟 VerityGrowthMath 的体型换算对齐：每喂一次 +0.1 倍。 */
-    private static final float GROWTH_SCALE_PER_FEED = 0.1F;
     private static volatile int cachedMemoryCount;
     private static volatile long cachedMemoryAt;
     private static final Map<String, ResourceLocation> PORTRAIT_CACHE = new HashMap<>();
@@ -107,40 +105,32 @@ public final class VerityHudOverlay {
         }
         Font font = minecraft.font;
         boolean withPortrait = ConfigManager.isDialoguePortraitEnabled();
-        int maxWidth = Math.min(260, Math.max(120, graphics.guiWidth() / 3));
-        // 钉在右下角。原版聊天栏（含没打开时的历史）占着左下角，
-        // 气泡放左边必被聊天字压住，靠右就永远不打架。
-        int left = Math.max(8, graphics.guiWidth() - maxWidth - 8);
-        int textWidth = maxWidth - (withPortrait ? PORTRAIT_DRAW + 10 : 0) - 12;
-
-        List<FormattedCharSequence> wrapped = font.split(Component.literal(line), Math.max(40, textWidth));
-        int lines = Math.min(BUBBLE_MAX_LINES, Math.max(1, wrapped.size()));
-        int lineHeight = 10;
-        int textBlockHeight = lines * lineHeight;
-        int contentHeight = Math.max(withPortrait ? PORTRAIT_DRAW : 0, textBlockHeight);
-        int top = screenHeight - 70 - contentHeight;
-        int boxWidth = maxWidth;
-        int boxHeight = contentHeight + 12;
-
-        graphics.fill(left, top, left + boxWidth, top + boxHeight, PANEL_BG);
-        graphics.fill(left, top, left + boxWidth, top + 1, PANEL_BORDER);
-        graphics.fill(left, top + boxHeight - 1, left + boxWidth, top + boxHeight, PANEL_BORDER);
-        graphics.fill(left, top, left + 1, top + boxHeight, PANEL_BORDER);
-        graphics.fill(left + boxWidth - 1, top, left + boxWidth, top + boxHeight, PANEL_BORDER);
-
-        int textLeft = left + 6;
-        if (withPortrait) {
-            ResourceLocation portrait = portraitTexture(VerityDialogueFeed.displayVariant());
-            int portraitTop = top + 6 + Math.max(0, (contentHeight - PORTRAIT_DRAW) / 2);
-            if (portrait != null) {
-                drawCircularPortrait(graphics, portrait, textLeft, portraitTop, PORTRAIT_DRAW);
-            }
-            textLeft += PORTRAIT_DRAW + 6;
+        int portraitSize=HudLayout.portraitSize(graphics.guiWidth());
+        int maxWidth=HudLayout.dialogue(graphics.guiWidth(),screenHeight,withPortrait,1).width();
+        int textWidth=Math.max(20,maxWidth-12-(withPortrait?portraitSize+6:0));
+        List<FormattedCharSequence> wrapped=font.split(Component.literal(line),textWidth);
+        int lines=Math.min(BUBBLE_MAX_LINES,Math.max(1,wrapped.size()));
+        HudLayout.Box box=HudLayout.dialogue(graphics.guiWidth(),screenHeight,withPortrait,lines);
+        int left=box.x(),top=box.y();
+        drawHudPanel(graphics,left,top,box.width(),box.height());
+        int textLeft=left+6;
+        if(withPortrait) {
+            ResourceLocation portrait=portraitTexture(VerityDialogueFeed.displayVariant());
+            if(portrait!=null)drawCircularPortrait(graphics,portrait,textLeft,top+6,portraitSize);
+            textLeft+=portraitSize+6;
         }
-        int textTop = top + 6 + Math.max(0, (contentHeight - textBlockHeight) / 2);
-        for (int i = 0; i < lines; i++) {
-            graphics.drawString(font, wrapped.get(i), textLeft, textTop + i * lineHeight, TEXT, false);
-        }
+        String name=com.hanchen.veritycustomapi.compat.VeritySpeaker.currentName();
+        graphics.drawString(font,font.plainSubstrByWidth(name,textWidth),textLeft,top+5,ACCENT,true);
+        for(int i=0;i<lines;i++)graphics.drawString(font,wrapped.get(i),textLeft,top+17+i*10,TEXT,true);
+        if(wrapped.size()>lines)graphics.drawString(font,"...",left+box.width()-20,top+box.height()-10,MUTED,false);
+    }
+
+    /** Solid, compact pixel panel; no floating cards or translucent world bleed. */
+    private static void drawHudPanel(GuiGraphics g,int x,int y,int w,int h) {
+        g.fill(x,y,x+w,y+h,0xFF101010);
+        g.fill(x+1,y+1,x+w-1,y+h-1,PANEL_BG);
+        g.fill(x+1,y+1,x+w-1,y+2,PANEL_BORDER);
+        g.fill(x+1,y+1,x+2,y+h-1,PANEL_BORDER);
     }
 
     /**
@@ -251,6 +241,12 @@ public final class VerityHudOverlay {
     }
 
     /** 优先使用当前皮肤的动态纹理（会跟随实体表情），否则回退到原版表情贴图。 */
+    /** Share the existing skin/expression crop and tint with narrative dialogue; no copied assets. */
+    public static void drawStoryPortrait(GuiGraphics graphics,int x,int y,int size) {
+        ResourceLocation texture=portraitTexture(VerityDialogueFeed.displayVariant());
+        if(texture!=null)drawCircularPortrait(graphics,texture,x,y,size);
+    }
+
     private static ResourceLocation portraitTexture(String variant) {
         try {
             String activeSkin = SkinManager.getInstance().getActiveSkinName();
@@ -282,45 +278,51 @@ public final class VerityHudOverlay {
     // ==================== 状态角标 ====================
 
     private static void renderStatusBadge(Minecraft minecraft, GuiGraphics graphics, int screenWidth) {
-        List<String> lines = new ArrayList<>();
-        VerityEntity entity = VerityDialogueFeed.nearestVerity();
-        if (entity != null) {
-            float scale = VerityGrowthState.getClientScale(entity);
-            // 跟 VerityGrowthMath 的「每喂一次 +0.1 倍体型」对齐
-            int feeds = Math.round((scale - 1.0F) / GROWTH_SCALE_PER_FEED);
-            lines.add("好感成长 +" + Math.max(0, feeds));
+        Font font=minecraft.font;
+        boolean moving=VerityNavigationService.current()!=null;
+        boolean following=VerityNavigationService.isFollowing();
+        String state=moving?"导航中":following?"跟随中":"陪伴";
+        String name=com.hanchen.veritycustomapi.compat.VeritySpeaker.currentName();
+        double credits=ConfigManager.getCreditsRemainingExact();
+        VerityEntity entity=VerityDialogueFeed.nearestVerity();
+        float scale=entity==null?1.0F:VerityGrowthState.getClientScale(entity);
+        // Growth is body size, not karma. Omit the meaningless +0 at the normal size.
+        boolean showSize=entity!=null&&Math.abs(scale-1.0F)>=0.05F;
+        String size=String.format(java.util.Locale.ROOT,"体型 %.1f 倍",scale);
+        String memories=Integer.toString(memoryCount());
+        String conversations=Integer.toString(VerityDialogueFeed.todayCount());
+        int desired=Math.max(142,Math.max(font.width("记忆 "+memories)+font.width("今日对话 "+conversations)+24,
+                credits>=0?font.width("额度 "+ConfigManager.formatCredits(credits))+16:0));
+        HudLayout.Box box=HudLayout.status(screenWidth,desired,credits>=0,showSize);
+        int x=box.x(),y=box.y(),w=box.width();
+        drawHudPanel(graphics,x,y,w,box.height());
+        int inner=w-12;
+        String status=font.plainSubstrByWidth(state,Math.max(1,inner/2));
+        int stateWidth=font.width(status);
+        String title=font.plainSubstrByWidth(name,Math.max(1,inner-stateWidth-12));
+        graphics.drawString(font,title,x+6,y+5,ACCENT,false);
+        graphics.drawString(font,status,x+w-6-stateWidth,y+5,moving||following?0xFF9DCD91:MUTED,false);
+        graphics.fill(x+5,y+17,x+w-5,y+18,0xFF484848);
+        int gap=8,colWidth=Math.max(1,(inner-gap)/2);
+        drawBadgeMetric(graphics,font,"记忆",memories,x+6,y+23,colWidth,TEXT);
+        drawBadgeMetric(graphics,font,"今日对话",conversations,x+6+colWidth+gap,y+23,colWidth,TEXT);
+        int rowY=y+38;
+        if(credits>=0){
+            int colour=ConfigManager.isCreditsExhausted()?0xFFFF8888:ConfigManager.isCreditsLow()?0xFFFFCC66:TEXT;
+            drawBadgeMetric(graphics,font,"额度",ConfigManager.formatCredits(credits),x+6,rowY,inner,colour);
+            rowY+=13;
         }
-        lines.add("记忆 " + memoryCount() + " 条");
-        lines.add("今日对话 " + VerityDialogueFeed.todayCount() + " 次");
-        double credits = ConfigManager.getCreditsRemainingExact();
-        if (credits >= 0) {
-            lines.add("额度 " + ConfigManager.formatCredits(credits));
-        }
-        if (VerityNavigationService.current() != null) {
-            lines.add("导航中…");
-        } else if (VerityNavigationService.isFollowing()) {
-            lines.add("跟随中");
-        }
+        if(showSize)graphics.drawString(font,font.plainSubstrByWidth(size,inner),x+6,rowY,MUTED,false);
+    }
 
-        Font font = minecraft.font;
-        int left = 6;
-        int top = 6;
-        int lineHeight = 10;
-        int boxWidth = 0;
-        for (String line : lines) {
-            boxWidth = Math.max(boxWidth, font.width(line));
-        }
-        boxWidth += 10;
-        int boxHeight = lines.size() * lineHeight + 8;
-        graphics.fill(left, top, left + boxWidth, top + boxHeight, PANEL_BG);
-        graphics.fill(left, top, left + boxWidth, top + 1, PANEL_BORDER);
-        graphics.fill(left, top + boxHeight - 1, left + boxWidth, top + boxHeight, PANEL_BORDER);
-        graphics.fill(left, top, left + 1, top + boxHeight, PANEL_BORDER);
-        graphics.fill(left + boxWidth - 1, top, left + boxWidth, top + boxHeight, PANEL_BORDER);
-        for (int i = 0; i < lines.size(); i++) {
-            graphics.drawString(font, lines.get(i), left + 5, top + 4 + i * lineHeight,
-                    i == 0 ? ACCENT : MUTED, false);
-        }
+    /** Right-aligned values; reserve a gap so long counts can never collide with labels. */
+    private static void drawBadgeMetric(GuiGraphics graphics,Font font,String label,String value,
+                                        int x,int y,int width,int valueColour) {
+        String shown=font.plainSubstrByWidth(value,Math.max(1,width-6));
+        int valueWidth=font.width(shown);
+        String caption=font.plainSubstrByWidth(label,Math.max(0,width-valueWidth-6));
+        graphics.drawString(font,caption,x,y,MUTED,false);
+        graphics.drawString(font,shown,x+width-valueWidth,y,valueColour,false);
     }
 
     private static int memoryCount() {
@@ -358,7 +360,7 @@ public final class VerityHudOverlay {
         relative = (relative % 360.0F + 540.0F) % 360.0F - 180.0F;
 
         int centerX = screenWidth / 2;
-        int centerY = screenHeight / 2 + 34;
+        int centerY = HudLayout.navigationY(screenHeight);
         graphics.pose().pushPose();
         graphics.pose().translate(centerX, centerY, 0.0F);
         graphics.pose().mulPose(Axis.ZP.rotationDegrees(relative));
@@ -368,7 +370,7 @@ public final class VerityHudOverlay {
         }
         graphics.pose().popPose();
 
-        String label = target.label() + " · " + Math.round(distance) + " 格";
+        String label = minecraft.font.plainSubstrByWidth(target.label(),Math.max(20,Math.min(120,screenWidth/3))) + "  " + Math.round(distance) + " 格";
         Font font = minecraft.font;
         graphics.drawString(font, label, centerX - font.width(label) / 2, centerY + 12, ARROW, true);
     }

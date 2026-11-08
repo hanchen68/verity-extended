@@ -17,7 +17,7 @@ import java.util.List;
  * 快捷指令面板：常用话术做成按钮。普通按钮直接发聊天给 Verity，
  * 命令按钮执行 /verity-ai（跟随、导航、打开记录等本地动作）。
  */
-public final class QuickCommandScreen extends Screen {
+public final class QuickCommandScreen extends HoldActionWheelScreen {
     private static final int SURFACE = VerityUiTheme.SURFACE;
     private static final int SEPARATOR = VerityUiTheme.SEPARATOR;
     private static final int TEXT = VerityUiTheme.TEXT;
@@ -26,6 +26,10 @@ public final class QuickCommandScreen extends Screen {
     private static final int BUTTON_HEIGHT = 20;
     private static final int GAP = 5;
     private static final int GROUP_SIZE = 6;
+    private int wheelPage=1;
+    private int wheelRadius,centerX,centerY;
+    private List<QuickWheelLayout.Span> wheelSpans=List.of();
+    private static final String[] SHORT_LABELS={"看看我","我的背包","附近有什么","随便聊聊","夸夸我","给点建议","跟我来","停止跟随","到我身边","对话记录","写日记","定时提醒"};
 
     /** @param command true 表示执行命令，false 表示发送聊天内容 */
     private record Entry(String label, boolean command, String payload) {
@@ -46,38 +50,23 @@ public final class QuickCommandScreen extends Screen {
             new Entry("定时提醒", true, "verity-ai remind-help")
     );
 
-    public QuickCommandScreen() {
-        super(Component.literal("Verity 快捷指令"));
-    }
-
-    @Override
-    protected void init() {
-        clearWidgets();
-        int left = panelLeft();
-        int innerWidth = panelRight() - left - 24;
-        int buttonWidth = Math.max(48, (innerWidth - 8) / 2);
-        int footerTop = height - 30;
-        // 标题与分栏线随窗口高度上移，给按钮区留出空间
-        int headerTop = height < 240 ? 42 : 58;
-        // 12 个条目分两列共 GROUP_SIZE 行：按可用高度自适应行距与按钮高度，
-        // 避免窗口变矮时最后一行压到底部按钮上（旧实现是固定 25px 步进）。
-        int rows = GROUP_SIZE;
-        int usable = Math.max(rows * 12, footerTop - 8 - headerTop);
-        int step = Math.max(12, Math.min(BUTTON_HEIGHT + GAP, usable / rows));
-        int buttonHeight = Math.max(11, Math.min(BUTTON_HEIGHT, step - 2));
-        for (int i = 0; i < ENTRIES.size(); i++) {
-            Entry entry = ENTRIES.get(i);
-            int column = i / GROUP_SIZE;
-            int row = i % GROUP_SIZE;
-            addRenderableWidget(VerityUiWidgets.secondaryButton(font, left + 12 + column * (buttonWidth + 8), headerTop + row * step, buttonWidth, buttonHeight,
-                    Component.literal(entry.label()), button -> run(entry)));
+    public QuickCommandScreen(){this(false);}
+    public QuickCommandScreen(boolean hold){super("快捷指令",KeyBindings.QUICK_COMMAND_KEY,hold);}
+    @Override protected String label(int sector){return wheelPage<2?SHORT_LABELS[wheelPage*6+sector]:new String[]{"动画控制","设置","资源中心","操作按键","对话记录","清除恶魔"}[sector];}
+    @Override protected void choose(int sector){
+        if(wheelPage<2){run(ENTRIES.get(wheelPage*6+sector));return;}
+        switch(sector){
+            case 0->minecraft.setScreen(new MmdPlaybackScreen(null));
+            case 1->minecraft.setScreen(new com.hanchen.veritycustomapi.config.NativeOllamaProxyConfigScreen(null));
+            case 2->minecraft.setScreen(new com.hanchen.veritycustomapi.config.ResourceCenterScreen(null));
+            case 3->minecraft.setScreen(new ConversationLogScreen(null));
+            case 4->minecraft.setScreen(new net.minecraft.client.gui.screens.controls.ControlsScreen(null,minecraft.options));
+            case 5->minecraft.setScreen(new com.hanchen.veritycustomapi.config.VerityConfirmScreen(null,yes->{minecraft.setScreen(null);if(yes)killAllDemons();},Component.literal("清除所有恶魔？"),Component.literal("此操作无法撤销。")));
+            default->{}
         }
-        addRenderableWidget(VerityUiWidgets.dangerButton(font, left + 12, footerTop,
-                Math.min(140, innerWidth - 76), 20,
-                Component.literal("杀死所有恶魔"), button -> killAllDemons()));
-        addRenderableWidget(VerityUiWidgets.secondaryButton(font, panelRight() - 72, footerTop, 60, 20,
-                    Component.literal("关闭"), button -> onClose()));
     }
+    @Override protected String pageName(){return new String[]{"对话","行动","工具"}[wheelPage];}
+    @Override protected void changePage(int direction){wheelPage=(wheelPage+direction+3)%3;}
 
     private void killAllDemons() {
         Minecraft minecraft = Minecraft.getInstance();
@@ -124,34 +113,4 @@ public final class QuickCommandScreen extends Screen {
         }
     }
 
-    @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        // 半透明：世界透得出来；主菜单打开时按普通菜单背景处理
-        ScreenBackgrounds.draw(this, graphics);
-        int left = panelLeft();
-        int right = panelRight();
-        VerityUiDraw.card(graphics, left, 8, right, height - 8, 5);
-        graphics.drawString(font, title, left + 12, 17, TEXT);
-        // 分栏线跟随 init() 里的自适应 headerTop，避免小窗口下标题与按钮错位
-        int headerTop = height < 240 ? 42 : 58;
-        int sectionY = headerTop - 15;
-        graphics.drawString(font, "对话", left + 12, sectionY, MUTED);
-        graphics.drawString(font, "行动", left + 20 + (right - left - 32) / 2, sectionY, MUTED);
-        graphics.fill(left + 12, headerTop - 5, right - 12, headerTop - 4, SEPARATOR);
-        graphics.fill(left + 12, headerTop - 5, left + 54, headerTop - 3, ACCENT);
-        super.render(graphics, mouseX, mouseY, partialTick);
-    }
-
-    private int panelLeft() {
-        return Math.max(8, (width - Math.min(420, width - 16)) / 2);
-    }
-
-    private int panelRight() {
-        return width - panelLeft();
-    }
-
-    @Override
-    public boolean isPauseScreen() {
-        return false;
-    }
 }

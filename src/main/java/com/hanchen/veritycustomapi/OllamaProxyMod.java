@@ -23,7 +23,7 @@ import org.apache.logging.log4j.Logger;
 @SuppressWarnings({"unused", "SpellCheckingInspection"})
 public class OllamaProxyMod {
     public static final String MOD_ID = "verity_extended";
-    private static final String FALLBACK_VERSION = "5.1";
+    private static final String FALLBACK_VERSION = "5.3";
     public static final Logger LOGGER = LogManager.getLogger();
 
     /** 实际加载的模组版本；独立测试未启动 Forge 时回退到当前发布版本。 */
@@ -103,6 +103,9 @@ public class OllamaProxyMod {
         com.hanchen.veritycustomapi.network.HeadPerchNetwork.register();
         // Verity 手持物品（星之遥控器）的同步通道
         com.hanchen.veritycustomapi.network.VerityHoldNetwork.register();
+        // 自主状态回流：让设置页显示「现在到底开没开、在做什么」
+        com.hanchen.veritycustomapi.network.AutonomyNetwork.register();
+        com.hanchen.veritycustomapi.story.StoryNetwork.register();
         // 物品索引必须等注册事件全部结束再构建：构造阶段模组物品还没进注册表
         net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
                 .addListener(this::onCommonSetup);
@@ -168,6 +171,7 @@ public class OllamaProxyMod {
         com.hanchen.veritycustomapi.ride.HeadPerchState.clear();
         // 觉醒状态是「玩家 UUID -> 恶魔 UUID」的静态表，不清会跨存档残留
         com.hanchen.veritycustomapi.combat.MonstrousManager.clear();
+        com.hanchen.veritycustomapi.autonomy.VerityAutonomy.clear();
         // 下面这几处都是「static 表 + 玩家/实体 id 做 key」，不清会跨存档残留：
         // 实体 id 是每个存档从 0 开始计数的，新存档里的 id 5 会读到上个存档的状态。
         com.hanchen.veritycustomapi.ride.PerchRideState.clear();

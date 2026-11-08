@@ -7,8 +7,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
-import com.hanchen.veritycustomapi.cloud.BillingService;
-import com.hanchen.veritycustomapi.cloud.UsageMeter;
 import com.hanchen.veritycustomapi.memory.ChatCompletionClient;
 import net.minecraftforge.fml.loading.FMLPaths;
 
@@ -216,45 +214,16 @@ public final class DiaryManager {
         String requestJson = ChatCompletionClient.toJson(
                 ChatCompletionClient.buildRequest(route.model(), system, user));
 
-        boolean paidBuiltin = "builtin".equals(route.source()) && "paid".equalsIgnoreCase(route.tier());
-        String requestId = BillingService.requestId();
-        BillingService.Reservation reservation = null;
-        if (paidBuiltin) {
-            int required = Math.max(1, Math.max(route.cost(), Math.max(
-                    ConfigManager.getMinDeductCost(), ConfigManager.getChatCost())));
-            reservation = BillingService.reservePaidChat(requestId, route.id(), required);
-            if (!reservation.success()) {
-                notify(status, "§c【日记】" + reservation.error());
-                return null;
-            }
-        }
+        // 计费已交给云端：日记不再预授权/结算/上报，也不会因为本地余额不足而放弃生成。
         String responseBody;
         try {
             responseBody = ChatCompletionClient.complete(route, requestJson);
         } catch (Exception error) {
-            if (reservation != null) {
-                BillingService.releasePaidChat(reservation, "upstream_error");
-            }
             throw error;
         }
         String text = ChatCompletionClient.extractText(responseBody).strip();
         if (text.isBlank()) {
-            if (reservation != null) BillingService.releasePaidChat(reservation, "empty_response");
             return null;
-        }
-        if (reservation != null) {
-            UsageMeter.ChatUsage usage = UsageMeter.chat(requestJson, responseBody, text, false);
-            if (usage == null) {
-                BillingService.releasePaidChat(reservation, "missing_usage");
-                // 星绒 API 迁移用户由上游结算，缺少 usage 不应中断日记生成
-                if (!reservation.legacySkipped()) return null;
-            } else {
-                BillingService.settlePaidChat(reservation, usage);
-            }
-        } else if ("builtin".equals(route.source())) {
-            String tier = route.tier() != null ? route.tier() : "free";
-            BillingService.reportChat(BillingService.requestId(), tier, route.id(),
-                    UsageMeter.chat(requestJson, responseBody, text, true));
         }
         return text;
     }

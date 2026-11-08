@@ -36,6 +36,7 @@ public final class CloudStorageTest {
         // overrides 的键是 TOML 点分路径，脱敏不能只比对整名，否则 "llm.apiKey" 会带着密钥落盘
         runtimeConfig.data.overrides = new com.google.gson.JsonObject();
         runtimeConfig.data.overrides.addProperty("llm.apiKey", "dotted-secret");
+        runtimeConfig.data.overrides.addProperty("voice_language.translateApiKey", "translation-secret");
         runtimeConfig.data.overrides.addProperty("llm.apiUrl", "https://dotted.example.com/v1");
         com.google.gson.JsonObject nestedOverrides = new com.google.gson.JsonObject();
         com.google.gson.JsonObject ttsSection = new com.google.gson.JsonObject();
@@ -52,6 +53,7 @@ public final class CloudStorageTest {
         require(!snapshotJson.contains("mimo-platform-secret") && !snapshotJson.contains("nested-secret"),
                 "credential was persisted in snapshot");
         require(!snapshotJson.contains("dotted-secret"), "dotted override credential was persisted in snapshot");
+        require(!snapshotJson.contains("translation-secret"), "translation override credential was persisted in snapshot");
         require(!snapshotJson.contains("section-secret"), "nested override credential was persisted in snapshot");
         require(snapshotJson.contains("route_mimo"), "non-secret MiMo route was removed from snapshot");
         require(snapshotJson.contains("https://dotted.example.com/v1"),
@@ -68,51 +70,7 @@ public final class CloudStorageTest {
         Files.writeString(snapshot, "broken", StandardCharsets.UTF_8);
         require(snapshots.load("new-secret") == null, "corrupt snapshot was accepted");
 
-        Path pendingFile = root.resolve("billing-pending.json");
-        PendingBillingStore pending = new PendingBillingStore(pendingFile);
-        PendingBillingStore.Entry entry = new PendingBillingStore.Entry();
-        entry.operation = "settle";
-        entry.reservation_id = UUID.randomUUID().toString();
-        entry.request_id = UUID.randomUUID().toString();
-        entry.route_id = "route-paid";
-        entry.service = "chat";
-        entry.tier = "paid";
-        entry.api_url = "https://verity.xrstudio.cn/api/v1/getconfig";
-        entry.endpoint_url = "https://verity.xrstudio.cn/api/v1/credits/settle";
-        entry.account_fingerprint = BillingService.fingerprint("new-secret");
-        entry.config_id = "cfg-7";
-        entry.client_id = clientId;
-        entry.usage = new com.google.gson.JsonObject();
-        entry.usage.addProperty("total_tokens", 2);
-        pending.put(entry);
-
-        PendingBillingStore.Entry deduct = new PendingBillingStore.Entry();
-        deduct.operation = "deduct";
-        deduct.request_id = UUID.randomUUID().toString();
-        deduct.route_id = "route-free";
-        deduct.service = "tts";
-        deduct.tier = "free";
-        deduct.is_clone = false;
-        deduct.api_url = entry.api_url;
-        deduct.endpoint_url = "https://verity.xrstudio.cn/api/v1/credits/deduct";
-        deduct.account_fingerprint = entry.account_fingerprint;
-        deduct.config_id = entry.config_id;
-        deduct.client_id = clientId;
-        deduct.usage = new com.google.gson.JsonObject();
-        deduct.usage.addProperty("characters", 12);
-        pending.put(deduct);
-
-        PendingBillingStore restored = new PendingBillingStore(pendingFile);
-        require(restored.snapshot().size() == 2, "pending settle/deduct tasks were not restored");
-        String pendingJson = Files.readString(pendingFile);
-        require(pendingJson.contains("\"schema_version\":2"), "pending billing schema was not upgraded");
-        require(pendingJson.contains(entry.account_fingerprint), "pending billing account fingerprint missing");
-        require(!pendingJson.contains("new-secret") && !pendingJson.contains("api_key"),
-                "pending billing persisted credentials");
-        pending.remove(entry.key());
-        pending.remove(deduct.key());
-        require(new PendingBillingStore(pendingFile).snapshot().isEmpty(),
-                "completed pending billing tasks were not removed");
+        // 待结算存储已随计费一并移除：模组不再保留/重放扣费任务。
     }
 
     private static CloudConfig config(String configId, int version) {

@@ -10,6 +10,23 @@ public final class VerityUiAnimation {
     private VerityUiAnimation() {
     }
 
+    /** Follow Minecraft's accessibility effect intensity; zero gives instant feedback. */
+    public static boolean reducedMotion() {
+        var mc=net.minecraft.client.Minecraft.getInstance();
+        return mc==null || mc.options==null || mc.options.screenEffectScale().get()<=0.0D;
+    }
+
+    public static double progress(long started,long now,long duration) {
+        if(duration<=0)return 1.0D;
+        return easeOutCubic((now-started)/(double)duration);
+    }
+
+    /** Animated opaque colours only: geometry and hit targets never move. */
+    public static double feedback(double current,boolean enabled,long delta) {
+        if(reducedMotion())return enabled?1.0D:0.0D;
+        return approach(current,enabled?1.0D:0.0D,delta/110.0D);
+    }
+
     public static double clamp01(double value) {
         return Math.max(0.0D, Math.min(1.0D, value));
     }

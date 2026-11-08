@@ -3,9 +3,7 @@ package com.hanchen.veritycustomapi.stt;
 import com.hanchen.veritycustomapi.NetworkSecurity;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.ConfigManager;
-import com.hanchen.veritycustomapi.cloud.BillingService;
 import com.hanchen.veritycustomapi.cloud.RouteHealthRegistry;
-import com.hanchen.veritycustomapi.cloud.UsageMeter;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -83,19 +81,11 @@ public class ApiSpeechRecognizer implements SpeechRecognizer {
         for (ConfigManager.SttRoute route : routes) {
             if (!ConfigManager.tryAcquireRoute("stt", route.tier(), route.id())) continue;
             lastRoute = route;
-            double audioSeconds = UsageMeter.audioSeconds(pcmData, 16000, 16, 1);
-            int requiredCredits = "paid".equalsIgnoreCase(route.tier())
-                    ? ConfigManager.getSttCost(audioSeconds) : 0;
-            if (requiredCredits > 0 && !ConfigManager.isCreditsSufficient(requiredCredits)) {
-                throw new Exception("云端 STT 额度不足，请前往积分中心充值。");
-            }
+            // 语音识别同样交给云端计费：不再在本地按余额拦截，也不再上报用量。
             ApiSpeechRecognizer delegate = fromRoute(route);
             try {
                 String result = delegate.recognizeSingle(pcmData);
                 ConfigManager.reportRouteSuccess("stt", route.tier(), route.id());
-                if (route.tier() != null && result != null && !result.isBlank()) {
-                    BillingService.reportStt(BillingService.requestId(), route.tier(), route.id(), audioSeconds);
-                }
                 return result;
             } catch (Exception error) {
                 last = error;
@@ -115,11 +105,7 @@ public class ApiSpeechRecognizer implements SpeechRecognizer {
             throw new Exception("WebSocket 协议接口（如讯飞）暂不支持，请切换为 HTTP 协议的 STT 服务商。");
         }
         logPcmStats(pcmData);
-        String tier = ConfigManager.getBuiltinSttTierForEndpoint(apiUrl);
-        if ("paid".equalsIgnoreCase(tier)
-                && !ConfigManager.isCreditsSufficient(ConfigManager.getSttCost(UsageMeter.audioSeconds(pcmData, 16000, 16, 1)))) {
-            throw new Exception("云端 STT 额度不足，请前往积分中心充值。");
-        }
+        // 额度由云端判定，本地不再预拦（原来这里会直接抛「额度不足」，与云端实际状态可能不一致）
         String result;
         if (isMiMoEndpoint(apiUrl)) {
             result = recognizeMimoAsr(pcmData);

@@ -152,6 +152,8 @@ public class ModConfig {
     public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_DEMON_TRANSFORMATION;
     /** 残血深渊觉醒：主人快死时召唤恶魔替身。 */
     public static final ForgeConfigSpec.BooleanValue VERITY_DEMON_AWAKENING;
+    /** 归档的原创剧情模式：默认关闭，开启后才注册 HUD/入口/交互。 */
+    public static final ForgeConfigSpec.BooleanValue STORY_MODE_ENABLED;
     public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_GIFT;
     public static final ForgeConfigSpec.BooleanValue ALLOW_VERITY_KICK;
     public static final ForgeConfigSpec.BooleanValue CROSS_SAVE_PURSUIT;
@@ -698,6 +700,11 @@ public class ModConfig {
                         "Verity 召唤一只 500 血 / 20 攻的恶魔替身顶上去，并给主人 3 秒抗性提升 5 级 + 瞬间治疗。",
                         "恶魔单次最多吃 10 点伤害；玩家可以亲手把它杀掉，触发原版的「解放了黑暗」剧情。")
                 .define("verityDemonAwakening", true);
+        STORY_MODE_ENABLED = builder
+                .comment("原创剧情《未关闭的工单》序章与第一章（归档功能，默认关闭）。",
+                        "开启后才会出现剧情 HUD、F7 剧情入口与右键 Verity 对话。",
+                        "内容为离线文字小样，不调用 AI/付费语音，不修改地形，不影响普通伙伴功能。")
+                .define("storyModeEnabled", false);
         ALLOW_VERITY_GIFT = builder
                 .comment("允许玩家潜行 + 丢弃物品（Q）对准 Verity 送礼：每次消耗 1 个，30 秒冷却，好感度 +1")
                 .define("allowVerityGift", true);

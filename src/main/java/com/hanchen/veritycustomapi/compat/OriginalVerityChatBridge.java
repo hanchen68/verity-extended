@@ -76,6 +76,10 @@ public final class OriginalVerityChatBridge {
         if (verityEntity == null || player == null || message == null || message.isBlank()) {
             return false;
         }
+        if (verityEntity instanceof varmite.verity.entity.verity.VerityEntity verity
+                && com.hanchen.veritycustomapi.autonomy.AutonomyDialogue.handle(verity, player, message)) {
+            return true;
+        }
         try {
             Class<?> aiManagerClass = Class.forName(AI_MANAGER_CLASS);
             Class<?> verityEntityClass = Class.forName(VERITY_ENTITY_CLASS);

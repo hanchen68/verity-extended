@@ -1,5 +1,7 @@
 package com.hanchen.veritycustomapi.mixin;
 
+import com.hanchen.veritycustomapi.autonomy.AutonomyGoal;
+import com.hanchen.veritycustomapi.autonomy.VerityAutonomy;
 import com.hanchen.veritycustomapi.combat.MonstrousManager;
 import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -26,6 +28,7 @@ public abstract class VerityEntityCombatMixin {
         Entity self = (Entity) (Object) this;
         if (self instanceof VerityEntity verity) {
             MonstrousManager.tick(verity);
+            // Autonomy runs from AutonomyTicker, independently of Entity.tick overrides.
         }
     }
 }

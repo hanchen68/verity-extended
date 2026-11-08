@@ -2,8 +2,6 @@ package com.hanchen.veritycustomapi.voice;
 
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
-import com.hanchen.veritycustomapi.cloud.BillingService;
-import com.hanchen.veritycustomapi.cloud.UsageMeter;
 import com.hanchen.veritycustomapi.memory.ChatCompletionClient;
 
 import java.util.LinkedHashMap;
@@ -117,41 +115,15 @@ public final class VoiceTranslator {
         String requestJson = ChatCompletionClient.toJson(
                 ChatCompletionClient.buildRequest(route.model(), SYSTEM_PROMPT, user));
 
-        boolean paidBuiltin = "builtin".equals(route.source()) && "paid".equalsIgnoreCase(route.tier());
-        BillingService.Reservation reservation = null;
-        if (paidBuiltin) {
-            int required = Math.max(1, Math.max(route.cost(), Math.max(
-                    ConfigManager.getMinDeductCost(), ConfigManager.getChatCost())));
-            reservation = BillingService.reservePaidChat(BillingService.requestId(), route.id(), required);
-            if (!reservation.success()) return null;
-        }
+        // 计费已交给云端：配音语言转换不再预授权/结算/上报。
         String responseBody;
         try {
             responseBody = ChatCompletionClient.complete(route, requestJson, READ_TIMEOUT_MS);
         } catch (Exception error) {
-            if (reservation != null) BillingService.releasePaidChat(reservation, "upstream_error");
             throw error;
         }
         String body = ChatCompletionClient.extractText(responseBody);
-        if (body.isBlank()) {
-            if (reservation != null) BillingService.releasePaidChat(reservation, "empty_response");
-            return null;
-        }
-        // 计费规则与对话/日记保持一致：付费线路先预留再结算，其余线路只上报
-        if (reservation != null) {
-            UsageMeter.ChatUsage usage = UsageMeter.chat(requestJson, responseBody, body, false);
-            if (usage == null) {
-                BillingService.releasePaidChat(reservation, "missing_usage");
-                if (!reservation.legacySkipped()) return null;
-            } else {
-                BillingService.settlePaidChat(reservation, usage);
-            }
-        } else if ("builtin".equals(route.source())) {
-            String tier = route.tier() != null ? route.tier() : "free";
-            BillingService.reportChat(BillingService.requestId(), tier, route.id(),
-                    UsageMeter.chat(requestJson, responseBody, body, true));
-        }
-        return body;
+        return body.isBlank() ? null : body;
     }
 
     /** 翻译专用端点优先；没配就走当前对话线路。 */

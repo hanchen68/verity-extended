@@ -45,7 +45,7 @@ public final class ResourceCenterScreen extends Screen {
     private static final int SUCCESS = VerityUiTheme.SUCCESS;
     private static final int WARNING = VerityUiTheme.WARNING;
     private static final int DANGER = VerityUiTheme.DANGER;
-    private static final int ITEM_HOVER = 0x332D3942;
+    private static final int ITEM_HOVER = VerityUiTheme.ROW_HOVER;
     private static final int ITEM_HEIGHT = 58;
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("MM-dd HH:mm");
     private final Screen parent;
@@ -514,7 +514,7 @@ public final class ResourceCenterScreen extends Screen {
 
     private boolean compactHeader() { return panelRight() - panelLeft() < 620; }
     private boolean compactItems() { return panelRight() - panelLeft() < 650; }
-    private int panelLeft() { return Math.max(8, (width - Math.min(900, width - 16)) / 2); }
+    private int panelLeft() { return com.hanchen.veritycustomapi.config.VerityWindowLayout.panelLeft(width, height, 900); }
     private int panelRight() { return Math.min(width - 8, panelLeft() + 900); }
     private int headerBottom() { return compactHeader() ? 116 : 105; }
     private int listTop() { return headerBottom() + 7; }

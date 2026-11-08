@@ -1,8 +1,12 @@
 {
   "category.veritycustomapi": "Verity Extended",
-  "key.veritycustomapi.speech": "Hold for Voice Input",
+  "key.veritycustomapi.speech": "Voice Input (primary on mobile; inactive on desktop when vanilla works)",
   "key.veritycustomapi.mmd_control": "Open MMD Animation Controls",
   "key.veritycustomapi.camera_look": "Let Verity Look at the Camera",
   "key.veritycustomapi.quick_command": "Open Quick Command Panel",
-  "key.veritycustomapi.head_perch": "Verity Head Perch Toggle"
+  "key.veritycustomapi.head_perch": "Verity Head Perch Toggle",
+  "key.veritycustomapi.gui_companion": "GUI companion (toggle)",
+  "key.veritycustomapi.second_sight": "Second sight",
+  "key.veritycustomapi.story": "Story Dialogue / Journal",
+  "key.veritycustomapi.ride": "Ride Verity / Dismount"
 }

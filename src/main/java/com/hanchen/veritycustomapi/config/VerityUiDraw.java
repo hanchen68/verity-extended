@@ -72,7 +72,7 @@ public final class VerityUiDraw {
     public static void fillRounded(GuiGraphics g, int left, int top, int right, int bottom,
                                    int radius, int color) {
         if (right <= left || bottom <= top) return;
-        int r = Math.max(0, Math.min(radius, Math.min((right - left) / 2, (bottom - top) / 2)));
+        int r = 0; // Native-enhanced theme deliberately uses square pixel edges.
         if (r == 0) {
             g.fill(left, top, right, bottom, color);
             return;
@@ -94,7 +94,7 @@ public final class VerityUiDraw {
     public static void strokeRounded(GuiGraphics g, int left, int top, int right, int bottom,
                                      int radius, int color) {
         if (right <= left || bottom <= top) return;
-        int r = Math.max(0, Math.min(radius, Math.min((right - left) / 2, (bottom - top) / 2)));
+        int r = 0; // Native-enhanced theme deliberately uses square pixel edges.
         if (r == 0) {
             g.fill(left, top, right, top + 1, color);
             g.fill(left, bottom - 1, right, bottom, color);
@@ -113,10 +113,11 @@ public final class VerityUiDraw {
 
     /** 卡片 = 投影 + 圆角底 + 圆角描边。 */
     public static void card(GuiGraphics g, int left, int top, int right, int bottom, int radius) {
-        // 投影：往下偏移 2px、左右各内缩 2px，露出一点就够，太多会显脏
-        fillRounded(g, left + 2, bottom, right + 2, bottom + 2, radius, VerityUiTheme.CARD_SHADOW);
-        fillRounded(g, left, top, right, bottom, radius, VerityUiTheme.CARD);
-        strokeRounded(g, left, top, right, bottom, radius, VerityUiTheme.CARD_BORDER);
+        if (right-left<3 || bottom-top<3) return;
+        g.fill(left,top,right,bottom,VerityUiTheme.BORDER);
+        g.fill(left+1,top+1,right-1,bottom-1,VerityUiTheme.CARD);
+        g.fill(left+1,top+1,right-1,top+2,VerityUiTheme.CARD_BORDER);
+        g.fill(left+1,top+1,left+2,bottom-1,VerityUiTheme.CARD_BORDER);
     }
 
     /** 抬升层（标题栏、分组头）：比卡片实一档，用于区分层次。 */
@@ -141,6 +142,20 @@ public final class VerityUiDraw {
      */
     public static void switchPill(GuiGraphics g, int left, int top, int width, int height,
                                   boolean on, boolean hovered, double progress) {
+        int box = Math.max(4, Math.min(16, height));
+        int x = left + Math.max(0,(width-box)/2), y=top+Math.max(0,(height-box)/2);
+        g.fill(x,y,x+box,y+box,hovered?VerityUiTheme.TEXT:VerityUiTheme.CONTROL_BORDER);
+        g.fill(x+1,y+1,x+box-1,y+box-1,VerityUiTheme.CONTROL_FIELD);
+        if (on) {
+            double checkProgress=VerityUiAnimation.reducedMotion()?1.0D:Math.max(0.0D,Math.min(1.0D,progress));
+            int segments=(int)Math.ceil(checkProgress*8);
+            for(int i=0;i<Math.min(3,segments);i++)g.fill(x+3+i,y+box/2+i,x+5+i,y+box/2+i+2,VerityUiTheme.SUCCESS);
+            for(int i=0;i<Math.min(5,Math.max(0,segments-3));i++)g.fill(x+5+i,y+box/2+2-i,x+7+i,y+box/2+4-i,VerityUiTheme.SUCCESS);
+        }
+    }
+
+    /* Kept private for binary source migration only; new UI uses checkbox above. */
+    private static void legacySwitch(GuiGraphics g,int left,int top,int width,int height,boolean on,boolean hovered,double progress) {
         double p = Math.max(0.0D, Math.min(1.0D, progress));
         int radius = height / 2;
         int trackOff = hovered ? blend(VerityUiTheme.CONTROL_TRACK, 0x73FFFFFF, 0.35D)

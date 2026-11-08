@@ -25,11 +25,11 @@ public final class MmdPlaybackScreen extends Screen {
     private static final int SUCCESS = VerityUiTheme.SUCCESS;
     private static final int WARNING = VerityUiTheme.WARNING;
     private static final int DANGER = VerityUiTheme.DANGER;
-    private static final int ROW = 0x222A3038;
-    private static final int PLAYING = 0xFF244756;
-    private static final int MOTION = 0xFF78C6E8;
-    private static final int CAMERA = 0xFFC792EA;
-    private static final int AUDIO = 0xFF89D185;
+    private static final int ROW = VerityUiTheme.CARD_RAISED;
+    private static final int PLAYING = VerityUiTheme.CARD_RAISED;
+    private static final int MOTION = VerityUiTheme.TEXT;
+    private static final int CAMERA = VerityUiTheme.MUTED;
+    private static final int AUDIO = VerityUiTheme.SUCCESS;
     private static final int ITEM_HEIGHT = 76;
 
     private final Screen parent;

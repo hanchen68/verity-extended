@@ -166,6 +166,9 @@ public final class CameraCaptureService {
             return true;
         }
         report.append("失败：").append(result.error());
+        // Log the real reason: the menu can only show one line, and "camera test keeps failing"
+        // is unactionable without knowing which backend said what.
+        OllamaProxyMod.LOGGER.warn("画面采集测试失败: backend={}, reason={}", result.backend(), result.error());
         return false;
     }
 
@@ -231,7 +234,13 @@ public final class CameraCaptureService {
             byte[] jpeg = readIfNonEmpty(outFile);
             if (jpeg != null) {
                 logChosenDevice(output);
+                OllamaProxyMod.LOGGER.info("摄像头采集成功: backend=powershell, bytes={}", jpeg.length);
                 return success(jpeg, "powershell");
+            }
+            OllamaProxyMod.LOGGER.warn("摄像头采集没有产出画面: output={}", firstLines(output, 6));
+            String scriptError = scriptError(output);
+            if (scriptError != null) {
+                return CaptureResult.failure("powershell", explain(scriptError));
             }
             return CaptureResult.failure("powershell",
                     "未产出画面。" + firstLines(output, 3)
@@ -268,9 +277,14 @@ public final class CameraCaptureService {
             "$devs = $null",
             "try { $devs = AwaitOp ([Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync([Windows.Devices.Enumeration.DeviceClass]::VideoCapture)) ([Windows.Devices.Enumeration.DeviceInformationCollection]) } catch { }",
             "if ($want -ne '' -and $devs -ne $null) { $chosen = $devs | Where-Object { $_.Name -eq $want } | Select-Object -First 1 }",
+            // 只挑「当前真的连着」的设备。手机投屏 / 采集卡拔掉后仍会留在设备表里，
+            // 状态是 Unavailable；对它们 InitializeAsync 会抛异常，最终表现为
+            // 「采集失败但看不出原因」。$devs 里保留全部用于报错，候选只用可用的。
             "if ($chosen -eq $null -and $devs -ne $null) {",
-            "  $cands = @($devs | Where-Object { $_.Name -notmatch 'virtual|obs|vcam|manycam|snap' })",
-            "  if ($cands.Count -eq 0) { $cands = @($devs) }",
+            "  $usable = @($devs | Where-Object { $_.IsEnabled })",
+            "  if ($usable.Count -eq 0) { $usable = @($devs) }",
+            "  $cands = @($usable | Where-Object { $_.Name -notmatch 'virtual|obs|vcam|manycam|snap' })",
+            "  if ($cands.Count -eq 0) { $cands = @($usable) }",
             "  if ($cands.Count -gt 1) {",
             // 自动模式：逐台试拍一张、量亮度，取第一台不是纯黑的。
             // 手机上投屏出来的「前置/后置/组合」摄像头在手机没连着时永远是纯黑，
@@ -312,30 +326,36 @@ public final class CameraCaptureService {
             "$settings.StreamingCaptureMode = [Windows.Media.Capture.StreamingCaptureMode]::Video",
             "$settings.MediaCategory = [Windows.Media.Capture.MediaCategory]::Other",
             "if ($chosen -ne $null) { $settings.VideoDeviceId = $chosen.Id }",
-            "$capture = New-Object Windows.Media.Capture.MediaCapture",
-            "AwaitAct ($capture.InitializeAsync($settings))",
-            // 🔴 必须等相机曝光稳定再拍：WinRT 初始化后立刻 CapturePhoto 常常拿到一张
-            // 严重欠曝的首帧。实测同一台相机：立刻拍 24989 字节、等 600ms 拍 76812 字节，
-            // 前者暗到 AI 只能回答「画面里全是黑的」。这 600ms 换来的是「能不能看见」。
-            "Start-Sleep -Milliseconds 600",
-            "$props = [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg()",
-            "$props.Width = [uint32]$w",
-            "$props.Height = [uint32]$h",
-            "$stream = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream",
-            "AwaitAct ($capture.CapturePhotoToStreamAsync($props, $stream))",
-            "$capture.Dispose()",
-            "$size = [uint32]$stream.Size",
-            "$stream.Seek(0)",
-            "$reader = New-Object Windows.Storage.Streams.DataReader($stream.GetInputStreamAt(0))",
-            "AwaitOp ($reader.LoadAsync($size)) ([uint32]) | Out-Null",
-            "$bytes = New-Object byte[] $size",
-            "$reader.ReadBytes($bytes)",
-            "$reader.Dispose()",
-            "$stream.Dispose()",
-            "[System.IO.File]::WriteAllBytes($out, $bytes)",
-            // 回报实际用了哪个设备：出黑图时能直接从日志判断是不是选错了摄像头
-            "Write-Output ('DEVICE ' + $(if ($chosen -ne $null) { $chosen.Name } else { 'default' }))",
-            "Write-Output ('OK ' + $bytes.Length)");
+            // 🔴 采集段必须自己 try/catch 并把原因写出来。
+            // 以前这段是裸的：选到一台掉线的摄像头，InitializeAsync 直接抛异常，
+            // 脚本中途退出 → 没写文件、没有 OK 行 → Java 只能报「未产出画面」，
+            // 玩家看到的就是「一直不通过，却没有原因」。
+            "$capture = $null",
+            "try {",
+            "  $capture = New-Object Windows.Media.Capture.MediaCapture",
+            "  AwaitAct ($capture.InitializeAsync($settings))",
+            // 必须等相机曝光稳定再拍：WinRT 初始化后立刻 CapturePhoto 常常拿到一张
+            // 严重欠曝的首帧。实测同一台相机：立刻拍 24989 字节、等 600ms 拍 76812 字节。
+            "  Start-Sleep -Milliseconds 600",
+            "  $props = [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg()",
+            "  $props.Width = [uint32]$w",
+            "  $props.Height = [uint32]$h",
+            "  $stream = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream",
+            "  AwaitAct ($capture.CapturePhotoToStreamAsync($props, $stream))",
+            "  $size = [uint32]$stream.Size",
+            "  $stream.Seek(0)",
+            "  $reader = New-Object Windows.Storage.Streams.DataReader($stream.GetInputStreamAt(0))",
+            "  AwaitOp ($reader.LoadAsync($size)) ([uint32]) | Out-Null",
+            "  $bytes = New-Object byte[] $size",
+            "  $reader.ReadBytes($bytes)",
+            "  $reader.Dispose(); $stream.Dispose()",
+            "  [System.IO.File]::WriteAllBytes($out, $bytes)",
+            "  Write-Output ('DEVICE ' + $(if ($chosen -ne $null) { $chosen.Name } else { 'default' }))",
+            "  Write-Output ('OK ' + $bytes.Length)",
+            "} catch {",
+            "  Write-Output ('ERR ' + $_.Exception.Message)",
+            "  Write-Output ('ERRDEV ' + $(if ($chosen -ne $null) { $chosen.Name } else { 'default' }))",
+            "} finally { if ($capture -ne $null) { try { $capture.Dispose() } catch { } } }");
 
     // ==================== ffmpeg / DirectShow 后端 ====================
 
@@ -508,8 +528,44 @@ public final class CameraCaptureService {
         return buffer.toString(StandardCharsets.UTF_8);
     }
 
-    private static String firstLines(String text, int maxLines) {
-        if (text == null || text.isBlank()) return "";
+    /** Pull the "ERR ..." line the capture script emits on failure, if any. */
+    static String scriptError(String output) {
+        if (output == null || output.isBlank()) return null;
+        for (String line : output.split("\\R")) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("ERR ")) return trimmed.substring(4).trim();
+        }
+        return null;
+    }
+
+    /**
+     * Turn a raw WinRT/.NET message into something a player can act on.
+     *
+     * <p>Raw text such as {@code HRESULT: [0x80070005]} is useless in a menu; the common causes are
+     * device in use, camera privacy blocked, or the selected device no longer present.
+     */
+    static String explain(String raw) {
+        if (raw == null) return "采集失败，未返回原因";
+        String text = raw.trim();
+        String lower = text.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("0x80070005") || lower.contains("access is denied") || lower.contains("拒绝访问")) {
+            return "系统拒绝了摄像头访问。请在「设置 → 隐私和安全性 → 相机」允许桌面应用使用相机，" +
+                    "并关闭其他正在占用摄像头的程序（会议 / 直播 / 手机投屏软件）。";
+        }
+        if (lower.contains("0x8007001f") || lower.contains("0x800700aa") || lower.contains("in use")
+                || lower.contains("正在使用")) {
+            return "摄像头正被其他程序占用。请关闭会议、直播或手机投屏软件后重试。";
+        }
+        if (lower.contains("0x80070490") || lower.contains("element not found") || lower.contains("找不到元素")) {
+            return "选中的摄像头已断开。请重新点「检测摄像头」，改选一台当前接着的设备（或在设置里清空设备名让程序自动选）。";
+        }
+        if (lower.contains("0x80070102") || lower.contains("timeout") || lower.contains("超时")) {
+            return "摄像头没有在规定时间内返回画面。可能是设备掉线或驱动无响应，请拔插一次后再试。";
+        }
+        return "采集脚本报错：" + (text.length() > 160 ? text.substring(0, 160) + "…" : text);
+    }
+
+    private static String firstLines(String text, int maxLines) {        if (text == null || text.isBlank()) return "";
         String[] lines = text.replace('\r', '\n').split("\n");
         StringBuilder builder = new StringBuilder();
         int taken = 0;

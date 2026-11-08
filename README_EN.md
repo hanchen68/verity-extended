@@ -174,7 +174,7 @@ This repository does not include third-party artifacts; you supply them yourself
 
 | Path | What | Where from |
 |---|---|---|
-| `src/main/java/com/hanchen/veritycustomapi/verity-6.0.0-beta.9/` | Verity JE class files (needed to compile against its API) | A Verity JE distribution |
+| `src/main/java/com/hanchen/veritycustomapi/verity-6.0.0/` | Verity JE class files (needed to compile against its API) | A Verity JE distribution |
 | `src/main/java/com/hanchen/veritycustomapi/PatPat-1.3.1+1.20.1+forge/` | PatPat class files | A PatPat distribution |
 | `lib/geckolib-forge-1.20.1-4.8.4.jar` | GeckoLib 4.8.4 | GeckoLib releases |
 

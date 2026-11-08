@@ -172,7 +172,7 @@ public final class VerityImportScreen extends Screen {
     }
 
     private int panelLeft() {
-        return Math.max(8, (width - Math.min(760, width - 16)) / 2);
+        return com.hanchen.veritycustomapi.config.VerityWindowLayout.panelLeft(width, height, 640);
     }
 
     private int panelRight() {

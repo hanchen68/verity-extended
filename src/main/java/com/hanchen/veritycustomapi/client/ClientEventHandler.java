@@ -11,6 +11,7 @@ import com.hanchen.veritycustomapi.compat.OriginalVerityConfigSync;
 import com.hanchen.veritycustomapi.compat.OriginalVeritySttInjector;
 import com.hanchen.veritycustomapi.compat.RuntimePlatform;
 import com.hanchen.veritycustomapi.compat.BilingualSpeechText;
+import com.hanchen.veritycustomapi.compat.VeritySpeaker;
 import com.hanchen.veritycustomapi.compat.OverheadOnlySpeechText;
 import com.hanchen.veritycustomapi.compat.VeritySubtitleManager;
 import com.hanchen.veritycustomapi.compat.VerityGrowthState;
@@ -76,7 +77,7 @@ public class ClientEventHandler {
                         ConfigScreenHandler.ConfigScreenFactory.class,
                         () -> new ConfigScreenHandler.ConfigScreenFactory(
                                 (Minecraft mc, Screen parentScreen) ->
-                                        new NativeOllamaProxyConfigScreen(parentScreen)
+                                        com.hanchen.veritycustomapi.config.SettingsExperience.open(parentScreen)
                         )
                 );
             SkinManager.getInstance().init();
@@ -157,8 +158,12 @@ public class ClientEventHandler {
             VerityDialogueFeed.clear();
             // 站头状态按实体 id 存：实体 id 每个存档从 0 开始，不清会串到下一个存档
             com.hanchen.veritycustomapi.ride.ClientPerchState.clear();
+            // 自主状态也按实体 id 存，同样会串存档
+            com.hanchen.veritycustomapi.autonomy.ClientAutonomyState.clear();
             com.hanchen.veritycustomapi.combat.GuardianRegistry.clear();
             com.hanchen.veritycustomapi.client.BallAnimator.clear();
+            com.hanchen.veritycustomapi.client.GuiCompanion.clear();
+            com.hanchen.veritycustomapi.client.SecondSightManager.clear();
             ReminderManager.clear();
             OriginalVeritySttInjector.endSession(sessionGeneration);
             SpeechRecognitionManager.INSTANCE.shutdown();
@@ -171,34 +176,112 @@ public class ClientEventHandler {
         }
 
         /**
-         * 语音结果由 VerityChatSender 发 /v，语音键保持 V。
-         * 只做一次性迁移：若之前被改成 CAPS LOCK，恢复为 V；用户自定义键不覆盖。
+         * 桌面端：把旧的「V 键语音」迁移到不冲突的备用键。
+         *
+         * <p>历史原因：早期扩展自己管语音，默认键就是 V；后来接进原版
+         * {@code PUSH_TO_TALK}（同样默认 V），两条路径撞在同一个键上，
+         * 按键设置里就会出现红色「该按键也用于」提示，而且旧存档仍把扩展键固定成 V。
+         *
+         * <p>🔴 标记文件用 <b>v2</b>：上一版 bug 版已经写过一次
+         * {@code speech-key-conflict.flag}（当时桌面端默认键恰好是 B，而 B 已被
+         * quick_command 占用，等于没修还留了个「已完成」标记），
+         * 沿用旧名会让迁移从此永久跳过——玩家看到的就是「装了新版但 V 还在冲突」。
+         *
+         * <p>🔴 <b>手机端绝对不能迁移</b>：原版注入在 Android 上会主动跳过
+         * （见 {@code OriginalVeritySttInjector.inject()}），手机没有可用的原版录音链，
+         * 扩展自己的键是唯一入口。把 V 迁走等于让手机玩家再也发不了语音。
+         * 玩家自己改过的其它键一律不动。
          */
         private static void restoreLegacySpeechKey(Minecraft mc) {
+            // 🔴 只有在「确实做出了决定」之后才能置位。
+            // 原来第一行就置位，然后才判 options/手机端/按键值：
+            // 首帧 options 还没就绪时会走 return，而标记已经消耗掉，
+            // 之后每 tick 都直接返回——迁移永远不会再跑（本次实际踩到的坑）。
             if (legacySpeechKeyChecked) return;
-            legacySpeechKeyChecked = true;
             try {
                 if (mc.options == null || mc.gameDirectory == null) return;
-                if (KeyBindings.SPEECH_KEY.getKey().getType() != InputConstants.Type.KEYSYM) return;
+                // 手机端保持原样：唯一入口不能动；这也是最终决定，可以置位
+                if (com.hanchen.veritycustomapi.compat.RuntimePlatform.isAndroidRuntime()) {
+                    legacySpeechKeyChecked = true;
+                    return;
+                }
+                boolean keysym = KeyBindings.SPEECH_KEY.getKey().getType() == InputConstants.Type.KEYSYM;
                 int key = KeyBindings.SPEECH_KEY.getKey().getValue();
-                if (key != GLFW.GLFW_KEY_V && key != GLFW.GLFW_KEY_CAPS_LOCK) return;
+                if (!keysym) {
+                    legacySpeechKeyChecked = true;
+                    return;
+                }
+                // 只有「还是历史默认值」才迁移；玩家手动设的其它键完全不动
+                if (key != GLFW.GLFW_KEY_V && key != GLFW.GLFW_KEY_CAPS_LOCK) {
+                    legacySpeechKeyChecked = true;
+                    return;
+                }
                 Path marker = mc.gameDirectory.toPath()
                         .resolve("config").resolve("verity_extended")
-                        .resolve("speech-key-v.flag");
-                if (Files.exists(marker)) return;
-
-                if (key == GLFW.GLFW_KEY_CAPS_LOCK) {
-                    KeyBindings.SPEECH_KEY.setKey(
-                            InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_V));
-                    KeyMapping.resetMapping();
-                    mc.options.save();
-                    OllamaProxyMod.LOGGER.info("[按键] 语音键恢复为 V");
+                        .resolve("speech-key-conflict-v2.flag");
+                if (Files.exists(marker)) {
+                    legacySpeechKeyChecked = true;
+                    return;
                 }
+
+                // 🔴 注入是在「进世界」时做的（onClientLogin），而主菜单阶段本 tick 已经在跑，
+                // 那时 isActive() 一定是 false。所以这里不能直接判定「原版不可用」，
+                // 只有等到玩家真的进了世界（player != null）之后才做最终决定。
+                if (mc.player == null) return;
+                if (!OriginalVeritySttInjector.isActive()) {
+                    // 进了世界注入仍未成功 -> 原版链路不可用，保留 V（此时它是唯一入口）
+                    OllamaProxyMod.LOGGER.info("[按键] 原版 STT 链路不可用，语音键保留 V 作为唯一入口");
+                    legacySpeechKeyChecked = true;
+                    return;
+                }
+
+                // 目标键必须真的空闲：写死一个键迟早和别人撞（B 就被快捷指令面板占了）。
+                int target = findFreeSpeechKey();
+                KeyBindings.SPEECH_KEY.setKey(
+                        InputConstants.Type.KEYSYM.getOrCreate(target));
+                KeyMapping.resetMapping();
+                mc.options.save();
+                OllamaProxyMod.LOGGER.info("[按键] 桌面端语音键已从 V 迁到 {}（避开原版 push-to-talk 与其它已用键）",
+                        KeyBindings.SPEECH_KEY.getTranslatedKeyMessage().getString());
                 Files.createDirectories(marker.getParent());
-                Files.writeString(marker, "Speech key keeps V.\n");
+                Files.writeString(marker,
+                        "Desktop: speech key moved off V so the vanilla push-to-talk keeps it."
+                                + System.lineSeparator());
+                // 真正处理完才置位
+                legacySpeechKeyChecked = true;
             } catch (Throwable t) {
-                OllamaProxyMod.LOGGER.warn("[按键] 恢复语音键失败: {}", t.getMessage());
+                OllamaProxyMod.LOGGER.warn("[按键] 语音键迁移失败: {}", t.getMessage());
             }
+        }
+
+        /**
+         * 找一个当前没人用的字母键给语音用。
+         *
+         * <p>为什么不写死：写死过的两个值都撞了——V 撞原版 push-to-talk，
+         * B 撞快捷指令面板。玩家的 options.txt 还会自己改键，静态值永远追不上。
+         * 这里按「扩展自己的键 + 原版 Verity 的键」逐个排除，只留真正空闲的。
+         *
+         * @return 可用的 GLFW 键值；实在找不到就退回 J
+         */
+        private static int findFreeSpeechKey() {
+            java.util.Set<Integer> used = new java.util.HashSet<>();
+            try {
+                for (KeyMapping mapping : Minecraft.getInstance().options.keyMappings) {
+                    if (mapping == KeyBindings.SPEECH_KEY) continue;
+                    if (mapping.getKey().getType() == InputConstants.Type.KEYSYM) {
+                        used.add(mapping.getKey().getValue());
+                    }
+                }
+            } catch (Throwable ignored) {
+                // 拿不到按键表就按下面的候选顺序走，最坏情况是多一次冲突提示，不影响功能
+            }
+            // 优先顺序：离家近、适合长按的字母键
+            int[] preferred = {GLFW.GLFW_KEY_J, GLFW.GLFW_KEY_B, GLFW.GLFW_KEY_U,
+                    GLFW.GLFW_KEY_Y, GLFW.GLFW_KEY_G, GLFW.GLFW_KEY_L};
+            for (int candidate : preferred) {
+                if (!used.contains(candidate)) return candidate;
+            }
+            return GLFW.GLFW_KEY_J;
         }
 
         /** 授权成功后启动 5 秒全局守护，即使配置界面已关闭也生效。 */
@@ -236,9 +319,32 @@ public class ClientEventHandler {
             tickCloudAuthGuard();
             com.hanchen.veritycustomapi.mmd.MmdPlaybackManager.get().tickClient();
             VerityAwarenessManager.onClientTick(mc);
+            SecondSightManager.onClientTick(mc);
             ReminderManager.onClientTick(mc);
             VerityNavigationService.onClientTick(mc);
             com.hanchen.veritycustomapi.tts.VanillaAudioSink.tickClient(mc);
+
+            // J 键：界面里的 Verity 开关
+            if (mc.player != null && mc.level != null && mc.screen == null
+                    && KeyBindings.GUI_COMPANION_KEY.consumeClick()) {
+                GuiCompanion.toggle();
+                mc.player.displayClientMessage(Component.literal(
+                        GuiCompanion.isEnabled() ? "界面陪伴：开" : "界面陪伴：关"), true);
+            }
+
+            // R 键：第二视角
+            if (mc.player != null && mc.level != null && mc.screen == null
+                    && KeyBindings.SECOND_SIGHT_KEY.consumeClick()) {
+                if (SecondSightManager.isActive()) {
+                    SecondSightManager.stop();
+                    mc.player.displayClientMessage(Component.literal("已退出第二视角"), true);
+                } else if (SecondSightManager.toggle(mc)) {
+                    mc.player.displayClientMessage(Component.literal(
+                            "第二视角：她看到的 —— 再按 R 退出"), true);
+                } else {
+                    mc.player.displayClientMessage(Component.literal("附近找不到 Verity"), true);
+                }
+            }
 
             if (mc.player != null && mc.level != null && mc.screen == null
                     && KeyBindings.MMD_CONTROL_KEY.consumeClick()) {
@@ -248,14 +354,14 @@ public class ClientEventHandler {
                             com.hanchen.veritycustomapi.mmd.MmdPlaybackManager.MULTIPLAYER_DISABLED_MESSAGE), false);
                     return;
                 }
-                mc.setScreen(new MmdPlaybackScreen(null));
+                mc.setScreen(new MmdActionWheelScreen());
                 return;
             }
 
             // K 键：快捷指令面板
             if (mc.player != null && mc.level != null && mc.screen == null
                     && KeyBindings.QUICK_COMMAND_KEY.consumeClick()) {
-                mc.setScreen(new QuickCommandScreen());
+                mc.setScreen(new QuickCommandScreen(true));
                 return;
             }
 
@@ -283,12 +389,16 @@ public class ClientEventHandler {
                 return;
             }
 
-            // SttInjector 已劫持 Verity 的 PUSH_TO_TALK(V)，无需重复处理
+            // 原版 PUSH_TO_TALK 已被劫持时，语音完全走那条链路（原版默认 V）。
+            // 此时扩展自己的备用键不参与录音——否则一次按键会开两条录音链，
+            // 抢麦克风并产生两份识别结果。
             if (OriginalVeritySttInjector.isActive()) {
                 wasSpeechKeyPressed = false;
                 return;
             }
 
+            // 走到这里说明原版链路不可用（未装 Verity / 版本字段变了 / 手机端跳过注入），
+            // 备用键是此时唯一的语音入口。
             // 非游戏内界面时不响应语音按键
             if (mc.player == null || mc.screen != null) {
                 wasSpeechKeyPressed = KeyBindings.SPEECH_KEY.isDown();
@@ -364,10 +474,45 @@ public class ClientEventHandler {
                 event.setMessage(Component.literal(sanitized).withStyle(event.getMessage().getStyle()));
                 messageText = sanitized;
             }
+            // 双语开着却没有译文：只显示英文本身没问题，但玩家会以为双语坏了。
+            // 每分钟最多提示一次（同一句反复出现时提示会刷屏），并且只在真是 Verity 台词时提示。
+            noteMissingTranslation(messageText);
             TtsChatListener.handleChatMessage(messageText);
         }
 
         private static boolean cloudWarningShown = false;
+
+        /**
+         * 双语开启但这一句没有中文时，给玩家一次说明（每分钟最多一次）。
+         *
+         * <p>为什么需要：翻译失败或预算不足时代理会静默退化成「只显示英文」，
+         * 玩家看到满屏英文，只会认为「双语模式坏了/不稳定」，而真实原因（额度、超时、
+         * 关闭了二次翻译）完全没露出来。
+         *
+         * <p>为什么限流：同一条台词（例如待机口头禅）会反复刷新，每次都提示会刷满聊天栏。
+         */
+        private static long lastMissingTranslationNoticeAt = 0L;
+
+        private static void noteMissingTranslation(String rawMessage) {
+            if (!ConfigManager.isBilingualSpeechSubtitlesEnabled()) return;
+            if (rawMessage == null || rawMessage.isBlank()) return;
+            // 只针对 Verity 自己的台词；玩家聊天不该触发这个提示
+            String body = VeritySpeaker.stripPrefix(rawMessage);
+            if (body == null || body.isBlank()) return;
+            if (BilingualSpeechText.translatedContent(rawMessage) != null) return;
+            // 原文本来就是中文（模型没按英文回答）不算「缺译文」
+            if (BilingualSpeechText.isMostlyChinese(rawMessage)) return;
+            long now = System.currentTimeMillis();
+            if (now - lastMissingTranslationNoticeAt < 60_000L) return;
+            lastMissingTranslationNoticeAt = now;
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft != null && minecraft.player != null) {
+                minecraft.player.displayClientMessage(Component.literal(
+                        ConfigManager.isBilingualSecondPassEnabled()
+                                ? "§7【双语】这句没拿到中文译文，已只显示英文（可能触发了额度或超时限制）"
+                                : "§7【双语】二次翻译已关闭，模型没给中文时只显示英文"), false);
+            }
+        }
 
         @SubscribeEvent
         public static void onScreenInit(ScreenEvent.Init.Post event) {
@@ -383,7 +528,7 @@ public class ClientEventHandler {
                                     SpeechRecognitionManager.INSTANCE.onConfigSaved();
                                     Minecraft minecraft = Minecraft.getInstance();
                                     if (minecraft != null) {
-                                        minecraft.execute(() -> minecraft.setScreen(new NativeOllamaProxyConfigScreen(event.getScreen())));
+                                        minecraft.execute(() -> minecraft.setScreen(com.hanchen.veritycustomapi.config.SettingsExperience.open(event.getScreen())));
                                     }
                                 })
                         )

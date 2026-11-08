@@ -11,8 +11,6 @@ import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.NetworkSecurity;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.compat.OriginalVerityAiLock;
-import com.hanchen.veritycustomapi.cloud.BillingService;
-import com.hanchen.veritycustomapi.cloud.UsageMeter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.gui.screens.PauseScreen;
@@ -405,9 +403,8 @@ public final class VerityAwarenessManager {
         ConfigManager.ChatRoute route;
         try {
             route = primaryChatRoute();
-            if ("builtin-paid".equals(route.id()) && ConfigManager.isCreditsExhausted()) {
-                throw new IllegalStateException("额度不足，请前往云端积分中心充值");
-            }
+            // 额度由云端判定：本地不再因为「余额耗尽」直接放弃主动感知，
+            // 否则云端已充值或改由上游结算时，这里仍然静默跳过。
         } catch (Exception e) {
             REQUEST_IN_FLIGHT.set(false);
             String errorDetail = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
@@ -420,7 +417,6 @@ public final class VerityAwarenessManager {
         AtomicBoolean completed = new AtomicBoolean(false);
         Thread requestThread = new Thread(() -> {
             OllamaProxyMod.LOGGER.info("主动感知后台线程启动: {}", eventName);
-            BillingService.Reservation reservation = null;
             try {
                 // 采集画面（工作线程内执行，避免阻塞主线程）
                 CameraCaptureService.CaptureResult capture = null;
@@ -440,46 +436,17 @@ public final class VerityAwarenessManager {
                         eventName, GSON.toJson(requestBody).getBytes(StandardCharsets.UTF_8).length,
                         capture != null && capture.ok());
 
-                String requestId = BillingService.requestId();
-                boolean paidBuiltin = "builtin".equals(finalRoute.source()) && "paid".equalsIgnoreCase(finalRoute.tier());
-                if (paidBuiltin) {
-                    int required = Math.max(1, Math.max(finalRoute.cost(), Math.max(
-                            ConfigManager.getMinDeductCost(), ConfigManager.getChatCost())));
-                    reservation = BillingService.reservePaidChat(requestId, finalRoute.id(), required);
-                    if (!reservation.success()) throw new IllegalStateException(reservation.error());
-                }
+                // 计费已交给云端：主动感知不再预授权，也不会因为本地余额不足而放弃这条事件。
                 String responseBody = sendDirectChatRequest(requestBody, finalRoute, generation);
                 String requestJson = GSON.toJson(requestBody);
                 String text = sanitizeDisplayText(extractText(responseBody));
                 if (generation != REQUEST_GENERATION.get() || text.isBlank()) {
-                    if (reservation != null) BillingService.releasePaidChat(reservation,
-                            generation != REQUEST_GENERATION.get() ? "cancelled" : "empty_response");
-                    reservation = null;
                     throw new IllegalStateException("主动感知响应已取消或为空");
-                }
-                if (reservation != null) {
-                    UsageMeter.ChatUsage usage = UsageMeter.chat(requestJson, responseBody, text, false);
-                    if (usage == null) {
-                        BillingService.releasePaidChat(reservation, "missing_usage");
-                        // 星绒 API 迁移用户由上游结算，缺少 usage 不应中断主动感知
-                        if (!reservation.legacySkipped()) {
-                            reservation = null;
-                            throw new IllegalStateException("付费主动感知响应缺少真实 usage");
-                        }
-                    } else {
-                        BillingService.settlePaidChat(reservation, usage);
-                    }
-                    reservation = null;
-                } else if ("builtin".equals(finalRoute.source())) {
-                    String tier = finalRoute.tier() != null ? finalRoute.tier() : "free";
-                    BillingService.reportChat(BillingService.requestId(), tier, finalRoute.id(),
-                            UsageMeter.chat(requestJson, responseBody, text, true));
                 }
                 if (generation == REQUEST_GENERATION.get() && completed.compareAndSet(false, true)) {
                     completeAwarenessEvent(eventName, text, false, generation);
                 }
             } catch (Exception e) {
-                if (reservation != null) BillingService.releasePaidChat(reservation, "upstream_error");
                 String errorDetail = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
                 if (generation == REQUEST_GENERATION.get()) {
                     OllamaProxyMod.LOGGER.warn("主动事件请求失败: {}: {}", eventName, errorDetail);

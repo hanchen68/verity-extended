@@ -15,7 +15,7 @@
 |---|---|
 | 游戏 | Minecraft 1.20.1 |
 | 加载器 | Forge **47.3 以上**（47.3.x / 47.4.x 均可；编译基准 47.3.0） |
-| 必装 | Verity JE（实测 6.0.0-beta.9）、GeckoLib 4.4+ |
+| 必装 | Verity JE（实测 6.0.0 正式版）、GeckoLib 4.4+ |
 | 选装 | PatPat（摸头联动）、《The Shooting Star》（星之遥控器） |
 
 把 `release/Verity扩展增强-4.5.2.jar` 放进 `mods/`。

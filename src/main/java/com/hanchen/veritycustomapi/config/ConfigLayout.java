@@ -40,16 +40,18 @@ public final class ConfigLayout {
         return width < 300 || height < 220;
     }
 
+    /** Pure geometry: screens decide whether to use the inset or a full-window layout. */
     public static int outerMargin(int width, int height) {
-        return isCompact(width, height) ? 8 : 14;
+        return VerityWindowLayout.margin(width, height);
     }
 
     public static int contentTop() {
-        return 58;
+        return 66; // Header + contextual sub-tabs; scrolling rows start below both.
     }
 
+    /** Rows stop above the footer inset, so buttons and status text stay inside the window. */
     public static int contentBottom(int height) {
-        return height - 50;
+        return VerityWindowLayout.panelBottom(height) - 44;
     }
 
     public static int visibleRowsHeight(int height) {
@@ -63,9 +65,10 @@ public final class ConfigLayout {
     }
 
     public static int sidebarLeft(int width, int height) {
-        int usableWidth = Math.max(0, width - outerMargin(width, height) * 2);
+        int margin = outerMargin(width, height);
+        int usableWidth = Math.max(0, width - margin * 2);
         int maxWidth = Math.min(MAX_PANEL_WIDTH, usableWidth);
-        return Math.max(outerMargin(width, height), (width - maxWidth) / 2);
+        return Math.max(margin, (width - maxWidth) / 2);
     }
 
     public static int panelRight(int width, int height) {

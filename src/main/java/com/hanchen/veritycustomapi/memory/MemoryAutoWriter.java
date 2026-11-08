@@ -8,8 +8,6 @@ import com.google.gson.JsonParser;
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.NetworkSecurity;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
-import com.hanchen.veritycustomapi.cloud.BillingService;
-import com.hanchen.veritycustomapi.cloud.UsageMeter;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.server.ServerLifecycleHooks;
 
@@ -118,28 +116,13 @@ public final class MemoryAutoWriter {
             return;
         }
         ConfigManager.ChatRoute route = routes.get(0);
-        boolean paidBuiltin = "builtin".equals(route.source()) && "paid".equalsIgnoreCase(route.tier());
-        String requestId = BillingService.requestId();
-
-        BillingService.Reservation reservation = null;
-        String requestBody = null;
+        // 计费已交给云端：不再预授权/结算/上报，也不再因为本地余额不足跳过记忆提取。
+        String requestBody;
         String responseBody;
         try {
             requestBody = GSON.toJson(buildRequest(route, user, assistant));
-            if (paidBuiltin) {
-                int required = Math.max(1, Math.max(route.cost(), Math.max(
-                        ConfigManager.getMinDeductCost(), ConfigManager.getChatCost())));
-                reservation = BillingService.reservePaidChat(requestId, route.id(), required);
-                if (!reservation.success()) {
-                    OllamaProxyMod.LOGGER.info("记忆自动提取跳过：{}", reservation.error());
-                    return;
-                }
-            }
             responseBody = post(route, requestBody);
         } catch (Exception error) {
-            if (reservation != null) {
-                BillingService.releasePaidChat(reservation, "upstream_error");
-            }
             OllamaProxyMod.LOGGER.warn("记忆自动提取请求失败: {}", error.toString());
             return;
         }
@@ -147,22 +130,7 @@ public final class MemoryAutoWriter {
         String text = extractText(responseBody);
         List<Entry> entries = parseEntries(text);
         if (entries.isEmpty()) {
-            if (reservation != null) BillingService.releasePaidChat(reservation, "invalid_response");
             return;
-        }
-        if (reservation != null) {
-            UsageMeter.ChatUsage usage = UsageMeter.chat(requestBody, responseBody, text, false);
-            if (usage == null) {
-                BillingService.releasePaidChat(reservation, "missing_usage");
-                // 星绒 API 迁移用户由上游结算，缺 usage 不该中断记忆写入
-                if (!reservation.legacySkipped()) return;
-            } else {
-                BillingService.settlePaidChat(reservation, usage);
-            }
-        } else if ("builtin".equals(route.source())) {
-            String tier = route.tier() != null ? route.tier() : "free";
-            BillingService.reportChat(BillingService.requestId(), tier, route.id(),
-                    UsageMeter.chat(requestBody, responseBody, text, true));
         }
         server.execute(() -> {
             for (Entry entry : entries) {

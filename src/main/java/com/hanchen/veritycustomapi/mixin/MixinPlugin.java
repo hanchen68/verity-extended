@@ -35,6 +35,10 @@ public class MixinPlugin implements IMixinConfigPlugin {
     /** 原版回复发送逻辑是否为新版结构（6.2 起）。6.0.x/6.1.x 写在 lambda$queryAI$4，6.2 起抽成 sendReplyPart 且参数顺序变了，两个 Mixin 靠此标记二选一。 */
     private boolean verityNewReplyStructure;
 
+    /** 旧版回复 lambda 的具体形态：决定用哪个 Mixin（两者参数签名不同）。 */
+    private com.hanchen.veritycustomapi.compat.VerityStructureDetector.ReplyLambdaShape verityReplyShape =
+            com.hanchen.veritycustomapi.compat.VerityStructureDetector.ReplyLambdaShape.NONE;
+
     /**
      * 原版是否还有 {@code Tools.list_available_itemids} 工具（6.0.0 起已删除）。
      *
@@ -71,14 +75,21 @@ public class MixinPlugin implements IMixinConfigPlugin {
         if (verityAvailable) {
             OllamaProxyMod.LOGGER.info("[MixinPlugin] 检测到原版 Verity 模组，将启用皮肤 Mixin");
             verityNewReplyStructure = detectNewReplyStructure(loader);
-            boolean legacyReply = detectLegacyReplyStructure(loader);
+            verityReplyShape = detectReplyShape(loader);
+            boolean legacyReply = verityReplyShape
+                    != com.hanchen.veritycustomapi.compat.VerityStructureDetector.ReplyLambdaShape.NONE;
             OllamaProxyMod.LOGGER.info("[MixinPlugin] 原版回复发送结构：{}",
                     verityNewReplyStructure ? "新版（AiManager.sendReplyPart，6.2+）"
-                            : legacyReply ? "旧版（AiManager.lambda$queryAI$4，6.0/6.1）"
+                            : verityReplyShape == com.hanchen.veritycustomapi.compat
+                                    .VerityStructureDetector.ReplyLambdaShape.V600
+                                    ? "旧版 6.0.0 形态（广播 lambda 含 boolean+ServerLevel）"
+                            : verityReplyShape == com.hanchen.veritycustomapi.compat
+                                    .VerityStructureDetector.ReplyLambdaShape.V_BETA9
+                                    ? "旧版 beta.9 形态（广播 lambda 为 4 参数）"
                             : "未知（两代入口都没有，私聊适配将失效）");
             if (!verityNewReplyStructure && !legacyReply) {
-                OllamaProxyMod.LOGGER.warn("[MixinPlugin] sendReplyPart 与 lambda$queryAI$4 都不在 AiManager 里，"
-                        + "私聊/广播适配会静默失效；这通常是 Verity 又重构了回复链路，需要重新适配");
+                OllamaProxyMod.LOGGER.warn("[MixinPlugin] AiManager 里既没有 sendReplyPart，"
+                        + "也没有带广播调用的回复 lambda；私聊/@ 回复适配会静默失效，需要重新适配");
             }
             VerityLocalization.setEnabled(readLocalizationEnabled());
             VerityLocalization.load();
@@ -113,14 +124,17 @@ public class MixinPlugin implements IMixinConfigPlugin {
         }
     }
 
-    /** 旧版 lambda 入口是否还在；读不到就按不存在处理。 */
-    private static boolean detectLegacyReplyStructure(ClassLoader loader) {
+    /** 旧版回复 lambda 的具体形态；读不到按 NONE 处理。 */
+    private static com.hanchen.veritycustomapi.compat.VerityStructureDetector.ReplyLambdaShape
+    detectReplyShape(ClassLoader loader) {
         try (java.io.InputStream in = loader.getResourceAsStream(AI_MANAGER_CLASS)) {
-            if (in == null) return false;
+            if (in == null) {
+                return com.hanchen.veritycustomapi.compat.VerityStructureDetector.ReplyLambdaShape.NONE;
+            }
             return com.hanchen.veritycustomapi.compat.VerityStructureDetector
-                    .hasLegacyReplyMethod(in.readAllBytes());
+                    .replyLambdaShape(in.readAllBytes());
         } catch (Throwable error) {
-            return false;
+            return com.hanchen.veritycustomapi.compat.VerityStructureDetector.ReplyLambdaShape.NONE;
         }
     }
 
@@ -169,13 +183,21 @@ public class MixinPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-        // 新旧回复发送入口只能启用一个：都对准 AiManager 但目标方法与参数不同，一起启用会让签名不匹配的那个直接注入报错（require = 0 只对「找不到注入点」静默跳过）。
+        // 新旧回复发送入口只能启用一个：都对准 AiManager 但目标方法与参数不同，
+        // 一起启用会让签名不匹配的那个直接注入报错（require = 0 只对「找不到注入点」静默跳过）。
         // V2 的判断必须写在前面，避免被子串匹配吃掉。
         if (mixinClassName.contains("AiManagerPrivateChatV2Mixin")) {
             return verityAvailable && verityNewReplyStructure;
         }
+        // 6.0.0 正式版：回复 lambda 是 (Z, ServerLevel, ServerPlayer, String, MinecraftServer, VerityEntity)
         if (mixinClassName.contains("AiManagerPrivateChatMixin")) {
-            return verityAvailable && !verityNewReplyStructure;
+            return verityAvailable && verityReplyShape == com.hanchen.veritycustomapi.compat
+                    .VerityStructureDetector.ReplyLambdaShape.V600;
+        }
+        // beta.9 / 早期 6.1：(VerityEntity, String, ServerPlayer, MinecraftServer)
+        if (mixinClassName.contains("AiManagerPrivateChatLegacyMixin")) {
+            return verityAvailable && verityReplyShape == com.hanchen.veritycustomapi.compat
+                    .VerityStructureDetector.ReplyLambdaShape.V_BETA9;
         }
         // PatPat Hook 只有在两个目标 Mod 都存在时才应用。
         if (mixinClassName.contains("PatPatClientRendererMixin")) {
@@ -204,6 +226,7 @@ public class MixinPlugin implements IMixinConfigPlugin {
                 || mixinClassName.contains("VerityWorldStateRestoreMixin")
                 || mixinClassName.contains("VerityEntityCombatMixin")
                 || mixinClassName.contains("GuardianDemonSoundMixin")
+                || mixinClassName.contains("CameraSecondSightMixin")
                 || mixinClassName.contains("ServerVerityChatMixin")
                 || mixinClassName.contains("AiManagerPrivateChatMixin")
                 || mixinClassName.contains("VerityDemonMmdMixin")

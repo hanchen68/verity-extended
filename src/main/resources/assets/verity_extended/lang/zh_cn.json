@@ -1,8 +1,12 @@
 {
   "category.veritycustomapi": "Verity 扩展增强",
-  "key.veritycustomapi.speech": "按住语音输入",
+  "key.veritycustomapi.speech": "语音输入（手机端为唯一入口；桌面端原版可用时不生效）",
   "key.veritycustomapi.mmd_control": "打开 MMD 动画控制",
   "key.veritycustomapi.camera_look": "让 Verity 看一眼摄像头",
   "key.veritycustomapi.quick_command": "打开快捷指令面板",
-  "key.veritycustomapi.head_perch": "让 Verity 站到头上/下来"
+  "key.veritycustomapi.head_perch": "让 Verity 站到头上/下来",
+  "key.veritycustomapi.gui_companion": "界面陪伴（开/关）",
+  "key.veritycustomapi.second_sight": "第二视角",
+  "key.veritycustomapi.story": "剧情对话 / 剧情日志",
+  "key.veritycustomapi.ride": "骑上 Verity / 下来"
 }

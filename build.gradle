@@ -6,7 +6,7 @@ plugins {
     id 'org.spongepowered.mixin' version '0.7.+'
 }
 
-version = '5.1'
+version = '5.3'
 group = 'com.hanchen.veritycustomapi'
 archivesBaseName = 'Verity\u6269\u5c55\u589e\u5f3a'
 
@@ -122,8 +122,8 @@ dependencies {
     shaded 'com.googlecode.soundlibs:tritonus-share:0.3.7.4'
     shaded 'com.googlecode.soundlibs:jorbis:0.0.17.4'
 
-    compileOnly files('src/main/java/com/hanchen/veritycustomapi/verity-6.0.0-beta.9')
-    runtimeOnly files('src/main/java/com/hanchen/veritycustomapi/verity-6.0.0-beta.9')
+    compileOnly files('src/main/java/com/hanchen/veritycustomapi/verity-6.0.0')
+    runtimeOnly files('src/main/java/com/hanchen/veritycustomapi/verity-6.0.0')
 
     // Geckolib 4.8（MMD 驱动恶魔模型骨骼用，不打包到 fat jar；运行时由
     // 单独的 geckolib-forge-1.20.1-4.8.4.jar 提供，已在用户的 mods 目录里）
@@ -521,4 +521,59 @@ publishing {
     }
     repositories {
     }
+}
+
+tasks.register('autonomyDecisionTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.autonomy.AutonomyDecisionTest'
+}
+
+tasks.register('autonomyStateProtocolTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.network.AutonomyStateProtocolTest'
+}
+
+tasks.register('billingOwnershipTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.cloud.BillingOwnershipTest'
+}
+
+tasks.register('liveServiceTestProtocolTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.debug.LiveServiceTestProtocolTest'
+}
+
+tasks.register('modSetupClientTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.cloud.ModSetupClientTest'
+}
+
+tasks.register('playerConfigPatchTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.cloud.PlayerConfigPatchTest'
+}
+
+tasks.register('secondSightStabilityTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.client.SecondSightStabilityTest'
+}
+
+tasks.register('speechKeyConflictTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.client.SpeechKeyConflictTest'
+}
+
+tasks.register('storyProgressTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.hanchen.veritycustomapi.story.StoryProgressTest'
+    workingDir = projectDir
 }

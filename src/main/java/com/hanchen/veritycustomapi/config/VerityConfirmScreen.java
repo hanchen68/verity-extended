@@ -55,7 +55,7 @@ public final class VerityConfirmScreen extends Screen {
     private static final int BUTTON_GAP = 8;
 
     /** 卡片底色：比浮层略亮一档，让「弹窗」和「说明浮层」区分得开，但同样完全不透明。 */
-    private static final int PANEL = 0xFF14181F;
+    private static final int PANEL = VerityUiTheme.CARD;
     private static final int TITLE_COLOR = VerityUiTheme.SECTION_TITLE;
     private static final int MESSAGE_COLOR = VerityUiTheme.TEXT;
 

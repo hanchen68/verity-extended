@@ -50,12 +50,26 @@ public final class VerityMiningJob {
 
     /** 玩家 → 当前作业。 */
     private static final Map<UUID, Job> JOBS = new LinkedHashMap<>();
+    private static final Map<UUID, com.google.gson.JsonObject> RESULTS = new LinkedHashMap<>();
+    public static synchronized com.google.gson.JsonObject result(UUID id) {
+        var result = RESULTS.get(id); return result == null ? null : result.deepCopy();
+    }
+    private static void finish(Job job, String status, String reason) {
+        var result = new com.google.gson.JsonObject();
+        result.addProperty("jobId", job.id.toString()); result.addProperty("status",status);
+        result.addProperty("done",job.mined); result.addProperty("failed",job.skipped);
+        result.addProperty("reason",reason);
+        RESULTS.put(job.id,result);
+        while(RESULTS.size()>128) RESULTS.remove(RESULTS.keySet().iterator().next());
+    }
 
     private VerityMiningJob() {
     }
 
     /** 一个采集作业。 */
     private static final class Job {
+        /** 区分前后两次作业，避免自主取消误伤玩家后续手动作业。 */
+        final UUID id = UUID.randomUUID();
         /** 给日志/模型看的标识（方块 ID 或「采集」）。 */
         final String goal;
         /**
@@ -194,10 +208,12 @@ public final class VerityMiningJob {
 
             ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
             if (player == null) {
+                finish(job,"OFFLINE","玩家离线，作业中断");
                 iterator.remove();
                 continue;
             }
             if (System.currentTimeMillis() - job.startedAt > TIMEOUT_MS) {
+                finish(job,"TIMEOUT","执行超时，未完成");
                 notify(player, net.minecraft.network.chat.Component.empty()
                         .append(job.subject).append("这边超时停下了，")
                         .append(job.progress()).append("。"));
@@ -207,6 +223,7 @@ public final class VerityMiningJob {
 
             PathfinderMob verity = resolveVerity(player);
             if (verity == null || !verity.isAlive()) {
+                finish(job,"FAILED","执行实体消失或死亡");
                 notify(player, net.minecraft.network.chat.Component.empty()
                         .append(job.subject).append("这边先停一下，我找不到自己的实体了。"));
                 iterator.remove();
@@ -217,6 +234,8 @@ public final class VerityMiningJob {
                 if (job.current == null) {
                     job.current = job.pending.poll();
                     if (job.current == null) {
+                        finish(job, job.mined > 0 && job.skipped == 0 ? "SUCCESS" : job.mined > 0 ? "PARTIAL" : "FAILED",
+                                "实际完成 " + job.mined + "，跳过 " + job.skipped);
                         // 全部处理完。summary() 在「一件都没做成」时返回 null，不刷屏。
                         net.minecraft.network.chat.Component summary = job.summary();
                         if (summary != null) notify(player, summary);
@@ -253,15 +272,17 @@ public final class VerityMiningJob {
                     if (job.isPlanting()) {
                         BlockState at = level.getBlockState(job.current);
                         if (!at.isAir()) {
+                            job.skipped++;
                             job.current = null;
                             continue;
                         }
-                        level.setBlock(job.current, job.plantBlock.defaultBlockState(), 3);
-                        job.mined++;
+                        if (level.setBlock(job.current, job.plantBlock.defaultBlockState(), 3)) job.mined++;
+                        else job.skipped++;
                     } else {
                         BlockState state = level.getBlockState(job.current);
                         if (state.isAir()) {
-                            // 已经被别的途径挖掉了
+                            // 已经被别的途径挖掉了，不能算本作业完成
+                            job.skipped++;
                             job.current = null;
                             continue;
                         }
@@ -310,6 +331,22 @@ public final class VerityMiningJob {
         }
     }
 
+    /** 当前作业身份；无作业时返回 null，不从状态文本猜测。 */
+    public static synchronized UUID activeJobId(ServerPlayer player) {
+        Job job = player == null ? null : JOBS.get(player.getUUID());
+        return job == null ? null : job.id;
+    }
+
+    /** 只取消仍与调用方记录匹配的作业，检查与移除在同一把锁内完成。 */
+    public static synchronized boolean cancelIfCurrent(ServerPlayer player, UUID jobId) {
+        if (player == null || jobId == null || player.getServer() == null
+                || !player.getServer().isSameThread()) return false;
+        Job job = JOBS.get(player.getUUID());
+        if (job == null || !job.id.equals(jobId)) return false;
+        cancel(player);
+        return true;
+    }
+
     /** 查进度。 */
     public static synchronized String status(ServerPlayer player) {
         if (player == null) return "没有找到玩家。";
@@ -324,17 +361,20 @@ public final class VerityMiningJob {
         if (player == null) return "没有找到玩家。";
         Job job = JOBS.remove(player.getUUID());
         if (job == null) return "现在没有在采集。";
+        finish(job,"CANCELLED","玩家取消，已执行部分不回滚");
         return "已停止采集「" + job.goal + "」，挖了 " + job.mined + " 个。";
     }
 
     /** 玩家下线时清掉。 */
     public static synchronized void onPlayerLeave(UUID playerId) {
-        JOBS.remove(playerId);
+        Job job=JOBS.remove(playerId);
+        if(job!=null)finish(job,"OFFLINE","玩家离线");
     }
 
     /** 服务器停止时清空。 */
     public static synchronized void clear() {
         JOBS.clear();
+        RESULTS.clear();
     }
 
     /** 找玩家身边的 Verity；用 PathfinderMob 接收，避免强耦合原版类型。 */

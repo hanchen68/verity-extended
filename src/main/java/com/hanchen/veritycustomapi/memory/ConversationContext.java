@@ -4,8 +4,6 @@ import com.google.gson.Gson;
 import com.hanchen.veritycustomapi.ConfigManager;
 import com.hanchen.veritycustomapi.OllamaProxyMod;
 import com.hanchen.veritycustomapi.client.ConversationLogStore;
-import com.hanchen.veritycustomapi.cloud.BillingService;
-import com.hanchen.veritycustomapi.cloud.UsageMeter;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -160,60 +158,22 @@ public final class ConversationContext {
         if (route == null || route.model() == null || route.model().isBlank()) {
             return null;
         }
-        boolean paidBuiltin = "builtin".equals(route.source()) && "paid".equalsIgnoreCase(route.tier());
-        String requestId = BillingService.requestId();
-        BillingService.Reservation reservation = null;
-        String requestBody = null;
+        // 计费已交给云端：摘要请求不再做预授权、结算或用量上报，
+        // 也不再因为本地余额不足而跳过摘要。
+        String requestBody;
         String responseBody;
         try {
             requestBody = GSON.toJson(ChatCompletionClient.buildRequest(
                     route.model(), SUMMARY_SYSTEM_PROMPT, input));
-            if (paidBuiltin) {
-                int required = Math.max(1, Math.max(route.cost(), Math.max(
-                        ConfigManager.getMinDeductCost(), ConfigManager.getChatCost())));
-                reservation = BillingService.reservePaidChat(requestId, route.id(), required);
-                if (!reservation.success()) {
-                    OllamaProxyMod.LOGGER.info("滚动摘要跳过：{}", reservation.error());
-                    return null;
-                }
-            }
             responseBody = ChatCompletionClient.complete(route, requestBody);
         } catch (Exception error) {
-            if (reservation != null) {
-                BillingService.releasePaidChat(reservation, "upstream_error");
-            }
             OllamaProxyMod.LOGGER.warn("滚动摘要请求失败", error);
             return null;
         }
         // 摘要会原样注进提示词，先过一遍统一输出审查（剥格式码、控制字符、截断）
         String text = ChatCompletionClient.sanitizeOutput(
                 ChatCompletionClient.extractText(responseBody), 2000);
-        if (text.isBlank()) {
-            if (reservation != null) {
-                BillingService.releasePaidChat(reservation, "invalid_response");
-            }
-            return null;
-        }
-        if (reservation != null) {
-            try {
-                UsageMeter.ChatUsage usage = UsageMeter.chat(requestBody, responseBody, text, false);
-                if (usage == null) {
-                    BillingService.releasePaidChat(reservation, "missing_usage");
-                    return null;
-                }
-                BillingService.settlePaidChat(reservation, usage);
-            } catch (Exception error) {
-                // 兜底释放：统计或结算抛异常时，预留不能悬着
-                BillingService.releasePaidChat(reservation, "settle_error");
-                OllamaProxyMod.LOGGER.warn("滚动摘要用量结算失败，已释放预留", error);
-                return null;
-            }
-        } else if ("builtin".equals(route.source())) {
-            String tier = route.tier() != null ? route.tier() : "free";
-            BillingService.reportChat(BillingService.requestId(), tier, route.id(),
-                    UsageMeter.chat(requestBody, responseBody, text, true));
-        }
-        return text;
+        return text.isBlank() ? null : text;
     }
 
     /** 记忆区预算：和摘要预算相加就是注入块总预算，两边互不挤占。 */

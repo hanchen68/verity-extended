@@ -244,10 +244,22 @@ public class OllamaProxyServer {
                 ThreadLocal.withInitial(() -> Boolean.FALSE);
 
         /**
-         * 双语字幕「第二次调用」的读超时（秒）。
-         * 原版客户端 HTTP 超时硬编码 60 秒且主对话已占用一部分，翻译调用需自设上限，超时则退化为只显示英文。
+         * 双语字幕「第二次调用」的读超时上限（秒）。
+         *
+         * <p>这是**上限**不是配额：实际取 min(本值, 剩余总预算 - 安全余量)。
+         * 原实现只按剩余预算/1000 收紧、且有 5 秒下限，当主对话已经用掉 40 秒以上时，
+         * 二次翻译仍可能再占 5 秒，把整体推过原版客户端 60 秒硬超时 → 玩家看到的是
+         * 「英文说完了，中文一直不来，然后整条被重试」，也就是反馈里的「不稳定」。
          */
-        private static final int TRANSLATION_TIMEOUT_SECONDS = 15;
+        private static final int TRANSLATION_TIMEOUT_SECONDS = 12;
+
+        /**
+         * 留给「把响应写回客户端」的安全余量（毫秒）。
+         *
+         * <p>代理必须在客户端 60 秒超时前把完整响应写出去；预算卡到最后一刻就等于超时，
+         * 因为序列化 + 网络写出也需要时间。
+         */
+        private static final long RESPONSE_SAFETY_MARGIN_MS = 6_000L;
 
         /**
          * 单次请求的总处理预算（毫秒）。
@@ -466,16 +478,8 @@ public class OllamaProxyServer {
                 if (!internalPromptCall && offloadThisRequest) {
                     processedRequestBody = attachRecallOffloadTool(processedRequestBody);
                 }
-                int primaryRequiredCredits = "paid".equals(primaryRoute.tier())
-                        ? Math.max(1, Math.max(primaryRoute.cost(), Math.max(
-                                ConfigManager.getMinDeductCost(), ConfigManager.getChatCost())))
-                        : primaryRoute.cost();
-                if ("paid".equals(primaryRoute.tier())
-                        && !ConfigManager.isCreditsSufficient(primaryRequiredCredits)) {
-                    LOGGER.warn("云端付费 Chat 请求已拒绝: 额度不足单次请求费用");
-                    sendErrorResponse(exchange, 402, "额度不足，请前往云端积分中心充值");
-                    return;
-                }
+                // 计费已整体交给云端：模组不再在本地做额度预授权、额度拦截或结算上报。
+                // 这里原来会因为「额度不足」直接返回 402，属于本地替云端做决定，已删除。
                 AttemptResult result = executeWithFailover(routes, processedRequestBody, billingRequestId);
                 if (result.status() >= 400 || result.error() != null) {
                     int status = result.status() > 0 ? result.status() : 502;
@@ -650,20 +654,12 @@ public class OllamaProxyServer {
             AttemptResult last = null;
             for (ConfigManager.ChatRoute route : routes) {
                 if (!ConfigManager.tryAcquireRoute("chat", route.tier(), route.id())) continue;
-                if ("paid".equals(route.tier()) && !ConfigManager.canUseCloudTier("paid")) continue;
-                int requiredCredits = "paid".equals(route.tier())
-                        ? Math.max(1, Math.max(route.cost(), Math.max(
-                                ConfigManager.getMinDeductCost(), ConfigManager.getChatCost())))
-                        : route.cost();
-                if (requiredCredits > 0 && !ConfigManager.isCreditsSufficient(requiredCredits)) continue;
+                // 不再按本地余额跳过线路：额度由云端判定，本地跳过会让「明明可用」的线路被静默排除，
+                // 最终报出「所有线路都不可用」，与真实原因不符。
                 String routeBody = applyRouteModel(baseBody, route.model());
+                // 计费已交给云端：不再预授权。`reservation` 恒为 null，
+                // 这样下面「空补全重试」的分支条件（reservation == null）依旧成立。
                 BillingService.Reservation reservation = null;
-                if (isPaidBuiltin(route)) {
-                    reservation = BillingService.reservePaidChat(requestId, route.id(), requiredCredits);
-                    if (!reservation.success()) {
-                        return new AttemptResult(route, reservation.status(), "", reservation.error());
-                    }
-                }
                 last = executeAttempt(route, routeBody);
                 if ("builtin".equals(route.source())) {
                     LOGGER.debug("云端内置 Chat 线路尝试: routeId={}, tier={}, status={}",
@@ -704,23 +700,10 @@ public class OllamaProxyServer {
                         last = new AttemptResult(route, 502, "", "Chat 上游未返回文本或工具调用");
                         continue;
                     }
-                    if (reservation != null) {
-                        UsageMeter.ChatUsage usage = UsageMeter.chat(routeBody, last.body(), outputText, false);
-                        if (usage == null) {
-                            BillingService.releasePaidChat(reservation, "missing_usage");
-                            // 星绒 API 迁移用户由上游自行结算，不依赖 Mod 上报的 usage，
-                            // 因此缺少 usage 不应中断对话。
-                            if (!reservation.legacySkipped()) {
-                                return new AttemptResult(route, 502, "", "付费 Chat 上游响应缺少真实 usage");
-                            }
-                        } else {
-                            last = last.withSettlement(new BillingSettlement(reservation, usage));
-                        }
-                    }
+                    // 计费已交给云端：成功响应不再结算/上报，直接返回给客户端。
                     ConfigManager.reportRouteSuccess("chat", route.tier(), route.id());
                     return last;
                 }
-                if (reservation != null) BillingService.releasePaidChat(reservation, "upstream_error");
                 ConfigManager.reportRouteFailure("chat", route.tier(), route.id(), failureKind(last));
                 if (!isRetryable(last)) return last;
                 if (isPaidBuiltin(route)) return last;
@@ -2196,8 +2179,12 @@ public class OllamaProxyServer {
             }
             // 总预算快用完了就别再补一次调用，否则会把整体拖过原版 60 秒硬超时 -> 触发重试。
             long remaining = remainingBudgetMs();
-            if (remaining < 8_000L) {
-                LOGGER.warn("双语字幕：剩余预算不足（{} ms），跳过二次翻译", remaining);
+            // 门槛从 8 秒提到「翻译超时 + 响应余量」：只是 >8 秒根本不够跑完一次翻译，
+            // 结果必然是发起 → 超时 → 丢弃，白等一轮还把整体拖到客户端超时。
+            long needed = TRANSLATION_TIMEOUT_SECONDS * 1000L + RESPONSE_SAFETY_MARGIN_MS;
+            if (remaining < needed) {
+                LOGGER.warn("双语字幕：剩余预算不足（{} ms < {} ms），跳过二次翻译，本次只显示英文",
+                        remaining, needed);
                 return "";
             }
             return requestChineseTranslation(english, routes);
@@ -2246,13 +2233,15 @@ public class OllamaProxyServer {
             if (english == null || english.isBlank() || routes == null || routes.isEmpty()) {
                 return "";
             }
-            String cacheKey = english.trim();
+            ConfigManager.ChatRoute route = routes.get(0);
+            // 缓存键要带上模型：同一句英文换模型/换线路后，语气和术语会更贴合新模型，
+            // 只按原文做键会把旧模型的译文一直发给玩家。
+            String cacheKey = route.model() + "\u0000" + english.trim();
             String cached = TRANSLATION_CACHE.get(cacheKey);
             if (cached != null && !cached.isBlank()) {
                 LOGGER.info("双语字幕：译文缓存命中，跳过翻译调用");
                 return cached;
             }
-            ConfigManager.ChatRoute route = routes.get(0);
             try {
                 JsonObject body = new JsonObject();
                 body.addProperty("model", route.model());
@@ -2276,8 +2265,14 @@ public class OllamaProxyServer {
                 body.add("messages", messages);
 
                 long startedAt = System.currentTimeMillis();
-                int translationTimeout = (int) Math.max(5L,
-                        Math.min(TRANSLATION_TIMEOUT_SECONDS, remainingBudgetMs() / 1000L));
+                // 实际超时要同时满足：不超过配置上限、不超过「剩余预算 - 响应余量」。
+                // 原来用 max(5, ...) 兜底，预算已经见底时仍会硬跑 5 秒，这就是把请求推过客户端硬超时的原因。
+                long budgetForTranslation = remainingBudgetMs() - RESPONSE_SAFETY_MARGIN_MS;
+                int translationTimeout = (int) Math.min(TRANSLATION_TIMEOUT_SECONDS, budgetForTranslation / 1000L);
+                if (translationTimeout < 2) {
+                    LOGGER.warn("双语字幕：可用于翻译的时间不足（{} ms），跳过本次翻译", budgetForTranslation);
+                    return "";
+                }
                 AttemptResult result = executeAttempt(route, GSON.toJson(body), translationTimeout);
                 if (result.status() >= 400 || result.error() != null) {
                     LOGGER.warn("双语字幕：中文翻译调用失败（status={}, error={}），本次仅显示英文",
@@ -2683,16 +2678,8 @@ public class OllamaProxyServer {
             }
 
             ConfigManager.ChatRoute primaryRoute = routes.get(0);
-            int primaryRequiredCredits = "paid".equals(primaryRoute.tier())
-                    ? Math.max(1, Math.max(primaryRoute.cost(), Math.max(
-                            ConfigManager.getMinDeductCost(), ConfigManager.getChatCost())))
-                    : primaryRoute.cost();
-            if ("paid".equals(primaryRoute.tier())
-                    && !ConfigManager.isCreditsSufficient(primaryRequiredCredits)) {
-                LOGGER.warn("云端付费 Chat 请求已拒绝: 额度不足单次请求费用");
-                sendErrorResponse(exchange, 402, "额度不足，请前往云端积分中心充值");
-                return;
-            }
+            // 计费交给云端：不再在本地用余额拦请求。额度不足由云端在上游直接拒绝，
+            // 模组端重复拦一次只会出现「明明云端还能用，模组却先报 402」的不一致。
 
             String routeBody = applyRouteModel(streamingBody, primaryRoute.model());
             // 这里不再保留「SSE 原样透传」分支，原因有两条：
